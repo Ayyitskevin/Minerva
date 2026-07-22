@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<nav class="breadcrumb"><a href="{{ url_for('mission_list') }}">Missions</a> / Mission review</nav>
+<section class="page-heading">
+  <p class="eyebrow">Research scope · not a conclusion</p>
+  <h1>{{ mission.title }}</h1>
+  <p>{{ mission.objective }}</p>
+  <p><a class="button" href="{{ url_for('brief_preview', mission_id=mission.id) }}">Preview deterministic brief</a></p>
+</section>
+
+<section>
+  <h2>Research questions</h2>
+  {% if questions %}
+  <ul class="plain-list">
+    {% for question in questions %}
+    <li><strong>{{ question.text }}</strong> <code>{{ question.id }}</code></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty-state">No questions recorded.</p>{% endif %}
+</section>
+
+<section>
+  <h2>Claims under evaluation</h2>
+  {% if claims %}
+  <ul class="card-list">
+    {% for claim in claims %}
+    <li class="card">
+      <h3><a href="{{ url_for('claim_detail', claim_id=claim.id) }}">{{ claim.statement }}</a></h3>
+      <p><span class="status">{{ claim.status.value }}</span> · operator-recorded workflow status · version {{ claim.version }}</p>
+      <p><strong>Status rationale:</strong> {{ claim.status_reason }} · {{ claim.status_creator_id }} · {{ claim.status_changed_at }}</p>
+      {% if not claim.status_evidence_valid %}
+      <p class="uncertainty"><strong>Provenance warning:</strong> the active evidence no longer satisfies this status.</p>
+      {% endif %}
+      <p><strong>Falsification criterion:</strong> {{ claim.falsification_criteria }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty-state">No claims recorded.</p>{% endif %}
+</section>
+
+<section>
+  <h2>Immutable source snapshots</h2>
+  {% if sources %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Snapshot ID</th><th>Label</th><th>Digest</th><th>Bytes</th><th>Media type</th></tr></thead>
+      <tbody>
+      {% for source in sources %}
+        <tr>
+          <td><code>{{ source.snapshot_id }}</code></td>
+          <td>{{ source.original_label }}</td>
+          <td><code>{{ source.sha256 }}</code></td>
+          <td>{{ source.byte_length }}</td>
+          <td>{{ source.media_type }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="empty-state">No sources imported.</p>{% endif %}
+</section>
+
+<section>
+  <h2>Findings and uncertainty</h2>
+  {% if findings %}
+  <ul class="card-list">
+    {% for finding in findings %}
+    <li class="card">
+      <p class="eyebrow">{{ finding.statement_kind.value }} · {{ finding.status.value }}</p>
+      {% if finding.citation_status.value == "withdrawn" %}
+      <p class="uncertainty"><strong>Provenance invalidated:</strong> one or more cited evidence cards were withdrawn. The recorded status is not current support.</p>
+      {% endif %}
+      <h3>{{ finding.statement }}</h3>
+      {% if finding.uncertainty %}
+      <p class="uncertainty"><strong>Uncertainty:</strong> {{ finding.uncertainty }}</p>
+      {% else %}
+      <p class="uncertainty"><strong>Uncertainty:</strong> None recorded.</p>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty-state">No findings or uncertainty recorded.</p>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,50 @@
+:root {
+  color-scheme: light;
+  --ink: #14213d;
+  --muted: #5c677d;
+  --paper: #fbfaf7;
+  --panel: #ffffff;
+  --line: #d8dee9;
+  --accent: #805500;
+  --opposes: #9b2226;
+  --supports: #2a6f4e;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.55 system-ui, sans-serif;
+}
+.site-header, main, footer { max-width: 70rem; margin: auto; padding: 1rem 1.5rem; }
+.site-header { display: flex; gap: 1rem; align-items: baseline; border-bottom: 1px solid var(--line); }
+.brand { color: var(--ink); font: 700 1.5rem/1 serif; text-decoration: none; }
+.tagline, .eyebrow, footer, .breadcrumb { color: var(--muted); }
+main { min-height: 70vh; }
+section { margin: 2rem 0; }
+h1, h2, h3 { font-family: ui-serif, Georgia, serif; line-height: 1.2; }
+a { color: #754c00; }
+.card-list, .plain-list, .ledger { padding-left: 0; list-style: none; }
+.card { margin: 1rem 0; padding: 1rem; background: var(--panel); border: 1px solid var(--line); border-radius: .35rem; }
+.stance-supports { border-left: .4rem solid var(--supports); }
+.stance-opposes { border-left: .4rem solid var(--opposes); }
+.stance-context, .stance-inconclusive { border-left: .4rem solid var(--accent); }
+.status, .withdrawn { display: inline-block; padding: .1rem .4rem; border: 1px solid currentColor; border-radius: .2rem; font-size: .85rem; text-transform: uppercase; }
+.withdrawn { color: var(--opposes); }
+.metadata { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .25rem 1rem; }
+.metadata dt { color: var(--muted); font-weight: 700; }
+.metadata dd { margin: 0; overflow-wrap: anywhere; }
+code, pre { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.citation-quote, .brief-preview { padding: 1rem; white-space: pre-wrap; background: #f2f4f7; border: 1px solid var(--line); overflow-x: auto; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--panel); }
+th, td { padding: .6rem; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.button { display: inline-block; padding: .45rem .75rem; border: 1px solid currentColor; border-radius: .25rem; text-decoration: none; }
+.uncertainty { padding: .75rem; background: #fff4d6; }
+.empty-state { color: var(--muted); font-style: italic; }
+@media (max-width: 42rem) {
+  .metadata { grid-template-columns: 1fr; }
+  .metadata dd { margin-bottom: .5rem; }
+  .site-header { align-items: flex-start; flex-direction: column; }
+}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<nav class="breadcrumb"><a href="{{ url_for('mission_detail', mission_id=claim.mission_id) }}">Mission</a> / Claim ledger</nav>
+<section class="page-heading">
+  <p class="eyebrow">Claim under evaluation</p>
+  <h1>{{ claim.statement }}</h1>
+  <p><span class="status">{{ claim.status.value }}</span> · operator-recorded workflow status · version {{ claim.version }}</p>
+  <p><strong>Status rationale:</strong> {{ claim.status_reason }} · {{ claim.status_creator_id }} · {{ claim.status_changed_at }}</p>
+  {% if not claim.status_evidence_valid %}
+  <p class="uncertainty"><strong>Provenance warning:</strong> active evidence no longer satisfies this status.</p>
+  {% endif %}
+  <p><strong>Falsification criterion:</strong> {{ claim.falsification_criteria }}</p>
+</section>
+
+<section>
+  <h2>Evidence ledger</h2>
+  <p>Supporting, opposing, contextual, and inconclusive evidence remain visible together.</p>
+  {% if ledger %}
+  <ol class="ledger">
+    {% for entry in ledger %}
+    <li class="card stance-{{ entry.evidence.stance.value }}" data-stance="{{ entry.evidence.stance.value }}">
+      <div class="ledger-heading">
+        <strong>{{ entry.evidence.stance.value | upper }}</strong>
+        {% if entry.withdrawn %}<span class="withdrawn">WITHDRAWN</span>{% endif %}
+      </div>
+      <pre class="citation-quote">{{ entry.evidence.quote }}</pre>
+      <dl class="metadata">
+        <dt>Citation ID</dt><dd><code>{{ entry.citation_id }}</code></dd>
+        <dt>Source label</dt><dd>{{ entry.source_label }}</dd>
+        <dt>Snapshot ID</dt><dd><code>{{ entry.evidence.snapshot_id }}</code></dd>
+        <dt>Snapshot digest</dt><dd><code>{{ entry.snapshot_sha256 }}</code></dd>
+        <dt>Exact UTF-8 byte span</dt><dd>[{{ entry.evidence.start_byte }}, {{ entry.evidence.end_byte }})</dd>
+        <dt>Snapshot bytes</dt><dd>{{ snapshots[entry.evidence.snapshot_id].byte_length }}</dd>
+        <dt>Media type</dt><dd>{{ snapshots[entry.evidence.snapshot_id].media_type }}</dd>
+      </dl>
+      {% if entry.withdrawn %}
+      <p><strong>Withdrawal reason:</strong> {{ entry.withdrawal_reason }}</p>
+      <p><strong>Withdrawn by:</strong> {{ entry.withdrawn_by }}</p>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="empty-state">No evidence cards recorded.</p>
+  {% endif %}
+</section>
+{% endblock %}
