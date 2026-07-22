@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-heading">
+  <p class="eyebrow">Local research laboratory</p>
+  <h1>Research missions</h1>
+  <p>This surface reviews research already recorded through Minerva's shared services.</p>
+</section>
+{% if missions %}
+<ul class="card-list">
+  {% for mission in missions %}
+  <li class="card">
+    <h2><a href="{{ url_for('mission_detail', mission_id=mission.id) }}">{{ mission.title }}</a></h2>
+    <p>{{ mission.objective }}</p>
+    <dl class="metadata">
+      <dt>Mission ID</dt><dd><code>{{ mission.id }}</code></dd>
+      <dt>Created</dt><dd>{{ mission.created_at }}</dd>
+    </dl>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty-state">No research missions have been recorded.</p>
+{% endif %}
+{% endblock %}

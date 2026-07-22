@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }} · Minerva</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="{{ url_for('mission_list') }}">Minerva</a>
+    <span class="tagline">Ask carefully. Cite everything.</span>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer>
+    <p>Review-only local interface · Minerva records evidence and uncertainty; it does not manufacture certainty.</p>
+  </footer>
+</body>
+</html>

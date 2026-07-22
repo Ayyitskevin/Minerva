@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<nav class="breadcrumb"><a href="{{ url_for('mission_detail', mission_id=mission.id) }}">Mission</a> / Brief preview</nav>
+<section class="page-heading">
+  <p class="eyebrow">Deterministic Markdown preview</p>
+  <h1>{{ mission.title }}</h1>
+  <dl class="metadata">
+    <dt>Export digest</dt><dd><code>{{ export_digest }}</code></dd>
+  </dl>
+  <p>
+    <a class="button" href="{{ url_for('brief_markdown_download', mission_id=mission.id) }}" download>Download Markdown</a>
+    <a class="button" href="{{ url_for('brief_json_download', mission_id=mission.id) }}" download>Download JSON</a>
+  </p>
+</section>
+<section>
+  <h2>Research brief</h2>
+  <pre class="brief-preview">{{ markdown }}</pre>
+</section>
+{% endblock %}
