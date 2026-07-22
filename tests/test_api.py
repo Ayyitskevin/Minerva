@@ -185,14 +185,24 @@ def test_capability_manifest_is_versioned_and_truthful(client: TestClient) -> No
 
     assert response.status_code == 200
     document = response.json()
-    assert document["schema_version"] == "minerva.capabilities.v1"
+    assert document["schema_version"] == "minerva.capabilities.v2"
     assert document["api_version"] == "v1"
-    assert document["local_only"] is True
+    assert document["local_only"] is False
+    assert document["loopback_only"] is True
+    assert document["external_egress"] == "disabled_by_default_cli_only"
+    assert document["supported_external_providers"] == ["openai", "anthropic"]
     assert "source.utf8_bytes.import" in document["capabilities"]
     assert "brief.preview.markdown_json" in document["capabilities"]
+    assert "assist.finding_candidates.preview.cli" in document["capabilities"]
+    assert "assist.finding_candidates.invoke.cli.byok.optional" in document["capabilities"]
     assert "network.fetch" in document["unavailable"]
-    assert "model.invoke" in document["unavailable"]
+    assert "model.invoke.api" in document["unavailable"]
+    assert "model.invoke.web" in document["unavailable"]
+    assert "model.output.auto_adopt" in document["unavailable"]
     assert document["limits"]["source_bytes"] > 0
+    assert document["limits"]["assistant_context_bytes"] == 65_536
+    assert document["limits"]["assistant_evidence_cards"] == 50
+    assert document["limits"]["assistant_candidates"] == 3
 
 
 def test_strict_dto_rejects_unknown_fields_and_never_reflects_input(client: TestClient) -> None:

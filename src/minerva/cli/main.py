@@ -7,10 +7,14 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
 
+from minerva.assist.models import ModelProvider
+from minerva.assist.service import AssistanceService
 from minerva.cli._common import EXIT_OPERATIONAL, Outcome, run_safely
+from minerva.cli.credentials import load_provider_credential, resolve_provider_selection
 from minerva.core.audit import list_audit_events
 from minerva.core.db import Database
 from minerva.core.doctor import run_doctor
+from minerva.core.errors import SecurityBoundaryError
 from minerva.core.operations import OperationsService
 from minerva.core.types import IdentityContext, local_identity
 from minerva.evidence.models import EvidenceStance
@@ -240,6 +244,67 @@ def _cmd_restore(args: argparse.Namespace) -> Outcome:
     return Outcome({"status": "restored", "schema_version": database.schema_version()})
 
 
+def _cmd_assist_finding_candidates(args: argparse.Namespace) -> Outcome:
+    selection = resolve_provider_selection(
+        provider=cast(str | None, args.provider),
+        model=cast(str | None, args.model),
+    )
+    service = AssistanceService(_database(args))
+    preview = service.preview_finding_candidates(
+        claim_id=cast(str, args.claim),
+        selection=selection,
+        max_candidates=cast(int, args.max_candidates),
+        max_output_tokens=cast(int, args.max_output_tokens),
+    )
+    confirmed = cast(bool, args.confirm_external_send)
+    expected_digest = cast(str | None, args.expected_request_sha256)
+    if not confirmed:
+        if expected_digest is not None:
+            raise SecurityBoundaryError(
+                "assistant_confirmation_invalid",
+                "A request digest may only be supplied with explicit external-send confirmation.",
+            )
+        return Outcome(
+            {
+                "mode": "preview",
+                "network_called": False,
+                "credential_environment_variable": (
+                    selection.provider.credential_environment_variable
+                ),
+                "preview": preview,
+                "authorization": (
+                    "Re-run with --confirm-external-send and the exact "
+                    "--expected-request-sha256 value after reviewing context_json."
+                ),
+            }
+        )
+    if expected_digest is None:
+        raise SecurityBoundaryError(
+            "assistant_authorization_required",
+            "External send requires the exact request digest from a fresh preview.",
+        )
+
+    timeout_seconds = cast(float, args.timeout_seconds)
+    service.authorize_finding_candidate_request(
+        preview=preview,
+        expected_request_sha256=expected_digest,
+        timeout_seconds=timeout_seconds,
+    )
+    from minerva.integrations.ai import candidate_provider
+
+    provider = candidate_provider(selection.provider)
+    credential = load_provider_credential(selection.provider)
+    result = service.generate_finding_candidates(
+        preview=preview,
+        expected_request_sha256=expected_digest,
+        provider=provider,
+        credential=credential,
+        timeout_seconds=timeout_seconds,
+        identity=_identity("cli:assist-finding-candidates"),
+    )
+    return Outcome({"mode": "completed", "network_called": True, "result": result})
+
+
 def _cmd_serve(args: argparse.Namespace) -> Outcome:
     database_path = cast(Path, args.db)
     Database(database_path).schema_version()
@@ -439,6 +504,33 @@ def build_parser() -> argparse.ArgumentParser:
     _add_database(restore_parser)
     restore_parser.add_argument("--backup", required=True, type=Path)
     _set_handler(restore_parser, _cmd_restore)
+
+    assist_parser = commands.add_parser(
+        "assist",
+        help="preview or explicitly invoke optional external model assistance",
+    )
+    assist_commands = assist_parser.add_subparsers(dest="assist_command", required=True)
+    finding_candidates = assist_commands.add_parser(
+        "finding-candidates",
+        help="draft candidate agent inferences from one claim's active evidence",
+    )
+    _add_database(finding_candidates)
+    finding_candidates.add_argument("--claim", required=True)
+    finding_candidates.add_argument(
+        "--provider",
+        choices=[item.value for item in ModelProvider],
+        help="provider override; otherwise MINERVA_AI_PROVIDER is required",
+    )
+    finding_candidates.add_argument(
+        "--model",
+        help="model override; otherwise MINERVA_AI_MODEL is required",
+    )
+    finding_candidates.add_argument("--max-candidates", type=int, default=3)
+    finding_candidates.add_argument("--max-output-tokens", type=int, default=1_200)
+    finding_candidates.add_argument("--timeout-seconds", type=float, default=60.0)
+    finding_candidates.add_argument("--confirm-external-send", action="store_true")
+    finding_candidates.add_argument("--expected-request-sha256")
+    _set_handler(finding_candidates, _cmd_assist_finding_candidates)
 
     serve_parser = commands.add_parser("serve", help="start the loopback review server")
     _add_database(serve_parser)

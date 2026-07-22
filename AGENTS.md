@@ -21,6 +21,12 @@ instructions and the fleet safety rules still take precedence.
 - Never add network fetches, model calls, shell/subprocess execution, notebook
   execution, dynamic plugins, publication, messaging, or live sibling-repository
   integrations in Milestone 1.
+- Preserve the reviewed Milestone 2B exception: only the local `assist` service and
+  CLI may prepare or authorize evidence-bounded model assistance, and only
+  `src/minerva/integrations/ai/openai.py` and
+  `src/minerva/integrations/ai/anthropic.py` may import network/provider clients.
+  There is no API/web invocation, URL fetching, fallback, retry, tool, publication,
+  messaging, or automatic adoption path.
 - Do not claim that a claim is true or derive confidence from evidence counts.
 - Do not place real research sources, credentials, private paths, or personal data in
   fixtures, docs, logs, commits, audit records, or PR descriptions.
@@ -32,9 +38,11 @@ builds, and an approved branch/PR workflow.
 
 Human review is required before merging changes to the source/citation coordinate
 model, immutability triggers, audit atomicity, migration history, loopback/auth trust
-boundary, secret scanning policy, or future integration authentication. Deployment,
-external publishing, security-sensitive remote access, live-data migration, and legal
-or licensing decisions are not authorized by this repository contract.
+boundary, secret scanning policy, provider destinations, credential handling,
+external-request authorization/digest semantics, network allowlist, or future
+integration authentication. Deployment, external publishing, security-sensitive
+remote access, live-data migration, and legal or licensing decisions are not
+authorized by this repository contract.
 
 ## Required gates
 
@@ -55,13 +63,18 @@ git diff --check
 ```
 
 Skipped tests or unavailable tools must be reported as open verification, not a pass.
-No deployment is part of this gate.
+No deployment is part of this gate. Provider tests use fakes only: never put real API
+keys in the environment and never contact a live or billable provider from tests,
+smoke checks, CI, or review automation.
 
 ## Four invariants to re-check
 
-- State lives in migrated SQLite plus intentionally exported immutable artifacts.
+- State lives in migrated SQLite plus intentionally exported immutable artifacts;
+  provider credentials and candidate responses are ephemeral and are not state.
 - Feedback lives in structured errors, audit rows, doctor, health/readiness, and tests.
 - Deleting snapshots/evidence/audit rows must fail because downstream citations depend
   on them.
 - Timing works through explicit transactions, WAL readers, bounded write waits, and
-  deterministic ordering.
+  deterministic ordering. External assistance is the declared exception to atomic
+  mutation/audit timing: metadata-only request and terminal audit events bracket a
+  non-transactional provider call, and a timeout is an unknown provider outcome.

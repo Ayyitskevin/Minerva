@@ -1,4 +1,4 @@
-# Milestone 1 threat model
+# Current threat model: Milestone 1 and Milestone 2B
 
 ## Boundary and assets
 
@@ -8,11 +8,12 @@ authorization, and remote access are explicitly deferred. The application must n
 pretend a caller-supplied header is an authenticated identity.
 
 Protected assets are source snapshot contents, local filesystem paths, provenance and
-audit integrity, citation correctness, and exported research artifacts.
+audit integrity, citation correctness, exported research artifacts, provider
+credentials, and the operator's control over which exact evidence leaves the machine.
 
 ## Threats and controls
 
-| Threat | Milestone 1 controls | Residual risk |
+| Threat | Current controls | Residual risk |
 | --- | --- | --- |
 | Remote browser reaches local service | Default `127.0.0.1` bind; loopback Host and Origin allowlist; no permissive CORS | Malicious software already running as the OS user shares the trust boundary |
 | Cross-site request forgery | Read-only HTML; non-local Origin rejection for REST mutations; signed SameSite CSRF primitive required before any unsafe form | OS-user malware can read local state/process memory |
@@ -26,7 +27,13 @@ audit integrity, citation correctness, and exported research artifacts.
 | Audit rewriting | Same-transaction audit insert; update/delete triggers; no raw source content or paths in details | Direct file replacement by the OS user is outside the process boundary |
 | Export path attack | Fixed contained filenames; reject symlink/pre-existing targets; size bounds; cleanup after caught exceptions | Operator can intentionally select a sensitive directory; a process or power-loss crash can leave a partial new export, but existing files are never overwritten |
 | Private-data disclosure in errors/API | Stable error codes; validation errors omit submitted values; API omits import paths and snapshot content by default | Authorized source preview intentionally reveals selected source text locally |
-| Network or execution escalation | No URL fetching, HTTP client, model call, shell/subprocess, notebook, plugin, or dynamic code loading surface | Dependency installation and loopback serving use the network stack outside research execution |
+| Unauthorized external evidence disclosure | Assistance previews the exact bounded JSON without network I/O; egress requires an explicit flag and matching fresh request digest; no API/web invocation | The trusted OS user can knowingly authorize sensitive material; secret scanning cannot determine confidentiality or disclosure rights |
+| Credential disclosure | BYOK credentials are read only after confirmation from `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; redacted in memory wrappers; never persisted or included in audit/output | Environment variables and process memory are visible to sufficiently privileged local software; provider/account compromise is outside Minerva |
+| Prompt injection in research text | Claim/evidence JSON is labeled untrusted; fixed prompt forbids embedded instructions, tools, outside knowledge, and invented citations; active evidence IDs bound locally | Models can still follow malicious text or produce incorrect output; a human must review every candidate |
+| Invalid or overreaching model output | Strict structured parsing, size/count bounds, citation membership, secret scan, contradiction-preserving prompt, post-call context revalidation | Validation cannot establish truth, reasoning quality, completeness, or freedom from subtle data leakage in otherwise allowed text |
+| Provider retention, training, residency, or cost | Exact disclosure preview; fixed provider origins; one attempt; no fallback; OpenAI `store=false`; usage metadata when returned | Provider policy/account settings are external; every authorized request may be retained, processed, or charged despite local controls |
+| Timeout or interrupted provider call | Bounded timeout; no automatic retry; requested event committed before call; unknown outcome recorded when control returns | Provider may process or bill a request whose response Minerva never receives; process death can leave only the requested event |
+| Network or execution escalation | Network imports statically restricted to the two reviewed provider adapters; fixed API origins; proxy environment ignored; SDK header/account-routing environment controls fail closed; redirects, retries, fallback, tools, URL fetch, shell/subprocess, notebook, plugin, and dynamic code loading prohibited | Dependency installation and loopback serving use the network stack outside research execution; provider SDK changes require review |
 
 ## Security invariants
 
@@ -38,14 +45,26 @@ audit integrity, citation correctness, and exported research artifacts.
 - URL fields are metadata only and never dereferenced.
 - Errors never include submitted source contents or absolute private paths.
 - Tests run the demo with outbound connection attempts denied.
+- Assistance preview never reads a provider credential or calls a network.
+- External model egress exists only in the CLI and requires an explicit confirmation
+  plus the exact digest of the reviewed provider/model/destination/context/limits.
+- Provider calls use fixed destinations with no automatic retry, redirect, fallback,
+  tool use, or environment proxy. Tests use fakes and never contact live providers.
+- Returned text is untrusted, ephemeral candidate `agent_inference`; it is not
+  persisted, adopted, or promoted to evidence, truth, confidence, or claim status.
+- Assistance audit events contain bounded metadata and digests, not credentials,
+  prompts, evidence excerpts, responses, or candidates.
 
-The transaction guarantees above cover SQLite operations, rejected requests, and
-exceptions that return control to Minerva. They do not make a database-plus-filesystem
-operation crash-atomic. Standalone backups and exports have no external signature or
-integrity anchor and must be protected by the operator.
+The transaction guarantees above cover SQLite domain operations, rejected requests,
+and exceptions that return control to Minerva. They do not make a
+database-plus-filesystem or database-plus-provider operation crash-atomic. Assistance
+uses separate requested and terminal audit transactions around the external call;
+process death can leave an unmatched request record. Standalone backups and exports
+have no external signature or integrity anchor and must be protected by the operator.
 
 ## Deferred decisions
 
-Remote access, real authentication, encrypted storage, OS keyring integration,
-multi-tenancy, signed exports, and integration credentials require a later threat
-model and explicit product/security approval.
+Remote access, real authentication, encrypted storage, optional OS keyring support,
+multi-tenancy, signed exports, additional providers, provider-side retrieval/tools,
+and non-CLI integration authentication require a later threat model and explicit
+product/security approval.

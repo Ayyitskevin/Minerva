@@ -11,6 +11,10 @@ CLI -----------\
 REST API -------+--> commands/services --> SQLite transaction + audit
 server HTML ---/             |                     |
                               +--> immutable blobs  +--> deterministic exporter
+
+assist CLI --> preview + exact digest confirmation --> reviewed provider adapter
+                                                        |
+                                                        +--> OpenAI or Anthropic
 ```
 
 The SQLite database is authoritative for structured research state and source
@@ -30,12 +34,45 @@ they may not reimplement domain validation or write SQL directly.
 - `api`: strict Pydantic request/response adapters and structured error mapping.
 - `web`: loopback-only, read-only server-rendered review pages, local HTTP controls,
   and CSRF primitives reserved for any future unsafe browser form.
-- `cli`: local operator commands, demo, backup/restore, doctor, and server startup.
-- `integrations`: documentation-only protocol seams for now; no live adapters.
+- `assist`: provider-neutral preview, authorization, bounded context, response
+  validation, candidate labeling, and metadata-only invocation audit coordination.
+- `cli`: local operator commands, optional external-assistance consent, demo,
+  backup/restore, doctor, and server startup.
+- `integrations`: protocol seams plus two live, narrowly reviewed provider adapters.
+  Only `integrations/ai/openai.py` and `integrations/ai/anthropic.py` may import their
+  SDK and network client; other planned integrations remain documentation-only.
 
 Imports point inward: adapters may import domain services; domain packages do not
 import FastAPI, Jinja, or CLI modules. Cross-domain writes are coordinated by an
 application service using one connection and transaction.
+
+## External assistance boundary
+
+Milestone 2B assistance starts with a read-only snapshot of one claim and its evidence
+ledger. The service excludes withdrawn evidence, preserves opposing and inconclusive
+evidence, enforces card/byte/output bounds, rejects secret-pattern matches, and
+serializes canonical JSON containing the exact claim, falsification criterion,
+and active evidence citation IDs, quotes, and stances. Byte offsets, snapshot digests,
+and supersession references remain local request-manifest provenance. Preview returns
+the exact provider payload, fixed destination, and a request SHA-256 without reading a
+credential or calling a network.
+
+Invocation requires an explicit CLI confirmation plus that exact digest. The digest
+binds the provider, model, destination, prompt hash, context hash, active-evidence
+provenance, and output limits. Only then does the CLI construct the selected optional
+adapter and read `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` from the OS-user
+environment. The adapters use fixed official API origins, ignore proxy environment
+variables, fail closed on SDK header/account-routing environment controls, refuse
+redirects, make one attempt with no SDK retry, request structured output, and expose
+no tools or fallback. OpenAI requests set `store=false`; provider retention outside
+available request controls remains governed by the operator's account and provider
+terms.
+
+The service re-reads the claim/evidence context after the provider returns and discards
+the response if its authorized digest changed. It validates response structure,
+limits, evidence-ID membership, metadata, and secret patterns. Successful text is
+returned only as ephemeral `agent_inference` candidates with uncertainty. Credentials,
+request content, response content, and candidates are not persisted or adopted.
 
 ## State and transactions
 
@@ -51,6 +88,14 @@ A newer or checksum-mismatched database fails closed.
 Audit rows are insert-only. Database triggers reject updates and deletes. Snapshot
 rows, snapshot content, evidence cards, and finding-citation links are likewise
 append-only. Evidence withdrawal is modeled as a new row rather than an edit.
+
+An authorized assistance call is deliberately not modeled as a domain mutation. A
+metadata-only `requested` audit event commits before egress and a separate terminal
+event commits after success, refusal, incomplete output, validation failure, stale
+context, or a caught provider failure. No database transaction can include the remote
+operation. Process termination can leave only the requested event, and a timeout or
+connection loss is recorded as an unknown provider outcome because the provider may
+have processed the request. Minerva does not retry it automatically.
 
 ## Exact citations
 
@@ -108,11 +153,15 @@ executable HTML; Minerva does not render user Markdown as raw HTML.
 
 ## Four operational invariants
 
-- **State lives** in the migrated SQLite database and immutable export files.
+- **State lives** in the migrated SQLite database and immutable export files. Provider
+  credentials and candidate responses are ephemeral and never become research state.
 - **Feedback lives** in structured errors, CLI exit status, health/ready endpoints,
-  doctor output, tests, and the append-only audit ledger.
+  doctor output, tests, and the append-only audit ledger. External assistance adds
+  metadata-only requested/terminal events and explicit unknown outcomes.
 - **Deleting a snapshot breaks** evidence and brief provenance, so foreign keys and
   append-only triggers prohibit it. Deleting/rewriting the database is outside the app.
 - **Timing works** because one command owns one `BEGIN IMMEDIATE` transaction; WAL
   permits readers, bounded busy waits expose write contention, and deterministic query
-  ordering removes completion-order ambiguity.
+  ordering removes completion-order ambiguity. The declared external-call exception
+  is bracketed, not atomic: it has one attempt, bounded timeout, post-call context
+  revalidation, and no automatic retry.

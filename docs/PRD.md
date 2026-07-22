@@ -1,4 +1,4 @@
-# Minerva Milestone 1 product requirements
+# Minerva product requirements: Milestone 1 and Milestone 2B
 
 ## Product identity
 
@@ -12,7 +12,7 @@ manufacture certainty.** Minerva manages a disciplined path from questions to
 claims, evidence, contradictions, uncertainty, reproducible work, and defensible
 conclusions. It never claims to determine truth.
 
-## Milestone outcome
+## Milestone 1 outcome
 
 A reviewer working completely offline after installation can create a mission,
 question, and falsifiable claim; import an immutable UTF-8 source snapshot; create
@@ -20,6 +20,21 @@ exactly located supporting and opposing evidence; inspect the evidence ledger;
 record labeled findings and uncertainty; and export deterministic Markdown and JSON
 briefs whose material statements resolve to stored snapshots and citations. Every
 state change is attributable through an append-only audit trail.
+
+## Milestone 2B outcome
+
+A local CLI operator can optionally ask OpenAI or Anthropic to draft finding
+candidates from one claim and its bounded active evidence. Before any external call,
+Minerva renders the exact disclosure context and a digest-bound request manifest. The
+operator must review that preview and explicitly authorize the same digest. The
+provider response is untrusted, validated candidate output only: it is labeled as
+agent inference, includes uncertainty and existing evidence IDs, and is neither
+persisted nor adopted as research state.
+
+This is a reviewed exception to the offline Milestone 1 boundary, not a general model
+or integration platform. It adds no model invocation to the REST API or web interface,
+no URL fetching, tools, code execution, provider fallback, automatic retry,
+publication, messaging, or autonomous research.
 
 ## Research vocabulary
 
@@ -88,15 +103,36 @@ unresolved question under the same citation rules as human-authored material.
 5. A material finding cannot be created without at least one same-mission evidence
    citation. Assumptions and unresolved questions may remain uncited only because
    their labels explicitly say they are not evidence-backed.
-6. Mutations and their audit records share one SQLite transaction. Rejected mutations
-   and failures that return control to Minerva leave neither domain state nor misleading
-   success events. This does not claim crash atomicity across SQLite and exported files.
+6. Domain mutations and their audit records share one SQLite transaction. Rejected
+   mutations and failures that return control to Minerva leave neither domain state
+   nor misleading success events. Ephemeral Milestone 2B assistance is not a domain
+   mutation; its metadata-only audit records bracket an external call and therefore
+   cannot share one atomic transaction with that call. This does not claim crash
+   atomicity across SQLite and exported files or external providers.
 7. Export ordering and canonical serialization are explicit. The export digest is
    SHA-256 over the canonical brief payload before the digest envelope is added.
 8. An export cannot include a material finding with a missing, withdrawn, detectably
    inconsistent, or unresolvable citation. Opposing and inconclusive evidence remain
    visible. Minerva has no external signature or anchor for detecting a determined
    same-OS-user coordinated rewrite.
+9. Assistance preview performs no credential read or network operation. It discloses
+   the exact canonical JSON that would be sent: the claim ID, statement, and
+   falsification criterion plus bounded active evidence citation IDs, quotes, and
+   stances. Withdrawn evidence is excluded; opposing and inconclusive evidence remains
+   visible. Byte offsets, snapshot digests, and supersession references remain local
+   but are bound into the request digest as provenance.
+10. Assistance authorization requires an explicit confirmation flag and the exact
+    SHA-256 from a fresh preview. The digest binds the provider, model, fixed
+    destination, prompt, exact context, candidate limit, and output-token limit.
+11. Provider credentials come only from the current OS-user environment after
+    authorization. Minerva does not persist credentials, provider prompts/responses,
+    or returned candidates. Locally accepted candidates are always labeled
+    `agent_inference` and never become evidence, findings, truth, confidence, or claim
+    status automatically.
+12. Each authorized provider call is attempted once, with no redirects, environment
+    proxy use, automatic retries, provider fallback, or tools. A timeout or connection
+    loss is an unknown provider outcome. Requested and terminal audit events contain
+    bounded metadata and digests only and are separate transactions around the call.
 
 ## User surfaces
 
@@ -108,9 +144,16 @@ unresolved question under the same citation rules as human-authored material.
 - `/api/v1` exposes strict contracts for later protocol adapters. Unknown fields are
   rejected, input sizes and pagination are bounded, and errors have stable codes.
 - `/healthz`, `/readyz`, and `/api/v1/capabilities` support local operations.
+- `minerva assist finding-candidates` is the only Milestone 2B model surface. It
+  previews by default and can invoke one of the two reviewed adapters only after exact
+  digest confirmation. There is no equivalent REST or web operation.
 
 ## Acceptance priorities
 
 When trade-offs are necessary: source immutability, citation correctness, opposing
 evidence, transaction/audit integrity, deterministic export, tests, documentation,
 then UI polish.
+
+For Milestone 2B, authorization integrity, bounded exact disclosure, credential
+secrecy, candidate-only semantics, and honest unknown-outcome audit records take
+priority over convenience or provider availability.

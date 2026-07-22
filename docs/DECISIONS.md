@@ -2,6 +2,7 @@
 
 - [ADR 0001: Use immutable snapshots and exact byte-span evidence](adr/0001-research-evidence-model.md)
 - [ADR 0002: Keep Athena, Icarus, and Oracle behind artifact/protocol seams](adr/0002-system-boundaries.md)
+- [ADR 0003: Require explicit BYOK consent for bounded model assistance](adr/0003-explicit-byok-model-assistance.md)
 
 ## Milestone 1 implementation decisions
 
@@ -21,3 +22,17 @@
   standalone pre-upgrade backup and the prior binary, not an in-place downgrade.
 - The project license is intentionally not selected here; licensing is a human legal
   decision and is not required to prove the vertical slice.
+
+## Milestone 2B implementation decisions
+
+- Model assistance is an optional CLI-only exception to the offline Milestone 1
+  boundary, not a general integration or autonomous-research platform.
+- Provider choice and model are explicit. Credentials are BYOK environment values,
+  loaded only after the operator authorizes the exact preview digest.
+- OpenAI and Anthropic are separate optional extras. Network/provider imports are
+  restricted to one reviewed adapter file per provider.
+- Exact active evidence is disclosed only after preview; model output is validated,
+  ephemeral candidate `agent_inference` and never research state.
+- Requested and terminal audit metadata bracket the external call but cannot be
+  transactionally atomic with it. Timeouts have unknown provider outcomes and are not
+  retried automatically.

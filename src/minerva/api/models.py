@@ -212,12 +212,18 @@ class LimitsRead(StrictModel):
     source_bytes: int
     request_body_bytes: int
     mission_page_size: int
+    assistant_context_bytes: int
+    assistant_evidence_cards: int
+    assistant_candidates: int
 
 
 class CapabilityManifestRead(StrictModel):
     schema_version: str
     api_version: str
     local_only: bool
+    loopback_only: bool
+    external_egress: str
+    supported_external_providers: list[str]
     identity_boundary: str
     citation_scheme: str
     brief_schema_version: str
