@@ -1233,6 +1233,7 @@ def _write_exclusive(directory_fd: int, name: str, content: bytes) -> _WrittenFi
                 "export_write_failed",
                 "The research brief could not be written.",
             )
+        os.fchmod(descriptor, 0o600)
         view = memoryview(content)
         written = 0
         while written < len(view):

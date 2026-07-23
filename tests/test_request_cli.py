@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import sqlite3
 import stat
@@ -515,6 +516,58 @@ def test_fulfillment_is_claim_scoped_canonical_deterministic_and_read_only(
     assert stat.S_IMODE((first_dir / "research-brief.json").stat().st_mode) == 0o600
     assert stat.S_IMODE((first_dir / "research-result.json").stat().st_mode) == 0o600
     assert _database_dump(lab.database) == before
+
+
+@pytest.mark.security
+def test_request_artifacts_enforce_0600_under_restrictive_umask(tmp_path: Path) -> None:
+    output_dir = tmp_path / "output"
+    output_dir.mkdir(mode=0o700)
+    original_umask = os.umask(0o777)
+    try:
+        synthesis_module.write_research_request_artifacts(
+            output_dir=output_dir,
+            brief_json=b"brief\n",
+            result_json=b"result\n",
+        )
+    finally:
+        os.umask(original_umask)
+
+    brief = output_dir / "research-brief.json"
+    result = output_dir / "research-result.json"
+    assert brief.read_bytes() == b"brief\n"
+    assert result.read_bytes() == b"result\n"
+    assert stat.S_IMODE(brief.stat().st_mode) == 0o600
+    assert stat.S_IMODE(result.stat().st_mode) == 0o600
+
+
+@pytest.mark.security
+def test_request_artifact_permission_failure_cleans_partial_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "output"
+    output_dir.mkdir(mode=0o700)
+    real_fchmod = synthesis_module.os.fchmod
+    chmod_calls = 0
+
+    def fail_second_fchmod(descriptor: int, mode: int) -> None:
+        nonlocal chmod_calls
+        chmod_calls += 1
+        if chmod_calls == 2:
+            raise OSError("synthetic permission failure")
+        real_fchmod(descriptor, mode)
+
+    monkeypatch.setattr(synthesis_module.os, "fchmod", fail_second_fchmod)
+
+    with pytest.raises(OSError, match="synthetic permission failure"):
+        synthesis_module.write_research_request_artifacts(
+            output_dir=output_dir,
+            brief_json=b"brief\n",
+            result_json=b"result\n",
+        )
+
+    assert chmod_calls == 2
+    assert list(output_dir.iterdir()) == []
 
 
 def test_fulfillment_retains_withdrawn_supersession_closure(
