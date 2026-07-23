@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 
 import minerva.core.db as db_module
-import minerva.core.operations as operations_module
 from conftest import SequenceIds, fixed_clock
 from minerva.core.audit import AuditRecorder, list_audit_events
 from minerva.core.db import Database, Migration, latest_schema_version
@@ -221,82 +220,312 @@ def test_backup_restore_preserves_state_and_owner_only_permissions(
     assert stat.S_IMODE(os.stat(restored_path).st_mode) == 0o600
 
 
-def test_failed_restore_audit_removes_base_and_all_sidecars(
+def test_successful_restore_persists_transactional_audit(
     database: Database,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backup = tmp_path / "standalone.db"
-    target = tmp_path / "failed-restore.db"
+    target = tmp_path / "restored.db"
     database.backup_to(backup)
     ids = SequenceIds()
     identity = IdentityContext(
-        actor_id="os-user:restore-cleanup-test",
+        actor_id="os-user:restore-audit-test",
         actor_kind=ActorKind.OS_USER,
         run_id=ids("run"),
-        purpose="restore audit cleanup",
+        purpose="restore audit persistence",
     )
-    original_cleanup = operations_module._unlink_database_if_same
 
-    def synthesize_sidecars_then_cleanup(path: Path, device: int, inode: int) -> bool:
-        assert path == target
-        for suffix in operations_module._SQLITE_SIDECAR_SUFFIXES:
-            Path(f"{path}{suffix}").write_bytes(b"synthetic orphan")
-        return original_cleanup(path, device, inode)
-
-    monkeypatch.setattr(
-        operations_module,
-        "_unlink_database_if_same",
-        synthesize_sidecars_then_cleanup,
+    restored = OperationsService.restore(
+        backup=backup,
+        target=target,
+        identity=identity,
+        clock=fixed_clock,
+        id_factory=ids,
     )
+
+    assert restored.path == target
+    with restored.read() as connection:
+        events = [
+            event for event in list_audit_events(connection) if event["run_id"] == identity.run_id
+        ]
+    assert [event["event_type"] for event in events] == [
+        "research.run.started",
+        "database.restored",
+    ]
+    assert events[-1]["details"] == {"schema_version": latest_schema_version()}
+    assert all(event["actor_id"] == identity.actor_id for event in events)
+    assert list(tmp_path.glob(f".{target.name}.minerva-*.tmp*")) == []
+
+
+def test_database_cleanup_preserves_concurrent_replacements(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    backup = tmp_path / "standalone.db"
+    target = tmp_path / "restore.db"
+    database.backup_to(backup)
+    ids = SequenceIds()
+    identity = IdentityContext(
+        actor_id="os-user:restore-replacement-test",
+        actor_kind=ActorKind.OS_USER,
+        run_id=ids("run"),
+        purpose="preserve concurrent restore replacements",
+    )
+    replacements: dict[Path, bytes] = {}
+
+    class ReplacingFailingAuditSink:
+        def __init__(self) -> None:
+            self.delegate = AuditRecorder(clock=fixed_clock, id_factory=ids)
+
+        def ensure_run(
+            self,
+            connection: sqlite3.Connection,
+            current_identity: IdentityContext,
+        ) -> None:
+            self.delegate.ensure_run(connection, current_identity)
+
+        def record(
+            self,
+            connection: sqlite3.Connection,
+            *,
+            identity: IdentityContext,
+            event_type: str,
+            entity_type: str,
+            entity_id: str,
+            mission_id: str | None,
+            details: Mapping[str, object] | None = None,
+        ) -> str:
+            assert event_type == "database.restored"
+            assert not target.exists()
+            staged_paths = list(tmp_path.glob(f".{target.name}.minerva-*.tmp"))
+            assert len(staged_paths) == 1
+            staged_path = staged_paths[0]
+            database_path = Path(str(connection.execute("PRAGMA database_list").fetchone()["file"]))
+            assert database_path == staged_path
+            replacement_size = staged_path.stat().st_size
+            assert replacement_size > 0
+
+            public_paths = [
+                target,
+                *(Path(f"{target}{suffix}") for suffix in ("-wal", "-shm", "-journal")),
+            ]
+            for index, public_path in enumerate(public_paths):
+                replacement = bytes([65 + index]) * replacement_size
+                public_path.write_bytes(replacement)
+                replacements[public_path] = replacement
+            assert {path.stat().st_size for path in public_paths} == {replacement_size}
+            raise RuntimeError("synthetic audit failure")
 
     with pytest.raises(RuntimeError, match="synthetic audit failure"):
         OperationsService.restore(
             backup=backup,
             target=target,
             identity=identity,
-            audit=FailingAuditSink(ids),
+            audit=ReplacingFailingAuditSink(),
             clock=fixed_clock,
             id_factory=ids,
         )
 
     assert backup.is_file()
-    for suffix in ("", *operations_module._SQLITE_SIDECAR_SUFFIXES):
-        assert not Path(f"{target}{suffix}").exists()
+    assert replacements
+    for path, expected in replacements.items():
+        assert path.read_bytes() == expected
+    assert list(tmp_path.glob(f".{target.name}.minerva-*.tmp*")) == []
 
 
-def test_database_cleanup_preserves_concurrent_replacements(
+def test_restore_revalidates_staged_database_after_audit_callback(
+    database: Database,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    target = tmp_path / "restore.db"
-    target.write_bytes(b"minerva-owned base")
-    base_metadata = os.stat(target, follow_symlinks=False)
-    replacement_bytes = b"B" * 32
-    sidecars = [Path(f"{target}{suffix}") for suffix in operations_module._SQLITE_SIDECAR_SUFFIXES]
-    for sidecar in sidecars:
-        sidecar.write_bytes(b"A" * 32)
-
-    original_unlink = operations_module._unlink_if_same
-
-    def unlink_then_replace(path: Path, device: int, inode: int) -> bool:
-        removed = original_unlink(path, device, inode)
-        if path == target and removed:
-            target.write_bytes(replacement_bytes)
-            for sidecar in sidecars:
-                sidecar.unlink()
-                sidecar.write_bytes(replacement_bytes)
-        return removed
-
-    monkeypatch.setattr(operations_module, "_unlink_if_same", unlink_then_replace)
-
-    assert operations_module._unlink_database_if_same(
-        target,
-        base_metadata.st_dev,
-        base_metadata.st_ino,
+    backup = tmp_path / "standalone.db"
+    target = tmp_path / "unpublished.db"
+    database.backup_to(backup)
+    ids = SequenceIds()
+    identity = IdentityContext(
+        actor_id="os-user:restore-revalidation-test",
+        actor_kind=ActorKind.OS_USER,
+        run_id=ids("run"),
+        purpose="restore post-audit revalidation",
     )
-    assert target.read_bytes() == replacement_bytes
-    assert all(sidecar.read_bytes() == replacement_bytes for sidecar in sidecars)
+
+    class TriggerRemovingAuditSink:
+        def __init__(self) -> None:
+            self.delegate = AuditRecorder(clock=fixed_clock, id_factory=ids)
+
+        def ensure_run(
+            self,
+            connection: sqlite3.Connection,
+            current_identity: IdentityContext,
+        ) -> None:
+            self.delegate.ensure_run(connection, current_identity)
+
+        def record(
+            self,
+            connection: sqlite3.Connection,
+            *,
+            identity: IdentityContext,
+            event_type: str,
+            entity_type: str,
+            entity_id: str,
+            mission_id: str | None,
+            details: Mapping[str, object] | None = None,
+        ) -> str:
+            audit_id = self.delegate.record(
+                connection,
+                identity=identity,
+                event_type=event_type,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                mission_id=mission_id,
+                details=details,
+            )
+            connection.execute("DROP TRIGGER audit_no_update")
+            return audit_id
+
+    with pytest.raises(IntegrityError) as caught:
+        OperationsService.restore(
+            backup=backup,
+            target=target,
+            identity=identity,
+            audit=TriggerRemovingAuditSink(),
+            clock=fixed_clock,
+            id_factory=ids,
+        )
+
+    assert caught.value.code == "backup_invalid"
+    assert not target.exists()
+    assert list(tmp_path.glob(f".{target.name}.minerva-*.tmp*")) == []
+
+
+def test_restore_rejects_staged_wal_retained_by_audit_reader(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    backup = tmp_path / "standalone.db"
+    target = tmp_path / "unpublished.db"
+    database.backup_to(backup)
+    ids = SequenceIds()
+    identity = IdentityContext(
+        actor_id="os-user:restore-reader-test",
+        actor_kind=ActorKind.OS_USER,
+        run_id=ids("run"),
+        purpose="retain the staged WAL during restore audit",
+    )
+    held_readers: list[sqlite3.Connection] = []
+
+    class ReaderRetainingAuditSink:
+        def __init__(self) -> None:
+            self.delegate = AuditRecorder(clock=fixed_clock, id_factory=ids)
+
+        def ensure_run(
+            self,
+            connection: sqlite3.Connection,
+            current_identity: IdentityContext,
+        ) -> None:
+            self.delegate.ensure_run(connection, current_identity)
+
+        def record(
+            self,
+            connection: sqlite3.Connection,
+            *,
+            identity: IdentityContext,
+            event_type: str,
+            entity_type: str,
+            entity_id: str,
+            mission_id: str | None,
+            details: Mapping[str, object] | None = None,
+        ) -> str:
+            audit_id = self.delegate.record(
+                connection,
+                identity=identity,
+                event_type=event_type,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                mission_id=mission_id,
+                details=details,
+            )
+            staged_path = Path(str(connection.execute("PRAGMA database_list").fetchone()["file"]))
+            reader = sqlite3.connect(staged_path)
+            try:
+                reader.execute("PRAGMA query_only = ON")
+                reader.execute("BEGIN")
+                reader.execute("SELECT COUNT(*) FROM audit_events").fetchone()
+            except BaseException:
+                reader.close()
+                raise
+            held_readers.append(reader)
+            assert Path(f"{staged_path}-wal").is_file()
+            return audit_id
+
+    try:
+        with pytest.raises(IntegrityError) as caught:
+            OperationsService.restore(
+                backup=backup,
+                target=target,
+                identity=identity,
+                audit=ReaderRetainingAuditSink(),
+                clock=fixed_clock,
+                id_factory=ids,
+            )
+        assert caught.value.code == "restore_not_standalone"
+        assert not target.exists()
+    finally:
+        for reader in held_readers:
+            reader.close()
+
+    assert held_readers
+    assert list(tmp_path.glob(f".{target.name}.minerva-*.tmp*")) == []
+
+
+def test_restore_rejects_valid_destination_wal_without_deleting_it(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    backup = tmp_path / "standalone.db"
+    target = tmp_path / "restored.db"
+    database.backup_to(backup)
+    backup_bytes = backup.read_bytes()
+    target.write_bytes(backup_bytes)
+    keeper = sqlite3.connect(target, isolation_level=None)
+    verifier: sqlite3.Connection | None = None
+    injected_value = "synthetic WAL injection"
+    try:
+        assert keeper.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+        keeper.execute("PRAGMA wal_autocheckpoint = 0")
+        keeper.execute("BEGIN IMMEDIATE")
+        keeper.execute("CREATE TABLE injected(value TEXT NOT NULL)")
+        keeper.execute("INSERT INTO injected(value) VALUES (?)", (injected_value,))
+        keeper.commit()
+
+        target.unlink()
+        target.write_bytes(backup_bytes)
+        verifier = sqlite3.connect(target)
+        assert verifier.execute("SELECT value FROM injected").fetchone()[0] == injected_value
+        target.unlink()
+
+        sidecars = [
+            Path(f"{target}{suffix}")
+            for suffix in ("-wal", "-shm")
+            if Path(f"{target}{suffix}").exists()
+        ]
+        assert {path.suffix for path in sidecars} == {".db-wal", ".db-shm"}
+        sidecar_bytes = {path: path.read_bytes() for path in sidecars}
+
+        with pytest.raises(ConflictError) as caught:
+            Database.restore_from(backup, target)
+
+        assert caught.value.code == "restore_destination_sidecar_exists"
+        assert not target.exists()
+        for path, expected in sidecar_bytes.items():
+            assert path.read_bytes() == expected
+    finally:
+        if verifier is not None:
+            verifier.close()
+        keeper.close()
+
+    assert not target.exists()
+    assert backup.read_bytes() == backup_bytes
+    assert list(tmp_path.glob(f".{target.name}.minerva-*.tmp*")) == []
 
 
 def test_backup_and_restore_refuse_existing_targets(

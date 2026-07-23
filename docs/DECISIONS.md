@@ -1,8 +1,9 @@
 # Decision index
 
 - [ADR 0001: Use immutable snapshots and exact byte-span evidence](adr/0001-research-evidence-model.md)
-- [ADR 0002: Keep Athena, Icarus, and Oracle behind artifact/protocol seams](adr/0002-system-boundaries.md)
+- [ADR 0002: Keep sibling systems behind artifact/protocol seams](adr/0002-system-boundaries.md)
 - [ADR 0003: Require explicit BYOK consent for bounded model assistance](adr/0003-explicit-byok-model-assistance.md)
+- [ADR 0004: Audit restored databases before exclusive publication](adr/0004-staged-restore-audit-publication.md)
 
 ## Milestone 1 implementation decisions
 
@@ -15,8 +16,20 @@
 - Duplicate source bytes produce equal digests but distinct provenance registrations.
 - User-supplied Markdown/HTML is displayed as escaped text; Milestone 1 does not need
   a rich renderer or sanitizer dependency.
-- Export digests cover a canonical semantic payload; the digest envelope itself is
-  excluded to avoid circular hashing.
+- The fixed `research-brief.json` export is the one canonical agent packet. Version 2
+  adds strict SQLite-independent parsing and verification, complete research and
+  provenance preservation, and an explicit no-execute/no-approve/no-orchestrate/
+  no-publish ownership boundary instead of creating a parallel format.
+- Export digests cover the compact, sorted-key canonical semantic payload; the digest
+  envelope itself is excluded to avoid circular hashing.
+- Capability manifest schema v2 is additive: packet/export and optional CLI-only
+  assistance support are advertised while sibling exchange, orchestration, experiment
+  execution, approval authority, and the future shared run envelope remain explicitly
+  unavailable.
+- A future shared run envelope is separately versioned from packet content. Its
+  artifact references bind schema version plus SHA-256, not paths or URLs, and its
+  fields provide correlation metadata rather than authentication, authority, truth,
+  approval, or guaranteed recovery.
 - Existing databases and export targets are never overwritten by normal commands.
 - Migrations are forward-only; recovery from an unwanted upgrade uses a verified
   standalone pre-upgrade backup and the prior binary, not an in-place downgrade.

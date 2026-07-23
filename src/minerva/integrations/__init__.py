@@ -1,1 +1,1 @@
-"""Reserved protocol seams; Milestone 1 has no live integrations."""
+"""Protocol seams and reviewed AI adapters; no live sibling-system integrations."""

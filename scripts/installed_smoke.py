@@ -356,6 +356,7 @@ if unexpected:
 
         web_probe = """
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -423,6 +424,54 @@ async def main():
             raise RuntimeError(f"installed web route {route} returned {status}")
         if route == "/static/style.css" and not body:
             raise RuntimeError("installed static CSS is empty")
+
+    capability_status, capability_body = await get(app, "/api/v1/capabilities")
+    if capability_status != 200:
+        raise RuntimeError(
+            f"installed capability manifest returned {capability_status}"
+        )
+    try:
+        capabilities = json.loads(capability_body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("installed capability manifest returned malformed JSON") from error
+    if not isinstance(capabilities, dict):
+        raise RuntimeError("installed capability manifest did not return an object")
+
+    advertised = capabilities.get("capabilities")
+    unavailable = capabilities.get("unavailable")
+    limits = capabilities.get("limits")
+    if (
+        capabilities.get("schema_version") != "minerva.capabilities.v2"
+        or capabilities.get("api_version") != "v1"
+        or capabilities.get("local_only") is not False
+        or capabilities.get("loopback_only") is not True
+        or capabilities.get("external_egress") != "disabled_by_default_cli_only"
+        or capabilities.get("supported_external_providers") != ["openai", "anthropic"]
+        or capabilities.get("identity_boundary") != "local_os_user"
+        or capabilities.get("citation_scheme") != "utf8-byte-offset-v1"
+        or capabilities.get("brief_schema_version") != "minerva.research-brief.v2"
+        or not isinstance(advertised, list)
+        or "brief.export.markdown_json" not in advertised
+        or "research.packet.v2.canonical" not in advertised
+        or "assist.finding_candidates.preview.cli" not in advertised
+        or "assist.finding_candidates.invoke.cli.byok.optional" not in advertised
+        or not isinstance(unavailable, list)
+        or "network.fetch" not in unavailable
+        or "model.invoke.api" not in unavailable
+        or "model.invoke.web" not in unavailable
+        or "model.output.auto_adopt" not in unavailable
+        or "provider.credential.persist" not in unavailable
+        or "sibling_artifact_exchange" not in unavailable
+        or "shared_run_envelope" not in unavailable
+        or "orchestration" not in unavailable
+        or "experiment_execution" not in unavailable
+        or "approval_authority" not in unavailable
+        or not isinstance(limits, dict)
+        or limits.get("assistant_context_bytes") != 65_536
+        or limits.get("assistant_evidence_cards") != 50
+        or limits.get("assistant_candidates") != 3
+    ):
+        raise RuntimeError("installed capability manifest is incomplete or untruthful")
 
 asyncio.run(main())
 """.strip()

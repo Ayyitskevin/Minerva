@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import errno
 import html
-import json
 import os
 import sqlite3
 import stat
@@ -18,18 +17,34 @@ from minerva.core.db import Database
 from minerva.core.errors import ConflictError, IntegrityError, NotFoundError
 from minerva.core.types import Clock, IdentityContext, IdFactory, new_id, utc_now
 from minerva.evidence.integrity import VerifiedCitation, verify_evidence_reference
+from minerva.integrations.research_packet import (
+    CITATION_SCHEME,
+    RESEARCH_PACKET_SCHEMA_VERSION,
+    build_research_packet,
+    serialize_research_packet,
+)
 from minerva.research.models import ClaimStatus, StatementKind
 from minerva.sources.integrity import verify_snapshot_integrity
 from minerva.synthesis.models import BriefArtifacts, ExportResult
 
-BRIEF_SCHEMA_VERSION = "minerva.research-brief.v1"
-CITATION_SCHEME = "utf8-byte-offset-v1"
+BRIEF_SCHEMA_VERSION = RESEARCH_PACKET_SCHEMA_VERSION
 MAX_EXPORT_BYTES = 5_242_880
 _MARKDOWN_NAME = "research-brief.md"
 MAX_SYNTHESIS_SOURCE_BYTES = 20_971_520
 MAX_SYNTHESIS_RECORDS = 50_000
 MAX_SYNTHESIS_REFERENCES = 20_000
 _JSON_NAME = "research-brief.json"
+
+_PACKET_AUDIT_EVENT_TYPES = (
+    "evidence.card.created",
+    "evidence.card.withdrawn",
+    "research.claim.created",
+    "research.claim.status_changed",
+    "research.finding.created",
+    "research.mission.created",
+    "research.question.created",
+    "source.snapshot.imported",
+)
 
 
 class SynthesisService:
@@ -192,6 +207,95 @@ def _claim_status_evidence_valid(
     return True
 
 
+def _packet_audit_references(
+    connection: sqlite3.Connection,
+    *,
+    mission_id: str,
+) -> list[dict[str, Any]]:
+    mission_rows = list(
+        connection.execute(
+            """
+            SELECT sequence, id, event_type, entity_type, entity_id, mission_id,
+                   actor_id, run_id, occurred_at
+            FROM audit_events
+            WHERE mission_id = ? AND event_type IN (?, ?, ?, ?, ?, ?, ?, ?)
+            ORDER BY sequence
+            """,
+            (mission_id, *_PACKET_AUDIT_EVENT_TYPES),
+        )
+    )
+    run_ids = sorted({str(row["run_id"]) for row in mission_rows})
+    run_rows: list[sqlite3.Row] = []
+    for run_id in run_ids:
+        rows = list(
+            connection.execute(
+                """
+                SELECT sequence, id, event_type, entity_type, entity_id, mission_id,
+                       actor_id, run_id, occurred_at
+                FROM audit_events
+                WHERE event_type = 'research.run.started'
+                  AND entity_type = 'research_run'
+                  AND entity_id = ?
+                """,
+                (run_id,),
+            )
+        )
+        if len(rows) != 1:
+            raise IntegrityError(
+                "packet_provenance_invalid",
+                "Research packet provenance could not be resolved.",
+            )
+        run_rows.append(rows[0])
+
+    rows = sorted((*run_rows, *mission_rows), key=lambda row: int(row["sequence"]))
+    return [
+        {
+            "sequence": int(row["sequence"]),
+            "id": str(row["id"]),
+            "event_type": str(row["event_type"]),
+            "entity_type": str(row["entity_type"]),
+            "entity_id": str(row["entity_id"]),
+            "mission_id": (str(row["mission_id"]) if row["mission_id"] is not None else None),
+            "actor_id": str(row["actor_id"]),
+            "run_id": str(row["run_id"]),
+            "occurred_at": str(row["occurred_at"]),
+        }
+        for row in rows
+    ]
+
+
+def _packet_runs(
+    connection: sqlite3.Connection,
+    *,
+    audit_references: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    run_ids = sorted({str(reference["run_id"]) for reference in audit_references})
+    runs: list[dict[str, str]] = []
+    for run_id in run_ids:
+        row = connection.execute(
+            """
+            SELECT id, actor_id, actor_kind, purpose, created_at
+            FROM research_runs WHERE id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise IntegrityError(
+                "packet_provenance_invalid",
+                "Research packet provenance could not be resolved.",
+            )
+        runs.append(
+            {
+                "id": str(row["id"]),
+                "actor_id": str(row["actor_id"]),
+                "actor_kind": str(row["actor_kind"]),
+                "purpose": str(row["purpose"]),
+                "created_at": str(row["created_at"]),
+            }
+        )
+    return sorted(runs, key=lambda item: (item["created_at"], item["id"]))
+
+
 def _assemble_brief(
     connection: sqlite3.Connection,
     *,
@@ -200,7 +304,7 @@ def _assemble_brief(
 ) -> BriefArtifacts:
     mission = connection.execute(
         """
-        SELECT id, title, objective, created_at
+        SELECT id, title, objective, creator_id, run_id, created_at
         FROM research_missions WHERE id = ?
         """,
         (mission_id,),
@@ -213,11 +317,15 @@ def _assemble_brief(
         {
             "id": str(row["id"]),
             "text": str(row["question_text"]),
+            "creator_id": str(row["creator_id"]),
+            "run_id": str(row["run_id"]),
+            "created_at": str(row["created_at"]),
             "epistemic_role": "research_question",
         }
         for row in connection.execute(
             """
-            SELECT id, question_text FROM research_questions
+            SELECT id, question_text, creator_id, run_id, created_at
+            FROM research_questions
             WHERE mission_id = ? ORDER BY created_at, id
             """,
             (mission_id,),
@@ -248,6 +356,8 @@ def _assemble_brief(
                 "byte_length": int(row["byte_length"]),
                 "sha256": str(row["sha256"]),
                 "imported_at": str(row["imported_at"]),
+                "creator_id": str(row["creator_id"]),
+                "run_id": str(row["run_id"]),
                 "url_metadata": (
                     str(row["url_metadata"]) if row["url_metadata"] is not None else None
                 ),
@@ -257,14 +367,22 @@ def _assemble_brief(
     evidence_rows = list(
         connection.execute(
             """
-            SELECT id, claim_id, supersedes_evidence_id, created_at
-            FROM evidence_cards WHERE mission_id = ? ORDER BY created_at, id
+            SELECT e.id, e.claim_id, e.supersedes_evidence_id,
+                   e.creator_id, e.run_id, e.created_at,
+                   w.reason AS withdrawal_reason,
+                   w.creator_id AS withdrawal_creator_id,
+                   w.run_id AS withdrawal_run_id,
+                   w.created_at AS withdrawn_at
+            FROM evidence_cards AS e
+            LEFT JOIN evidence_withdrawals AS w ON w.evidence_id = e.id
+            WHERE e.mission_id = ? ORDER BY e.created_at, e.id
             """,
             (mission_id,),
         )
     )
     verified_citations: list[VerifiedCitation] = []
     supersedes: dict[str, str | None] = {}
+    citation_provenance: dict[str, dict[str, str | None]] = {}
     for row in evidence_rows:
         evidence_id = str(row["id"])
         verified_citations.append(
@@ -280,6 +398,23 @@ def _assemble_brief(
             if row["supersedes_evidence_id"] is not None
             else None
         )
+        citation_provenance[evidence_id] = {
+            "creator_id": str(row["creator_id"]),
+            "run_id": str(row["run_id"]),
+            "created_at": str(row["created_at"]),
+            "withdrawal_reason": (
+                str(row["withdrawal_reason"]) if row["withdrawal_reason"] is not None else None
+            ),
+            "withdrawal_creator_id": (
+                str(row["withdrawal_creator_id"])
+                if row["withdrawal_creator_id"] is not None
+                else None
+            ),
+            "withdrawal_run_id": (
+                str(row["withdrawal_run_id"]) if row["withdrawal_run_id"] is not None else None
+            ),
+            "withdrawn_at": (str(row["withdrawn_at"]) if row["withdrawn_at"] is not None else None),
+        }
 
     verified_by_id = {citation.evidence_id: citation for citation in verified_citations}
 
@@ -297,9 +432,16 @@ def _assemble_brief(
             },
             "quote": citation.quote,
             "stance": citation.stance.value,
+            "creator_id": citation_provenance[citation.evidence_id]["creator_id"],
+            "run_id": citation_provenance[citation.evidence_id]["run_id"],
+            "created_at": citation_provenance[citation.evidence_id]["created_at"],
             "withdrawn": citation.withdrawn,
-            "withdrawal_reason": citation.withdrawal_reason,
-            "withdrawn_at": citation.withdrawn_at,
+            "withdrawal_reason": citation_provenance[citation.evidence_id]["withdrawal_reason"],
+            "withdrawal_creator_id": citation_provenance[citation.evidence_id][
+                "withdrawal_creator_id"
+            ],
+            "withdrawal_run_id": citation_provenance[citation.evidence_id]["withdrawal_run_id"],
+            "withdrawn_at": citation_provenance[citation.evidence_id]["withdrawn_at"],
             "supersedes_citation_id": supersedes[citation.evidence_id],
         }
         for citation in verified_citations
@@ -311,8 +453,13 @@ def _assemble_brief(
     claim_rows = connection.execute(
         """
         SELECT c.id, c.question_id, c.statement, c.falsification_criteria,
+               c.creator_id, c.run_id, c.created_at,
                s.status, s.version, s.reason, s.creator_id AS status_creator_id,
-               s.run_id AS status_run_id, s.created_at AS status_changed_at
+               s.run_id AS status_run_id, s.created_at AS status_changed_at,
+               (
+                   SELECT COUNT(*) FROM claim_status_events AS history
+                   WHERE history.claim_id = c.id
+               ) AS status_event_count
         FROM claims AS c
         JOIN claim_status_events AS s
           ON s.claim_id = c.id
@@ -329,6 +476,11 @@ def _assemble_brief(
     claims: list[dict[str, Any]] = []
     for row in claim_rows:
         claim_id = str(row["id"])
+        if int(row["status_event_count"]) != int(row["version"]):
+            raise IntegrityError(
+                "packet_provenance_invalid",
+                "Research packet provenance could not be resolved.",
+            )
         claim_citations = citations_by_claim.get(claim_id, [])
         active_support = any(
             item["stance"] == "supports" and not item["withdrawn"] for item in claim_citations
@@ -348,6 +500,9 @@ def _assemble_brief(
                 "question_id": str(row["question_id"]),
                 "statement": str(row["statement"]),
                 "falsification_criteria": str(row["falsification_criteria"]),
+                "creator_id": str(row["creator_id"]),
+                "run_id": str(row["run_id"]),
+                "created_at": str(row["created_at"]),
                 "status": status.value,
                 "version": int(row["version"]),
                 "status_reason": str(row["reason"]),
@@ -376,7 +531,8 @@ def _assemble_brief(
     uncertainties: list[dict[str, str]] = []
     finding_rows = connection.execute(
         """
-        SELECT id, claim_id, statement, statement_kind, status, uncertainty
+        SELECT id, claim_id, statement, statement_kind, status, uncertainty,
+               creator_id, run_id, created_at
         FROM findings WHERE mission_id = ? ORDER BY created_at, id
         """,
         (mission_id,),
@@ -421,6 +577,9 @@ def _assemble_brief(
             "status": str(row["status"]),
             "citation_ids": evidence_ids,
             "uncertainty": str(row["uncertainty"]),
+            "creator_id": str(row["creator_id"]),
+            "run_id": str(row["run_id"]),
+            "created_at": str(row["created_at"]),
         }
         if kind is StatementKind.ASSUMPTION:
             assumptions.append(item)
@@ -431,15 +590,28 @@ def _assemble_brief(
         if str(row["uncertainty"]):
             uncertainties.append({"finding_id": finding_id, "text": str(row["uncertainty"])})
 
+    audit_references = _packet_audit_references(connection, mission_id=mission_id)
+    runs = _packet_runs(connection, audit_references=audit_references)
+
     payload: dict[str, Any] = {
         "schema_version": BRIEF_SCHEMA_VERSION,
         "doctrine": (
             "Minerva records evidence and uncertainty; it does not manufacture certainty."
         ),
+        "ownership": {
+            "system": "minerva",
+            "researches": True,
+            "executes": False,
+            "approves": False,
+            "orchestrates": False,
+            "publishes": False,
+        },
         "mission": {
             "id": str(mission["id"]),
             "title": str(mission["title"]),
             "objective": str(mission["objective"]),
+            "creator_id": str(mission["creator_id"]),
+            "run_id": str(mission["run_id"]),
             "created_at": str(mission["created_at"]),
             "epistemic_role": "research_scope",
         },
@@ -451,6 +623,8 @@ def _assemble_brief(
         "uncertainties": uncertainties,
         "citations": citations,
         "sources": sources,
+        "runs": runs,
+        "audit_references": audit_references,
         "integrity": {
             "citation_scheme": CITATION_SCHEME,
             "source_digest_algorithm": "sha256",
@@ -463,28 +637,26 @@ def _assemble_brief(
         },
     }
 
-    canonical_payload = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
+    try:
+        document = build_research_packet(payload)
+        json_bytes = serialize_research_packet(document)
+    except ValueError as error:
+        raise IntegrityError(
+            "packet_integrity_invalid",
+            "Research packet integrity validation failed.",
+        ) from error
+    validated_payload = document.brief.model_dump(mode="json")
+    export_digest = document.export_digest
+    markdown_bytes = _render_markdown(
+        validated_payload,
+        export_digest=export_digest,
     ).encode("utf-8")
-    export_digest = sha256(canonical_payload).hexdigest()
-    document = {
-        "schema_version": BRIEF_SCHEMA_VERSION,
-        "export_digest": export_digest,
-        "brief": payload,
-    }
-    json_bytes = (json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
-        "utf-8"
-    )
-    markdown_bytes = _render_markdown(payload, export_digest=export_digest).encode("utf-8")
 
     if len(json_bytes) > max_export_bytes or len(markdown_bytes) > max_export_bytes:
         raise IntegrityError("brief_too_large", "The research brief exceeds the export limit.")
 
     return BriefArtifacts(
-        payload=payload,
+        payload=validated_payload,
         export_digest=export_digest,
         markdown=markdown_bytes,
         json=json_bytes,

@@ -5,11 +5,11 @@
 Minerva is a local-first, provenance-first research laboratory for humans and AI
 agents. It records evidence and uncertainty; it does not manufacture certainty.
 
-Milestone 1 supports an offline research vertical slice: create a mission, question,
-and falsifiable claim; snapshot local UTF-8 source material; attach exact supporting
-and opposing evidence; inspect its ledger; record labeled findings; and export a
-deterministic Markdown/JSON brief with resolvable citations and an append-only audit
-trail.
+Milestone 1.1 supports an offline research vertical slice: create a mission, question,
+and falsifiable claim; snapshot local UTF-8 source material; attach exact supporting,
+opposing, contextual, or inconclusive evidence; inspect its ledger; record labeled
+findings; and export a deterministic Markdown brief plus a canonical, machine-verifiable
+JSON research packet with resolvable citations and append-only audit provenance.
 
 Milestone 2B adds one deliberately narrow, optional assistance surface. A local CLI
 operator can preview a bounded request made from one claim and its active evidence,
@@ -21,10 +21,11 @@ adopt it as evidence, a finding, or research state.
 
 Minerva is alpha software for one trusted OS user. The web server binds to
 `127.0.0.1`; loopback is not authentication. Do not expose it remotely. Source data
-remains local during every Milestone 1 workflow, URL metadata is never fetched, and
-the offline demo performs no network operation. The first milestone has no model,
-shell, notebook, plugin, sibling-repository integration, publishing, or messaging
-surface.
+remains local during every Milestone 1.1 workflow, URL metadata is never fetched, and
+the offline demo performs no network operation. Milestone 1.1 has no model, shell,
+notebook, plugin, sibling-repository exchange, orchestration, experiment execution,
+approval, external publishing, or messaging surface. Local brief export is not
+publication.
 
 The reviewed Milestone 2B exception is CLI-only and opt-in. Preview performs no
 network operation and shows the exact JSON context, destination, limits, and request
@@ -95,6 +96,29 @@ minerva doctor --db research.db --deep
 Repeat `evidence add` with an opposing source to make contradiction visible. Material
 findings are created with `finding add` and require evidence IDs; assumptions and
 unresolved questions remain explicitly labeled.
+
+## Canonical research packet
+
+`research-brief.json` is the single canonical agent-facing artifact; Milestone 1.1
+upgrades that existing fixed filename in place to the strict
+`minerva.research-brief.v2` contract rather than adding a parallel packet format. It
+preserves the mission and questions, proposition-only claims, every evidence stance,
+exact citation locations and quotes, source digests, findings, assumptions, unresolved
+questions, uncertainties, creator/run provenance, and relevant audit references.
+
+The packet is independent of SQLite at the protocol boundary. Its strict parser and
+verifier reject malformed structure, digest mismatches, broken references, and a
+status presented as evidence-valid without its required active, resolvable citation
+stances. Supersession validation is linear in citation count, and untrusted packet
+input is rejected above the 20 MiB protocol ceiling. Honest open and inconclusive
+states remain visible. The export digest is SHA-256 over the compact, sorted-key
+canonical semantic payload, so fixed research state and schema produce byte-identical
+packet output. The packet also states its authority boundary in data: Minerva
+researches; it does not execute, approve, orchestrate, or publish.
+
+No sibling system consumes or receives the packet in this milestone. Future exchange
+must use explicit versioned artifact references and the protocol boundary described in
+[ADR 0002](docs/adr/0002-system-boundaries.md).
 
 ## Optional external finding candidates
 

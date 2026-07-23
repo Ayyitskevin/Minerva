@@ -221,6 +221,26 @@ def _require_standalone_backup(backup: Path) -> None:
             )
 
 
+def _require_standalone_staged_restore(staged: Path) -> None:
+    for suffix in ("-wal", "-shm", "-journal"):
+        sidecar = Path(f"{staged}{suffix}")
+        if sidecar.exists() or sidecar.is_symlink():
+            raise IntegrityError(
+                "restore_not_standalone",
+                "The restored database has live SQLite sidecars and cannot be published safely.",
+            )
+
+
+def _reject_restore_destination_sidecars(target: Path) -> None:
+    for suffix in ("-wal", "-shm", "-journal"):
+        sidecar = Path(f"{target}{suffix}")
+        if sidecar.exists() or sidecar.is_symlink():
+            raise ConflictError(
+                "restore_destination_sidecar_exists",
+                "Refusing to publish beside an existing SQLite sidecar.",
+            )
+
+
 def _remove_database_artifacts(path: Path) -> None:
     for suffix in ("", "-wal", "-shm", "-journal"):
         with suppress(OSError):
@@ -472,7 +492,13 @@ class Database:
             staged.cleanup()
 
     @classmethod
-    def restore_from(cls, backup: Path, target: Path) -> Database:
+    def restore_from(
+        cls,
+        backup: Path,
+        target: Path,
+        *,
+        on_ready: Callable[[sqlite3.Connection, int], None] | None = None,
+    ) -> Database:
         _reject_unsafe_database_path(backup)
         _reject_unsafe_database_path(target)
         if not backup.is_file() or backup.is_symlink():
@@ -518,7 +544,7 @@ class Database:
 
             _require_standalone_backup(backup)
             restored = cls(staged.path)
-            restored.initialize()
+            restored.initialize(on_ready=on_ready)
             from minerva.core.doctor import run_doctor
 
             report = run_doctor(restored, deep=True)
@@ -528,6 +554,8 @@ class Database:
                     "The restored database failed integrity validation.",
                 )
             _require_standalone_backup(backup)
+            _reject_restore_destination_sidecars(target)
+            _require_standalone_staged_restore(staged.path)
             _publish_private_database(staged, target, conflict_code="database_exists")
             return cls(target)
         finally:

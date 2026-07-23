@@ -9,6 +9,24 @@
 - Shared services behind CLI, strict REST, and server-rendered review UI
 - Offline synthetic demo, packaging, backup/restore, doctor, and security gates
 
+## Milestone 1.1: protocol-ready research packet
+
+- The existing `research-brief.json` is upgraded in place to the canonical strict
+  `minerva.research-brief.v2` packet; no parallel interchange artifact is introduced.
+- Deterministic canonical serialization and SHA-256 verification are independent of
+  SQLite at the protocol boundary.
+- The packet preserves exact citations and all evidence stances, research findings and
+  uncertainty classes, creator/run provenance, and relevant audit references.
+- Local source intake double-reads the same pinned descriptor and fails closed when
+  content or path identity changes during the snapshot window.
+- Restore audit writes and deep validation complete on unpublished staging state before
+  exclusive publication; public replacements are never removed during failed restore.
+- Machine-readable ownership states that Minerva researches but does not execute,
+  approve, orchestrate, or publish.
+- The additive `minerva.capabilities.v2` manifest advertises canonical packet support
+  and truthfully marks sibling exchange, a shared run envelope, orchestration,
+  experiment execution, and approval authority unavailable.
+
 ## Milestone 2B: explicit evidence-constrained model assistance
 
 - Optional OpenAI and Anthropic extras with operator-supplied environment credentials
@@ -21,8 +39,13 @@
 
 ## Later milestones, not implemented now
 
-- Authenticated Athena mission/identity protocol adapter
+- Authenticated Athena mission/identity coordination adapter
 - Approved Icarus experiment request/result artifacts
+- Tribunal approval references that bind a packet digest without changing research
+  claim status
+- Bounded versioned artifact exchange with Vanguard and Warren after their roles and
+  trust contracts are separately approved
+- A separately versioned shared run envelope for correlation and recovery metadata
 - Oracle archival adapter for digest-addressed sources and final artifacts
 - MCP after the core contract is stable and authenticated
 - Autonomous web research, URL fetching, crawling, PDF/OCR ingestion

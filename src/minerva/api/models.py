@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from minerva.evidence.models import EvidenceCard, EvidenceStance
+from minerva.integrations.research_packet import ResearchPacketDocument
 from minerva.research.models import (
     CitationStatus,
     Claim,
@@ -190,7 +191,7 @@ class BriefPreviewRead(StrictModel):
     markdown_sha256: str
     json_sha256: str
     markdown: str
-    json_document: dict[str, Any]
+    json_document: ResearchPacketDocument
 
 
 class HealthRead(StrictModel):

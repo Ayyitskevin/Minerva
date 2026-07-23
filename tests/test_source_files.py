@@ -164,16 +164,80 @@ def test_identity_or_content_change_during_read_fails_closed(
 ) -> None:
     target = tmp_path / "source.txt"
     target.write_bytes(b"original evidence")
+    initial = target.stat()
     original_read = source_files._read_bounded
+    read_count = 0
 
     def read_then_mutate(descriptor: int, max_bytes: int) -> bytes:
+        nonlocal read_count
         result = original_read(descriptor, max_bytes)
-        target.write_bytes(b"modified evidence")
+        if read_count == 0:
+            replacement = b"modified evidence"
+            assert len(replacement) == len(result)
+            target.write_bytes(replacement)
+            os.utime(target, ns=(initial.st_atime_ns, initial.st_mtime_ns))
+        read_count += 1
         return result
 
     monkeypatch.setattr(source_files, "_read_bounded", read_then_mutate)
+    monkeypatch.setattr(
+        source_files,
+        "_file_version",
+        lambda metadata: (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_size,
+            initial.st_mtime_ns,
+            initial.st_ctime_ns,
+        ),
+    )
 
     _assert_read_error(tmp_path, "source.txt", 100, "source_changed")
+
+
+def test_unlink_and_recreate_during_read_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "source.txt"
+    payload = b"original evidence"
+    target.write_bytes(payload)
+    initial = target.stat()
+    original_read = source_files._read_bounded
+    replaced = False
+
+    def read_then_replace(descriptor: int, max_bytes: int) -> bytes:
+        nonlocal replaced
+        result = original_read(descriptor, max_bytes)
+        if not replaced:
+            opened = os.fstat(descriptor)
+            target.unlink()
+            target.write_bytes(payload)
+            os.utime(target, ns=(initial.st_atime_ns, initial.st_mtime_ns))
+            replacement = os.stat(target, follow_symlinks=False)
+            assert replacement.st_size == opened.st_size
+            assert (replacement.st_dev, replacement.st_ino) != (
+                opened.st_dev,
+                opened.st_ino,
+            )
+            replaced = True
+        return result
+
+    monkeypatch.setattr(source_files, "_read_bounded", read_then_replace)
+    monkeypatch.setattr(
+        source_files,
+        "_file_version",
+        lambda metadata: (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_size,
+            initial.st_mtime_ns,
+            initial.st_ctime_ns,
+        ),
+    )
+
+    _assert_read_error(tmp_path, "source.txt", 100, "source_changed")
+    assert target.read_bytes() == payload
 
 
 @pytest.mark.parametrize(

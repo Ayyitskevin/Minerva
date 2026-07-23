@@ -48,12 +48,17 @@ from minerva.assist.service import (
     MAX_ASSISTANCE_EVIDENCE_CARDS,
 )
 from minerva.core.db import Database
-from minerva.core.errors import ConflictError, IntegrityError, SecurityBoundaryError
+from minerva.core.errors import ConflictError, SecurityBoundaryError
 from minerva.core.types import IdentityContext, local_identity
 from minerva.evidence.service import EvidenceService
+from minerva.integrations.research_packet import (
+    CITATION_SCHEME,
+    RESEARCH_PACKET_SCHEMA_VERSION,
+    parse_research_packet,
+)
 from minerva.research.service import ResearchService
 from minerva.sources.service import DEFAULT_MAX_SOURCE_BYTES, SourceService
-from minerva.synthesis.service import BRIEF_SCHEMA_VERSION, CITATION_SCHEME, SynthesisService
+from minerva.synthesis.service import SynthesisService
 
 API_VERSION: Final = "v1"
 MAX_COLLECTION_PAGE_SIZE: Final = 200
@@ -66,6 +71,7 @@ _CURSOR_KINDS: Final = frozenset(
 _CURSOR_ID_RE: Final = re.compile(r"[a-z]{3}_[0-9a-f]{32}\Z")
 _CURSOR_TIMESTAMP_RE: Final = re.compile(r"[0-9T:+.Z-]{1,64}\Z")
 CAPABILITY_SCHEMA_VERSION: Final = "minerva.capabilities.v2"
+BRIEF_SCHEMA_VERSION: Final = RESEARCH_PACKET_SCHEMA_VERSION
 MAX_REQUEST_BODY_BYTES: Final = 5_242_880
 MAX_MISSION_PAGE_SIZE: Final = 200
 
@@ -273,6 +279,8 @@ def create_api_router(database: Database) -> APIRouter:
                 "finding.create",
                 "claim.evidence_ledger.read",
                 "brief.preview.markdown_json",
+                "brief.export.markdown_json",
+                "research.packet.v2.canonical",
                 "web.review",
                 "assist.finding_candidates.preview.cli",
                 "assist.finding_candidates.invoke.cli.byok.optional",
@@ -287,6 +295,11 @@ def create_api_router(database: Database) -> APIRouter:
                 "multi_user_auth",
                 "publish",
                 "remote_actor_headers",
+                "sibling_artifact_exchange",
+                "shared_run_envelope",
+                "orchestration",
+                "experiment_execution",
+                "approval_authority",
             ],
             limits=LimitsRead(
                 source_bytes=DEFAULT_MAX_SOURCE_BYTES,
@@ -599,13 +612,7 @@ def create_api_router(database: Database) -> APIRouter:
     @router.get("/missions/{mission_id}/brief-preview", response_model=BriefPreviewRead)
     def brief_preview(mission_id: _RESOURCE_ID) -> BriefPreviewRead:
         artifacts = synthesis.build_brief(mission_id)
-        raw_document: Any = json.loads(artifacts.json)
-        if not isinstance(raw_document, dict):
-            raise IntegrityError(
-                "brief_invalid",
-                "The research brief could not be represented safely.",
-            )
-        document = cast(dict[str, Any], raw_document)
+        document = parse_research_packet(artifacts.json)
         return BriefPreviewRead(
             schema_version=BRIEF_SCHEMA_VERSION,
             export_digest=artifacts.export_digest,

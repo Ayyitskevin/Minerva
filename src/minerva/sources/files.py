@@ -244,6 +244,10 @@ def read_local_utf8(root: Path, relative_path: str, max_bytes: int) -> LocalUtf8
 
         content = _read_bounded(file_fd, max_bytes)
         _verify_unchanged(directory_fd, components[-1], file_fd, before)
+        reread = _reread_bounded(file_fd, max_bytes)
+        if reread != content:
+            raise SourceFileError(SourceFileErrorCode.SOURCE_CHANGED)
+        _verify_unchanged(directory_fd, components[-1], file_fd, before)
     finally:
         _safe_close(file_fd)
         _safe_close(directory_fd)
@@ -391,6 +395,16 @@ def _read_bounded(descriptor: int, max_bytes: int) -> bytes:
         content.extend(chunk)
         if len(content) > max_bytes:
             raise SourceFileError(SourceFileErrorCode.SOURCE_TOO_LARGE)
+
+
+def _reread_bounded(descriptor: int, max_bytes: int) -> bytes:
+    """Re-read the same open file description from byte zero."""
+
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+    except OSError:
+        raise SourceFileError(SourceFileErrorCode.SOURCE_READ_FAILED) from None
+    return _read_bounded(descriptor, max_bytes)
 
 
 def _verify_unchanged(
