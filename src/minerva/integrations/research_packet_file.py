@@ -22,6 +22,7 @@ from minerva.integrations.research_packet import (
 )
 
 _READ_CHUNK_BYTES = 65_536
+_MAX_CLASSIFIED_VALIDATION_ERRORS = 32
 _EVIDENCE_STANCES: tuple[EvidenceStance, ...] = (
     "supports",
     "opposes",
@@ -55,6 +56,11 @@ def load_research_packet(path: Path) -> ResearchPacketDocument:
             _fail(
                 "packet_nonstandard_number",
                 "The research packet contains a non-standard JSON number.",
+            )
+        if message.startswith("research packet JSON "):
+            _fail(
+                "packet_too_complex",
+                "The research packet JSON structure exceeds a safety limit.",
             )
         _fail("packet_malformed", "The research packet contains invalid JSON.")
 
@@ -123,7 +129,11 @@ def packet_inspection_report(document: ResearchPacketDocument) -> dict[str, obje
 
 def _read_stable_packet_bytes(path: Path) -> bytes:
     try:
-        absolute = Path(os.path.abspath(path))
+        raw_path = os.fspath(path)
+        candidate = Path(raw_path)
+        if "\0" in raw_path or os.pardir in candidate.parts:
+            _fail("packet_input_unsafe", "The research packet input path is unsafe.")
+        absolute = candidate if candidate.is_absolute() else Path.cwd() / candidate
     except (OSError, TypeError, ValueError):
         _fail("packet_input_unsafe", "The research packet input path is unsafe.")
     components = absolute.parts[1:]
@@ -193,27 +203,47 @@ def _open_directory(parent_fd: int, name: str) -> int:
 
 
 def _open_regular_file(parent_fd: int, name: str) -> tuple[int, os.stat_result]:
-    before = _stat_entry(parent_fd, name)
-    if stat.S_ISLNK(before.st_mode):
-        _fail("packet_input_symlink", "Research packet paths may not use symbolic links.")
-    if not stat.S_ISREG(before.st_mode):
-        _fail("packet_input_unsafe", "The research packet input must be a regular file.")
-    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
-    if hasattr(os, "O_NOCTTY"):
-        flags |= os.O_NOCTTY
+    path_only_flag = getattr(os, "O_PATH", None)
+    if path_only_flag is None:
+        _fail("packet_input_unreadable", "The research packet could not be read safely.")
+
+    anchor_fd: int | None = None
     try:
-        descriptor = os.open(name, flags, dir_fd=parent_fd)
+        anchor_fd = os.open(
+            name,
+            path_only_flag | os.O_CLOEXEC | os.O_NOFOLLOW,
+            dir_fd=parent_fd,
+        )
     except OSError as error:
         _raise_path_os_error(error)
     try:
-        opened = os.fstat(descriptor)
-    except OSError:
-        _safe_close(descriptor)
-        _fail("packet_input_changed", "The research packet changed while opening.")
-    if not stat.S_ISREG(opened.st_mode) or not _same_identity(before, opened):
-        _safe_close(descriptor)
-        _fail("packet_input_changed", "The research packet changed while opening.")
-    return descriptor, opened
+        try:
+            anchored = os.fstat(anchor_fd)
+        except OSError:
+            _fail("packet_input_changed", "The research packet changed while opening.")
+        if stat.S_ISLNK(anchored.st_mode):
+            _fail("packet_input_symlink", "Research packet paths may not use symbolic links.")
+        if not stat.S_ISREG(anchored.st_mode):
+            _fail("packet_input_unsafe", "The research packet input must be a regular file.")
+
+        flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK
+        if hasattr(os, "O_NOCTTY"):
+            flags |= os.O_NOCTTY
+        try:
+            descriptor = os.open(f"/proc/self/fd/{anchor_fd}", flags)
+        except OSError:
+            _fail("packet_input_unreadable", "The research packet could not be read safely.")
+        try:
+            opened = os.fstat(descriptor)
+        except OSError:
+            _safe_close(descriptor)
+            _fail("packet_input_changed", "The research packet changed while opening.")
+        if not stat.S_ISREG(opened.st_mode) or not _same_identity(anchored, opened):
+            _safe_close(descriptor)
+            _fail("packet_input_changed", "The research packet changed while opening.")
+        return descriptor, opened
+    finally:
+        _safe_close(anchor_fd)
 
 
 def _stat_entry(parent_fd: int, name: str) -> os.stat_result:
@@ -286,6 +316,11 @@ def _verify_unchanged(
 
 
 def _raise_validation_failure(error: ValidationError) -> Never:
+    if error.error_count() > _MAX_CLASSIFIED_VALIDATION_ERRORS:
+        _fail(
+            "packet_invalid",
+            "The research packet failed strict structure or semantic verification.",
+        )
     details = error.errors(include_input=False, include_url=False)
     if any(
         detail["type"] == "literal_error" and tuple(detail["loc"])[-1:] == ("schema_version",)

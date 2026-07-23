@@ -162,6 +162,26 @@ def test_packet_commands_reject_final_and_parent_symlinks(
     )
 
 
+@pytest.mark.parametrize("command", ["verify", "inspect"])
+def test_packet_commands_reject_parent_segments_before_path_normalization(
+    command: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "research-brief.json").write_bytes(_GOLDEN.read_bytes())
+    elsewhere = tmp_path / "elsewhere"
+    nested = elsewhere / "nested"
+    nested.mkdir(parents=True)
+    (elsewhere / "research-brief.json").write_text("not the selected packet", encoding="utf-8")
+    (root / "linked").symlink_to(nested, target_is_directory=True)
+
+    ambiguous = root / "linked" / ".." / "research-brief.json"
+
+    _failure(capsys, command, ambiguous, "packet_input_unsafe")
+
+
 @pytest.mark.parametrize(
     ("kind", "expected_code"),
     [
@@ -183,6 +203,38 @@ def test_packet_commands_reject_missing_and_non_regular_inputs_without_blocking(
         os.mkfifo(target)
 
     _failure(capsys, "verify", target, expected_code)
+
+
+@pytest.mark.skipif(not hasattr(os, "O_PATH"), reason="Linux O_PATH boundary")
+def test_packet_reader_classifies_device_through_path_only_descriptor(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_open = os.open
+    device_open_flags: list[int] = []
+    opened_paths: list[str] = []
+
+    def recording_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        opened_paths.append(os.fsdecode(path))
+        if os.fsdecode(path) == "null":
+            device_open_flags.append(flags)
+        if dir_fd is None:
+            return real_open(path, flags, mode)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(packet_file_module.os, "open", recording_open)
+
+    _failure(capsys, "verify", Path(os.devnull), "packet_input_unsafe")
+
+    assert len(device_open_flags) == 1
+    assert device_open_flags[0] & os.O_PATH
+    assert not any(path.startswith("/proc/self/fd/") for path in opened_paths)
 
 
 def test_packet_file_size_is_rejected_before_parser_invocation(
@@ -286,3 +338,45 @@ def test_packet_command_returns_bounded_non_reflective_errors_for_hostile_input(
 
     assert sentinel not in error
     assert str(target) not in error
+
+
+def test_packet_command_bounds_wide_validation_error_fanout(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    document = json.loads(_GOLDEN.read_bytes())
+    document["brief"]["questions"] = [None] * 100_000
+    target = tmp_path / "wide-invalid.json"
+    target.write_text(json.dumps(document, separators=(",", ":")), encoding="utf-8")
+
+    _failure(capsys, "verify", target, "packet_invalid")
+
+
+def test_packet_command_caps_validation_error_classification(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    document = json.loads(_GOLDEN.read_bytes())
+    document.update({f"unexpected_{index}": None for index in range(40)})
+    target = tmp_path / "many-unknown-fields.json"
+    target.write_text(json.dumps(document, separators=(",", ":")), encoding="utf-8")
+
+    _failure(capsys, "verify", target, "packet_invalid")
+
+
+@pytest.mark.parametrize("shape", ["wide_object", "deep_array"])
+def test_packet_command_rejects_excessive_json_shape_before_model_validation(
+    shape: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    if shape == "wide_object":
+        value: object = {f"field_{index}": None for index in range(65)}
+    else:
+        value = None
+        for _index in range(66):
+            value = [value]
+    target = tmp_path / "complex.json"
+    target.write_text(json.dumps(value, separators=(",", ":")), encoding="utf-8")
+
+    _failure(capsys, "verify", target, "packet_too_complex")
