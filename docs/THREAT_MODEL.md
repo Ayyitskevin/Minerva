@@ -1,4 +1,4 @@
-# Current threat model: Milestone 1 and Milestone 2B
+# Current threat model: Milestones 1, 1.3, and 2B
 
 ## Boundary and assets
 
@@ -8,8 +8,9 @@ authorization, and remote access are explicitly deferred. The application must n
 pretend a caller-supplied header is an authenticated identity.
 
 Protected assets are source snapshot contents, local filesystem paths, provenance and
-audit integrity, citation correctness, exported research artifacts, provider
-credentials, and the operator's control over which exact evidence leaves the machine.
+audit integrity, citation correctness, exported research artifacts, request/result
+binding integrity, provider credentials, and the operator's control over which exact
+evidence leaves the machine.
 
 ## Threats and controls
 
@@ -20,6 +21,9 @@ credentials, and the operator's control over which exact evidence leaves the mac
 | Oversized or malformed requests | Whole-request byte cap before framework parsing; Pydantic field bounds; bounded pagination | Body buffering uses memory up to the configured cap |
 | Oversized or adversarial research packet | Reject above 20 MiB before JSON decoding; strict fail-fast DTOs; bound JSON object width/depth and error classification; linear-time dependency and citation-supersession checks | A packet within the cap still consumes bounded parse and validation memory |
 | Unsafe standalone packet path | Reject `..`; descriptor-relative component walk with `O_NOFOLLOW`; `O_PATH`-pin and type-check the final target before readable open; metadata cap before read; two stable reads | A trusted same-OS-user process can still coordinate changes outside the finite observation window |
+| Hostile offline research request | Same no-follow stable-file boundary; 64 KiB cap before decode; strict canonical DTO/digest; duplicate/non-standard/shape/fanout defenses; exact prefix/hex IDs; unknown fields rejected | Digest self-consistency does not establish origin, authenticity, authority, disclosure permission, or freshness against a later database snapshot |
+| Evidence cherry-picking or stale request | Only `complete_claim_ledger`; requested sorted active set must exactly equal the target claim's snapshot ledger; no stance filtering; withdrawn history retained | A producer can choose which claim to request; policy does not assess whether the mission itself is complete or research is true |
+| Request scope crosses mission/claim boundary | Mission and claim resolved through domain services in one query-only read snapshot; claim mission checked; all missing/out-of-scope evidence fails closed with non-reflective errors | The trusted OS user who owns the database remains the security principal; no remote authorization exists |
 | Script/HTML/Markdown injection | Jinja autoescape; CSP; stored text rendered as text/`pre`; no raw HTML Markdown mode | Future rich rendering requires a reviewed sanitizer policy |
 | SQL injection | Parameterized SQL; dynamic choices selected from fixed enums/queries only | A future ad hoc query could violate the rule; tests and review remain necessary |
 | Import traversal or symlink escape | Root-relative paths only; reject absolute/`..`; descriptor traversal with `O_NOFOLLOW`; regular-file and size checks | The OS user can still submit any directory they are authorized to choose as root |
@@ -28,6 +32,8 @@ credentials, and the operator's control over which exact evidence leaves the mac
 | Citation forgery | Exact byte offsets and quote match at creation and export; cross-mission checks; stable IDs | Source assertions may themselves be false; Minerva records provenance, not truth |
 | Audit rewriting | Same-transaction audit insert; update/delete triggers; no raw source content or paths in details | Direct file replacement by the OS user is outside the process boundary |
 | Export path attack | Fixed contained filenames; reject symlink/pre-existing targets; size bounds; cleanup after caught exceptions | Operator can intentionally select a sensitive directory; a process or power-loss crash can leave a partial new export, but existing files are never overwritten |
+| Fulfillment mutates or coordinates work | Request validated before DB open; one query-only snapshot; identity/audit/mutation/export APIs absent; fixed local files only; no provider/network/transport surface | SQLite/file publication is not crash-atomic; a crash can leave a partial new output directory for operator cleanup |
+| Result misbinding or coordination leakage | Minimal strict result contains only status, request digest, output schema, and exact file SHA-256; request/scope/result fields never enter canonical v2 | A scoped v2 packet separated from its request/result binding does not prove database completeness |
 | Private-data disclosure in errors/API | Stable error codes; packet failures never reflect submitted content or paths; bounded packet inspection omits research text, labels, URLs, identities, and IDs; API omits import paths and snapshot content by default | Authorized source preview intentionally reveals selected source text locally |
 | Unauthorized external evidence disclosure | Assistance previews the exact bounded JSON without network I/O; egress requires an explicit flag and matching fresh request digest; no API/web invocation | The trusted OS user can knowingly authorize sensitive material; secret scanning cannot determine confidentiality or disclosure rights |
 | Credential disclosure | BYOK credentials are read only after confirmation from `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; redacted in memory wrappers; never persisted or included in audit/output | Environment variables and process memory are visible to sufficiently privileged local software; provider/account compromise is outside Minerva |
@@ -48,6 +54,12 @@ credentials, and the operator's control over which exact evidence leaves the mac
 - Errors never include submitted source contents or absolute private paths.
 - Standalone packet commands read only one no-follow regular file, apply the size cap
   before JSON decoding, and emit bounded metadata or fixed non-reflective errors.
+- Request verification applies the same file discipline with a 64 KiB cap and opens no
+  database, credential source, provider, or network. Fulfillment validates first, then
+  uses one query-only snapshot and creates no Minerva state or audit record.
+- The complete-ledger active precondition prevents silent stance omission. Result
+  bytes bind request digest to exact canonical output without paths, URLs, identity,
+  authority, approval, timestamps, transport, or run-coordination metadata.
 - Packet digest verification establishes self-consistency, not authenticity, origin,
   approval, truth, or independent verification of source bytes absent from the packet.
 - Tests run the demo with outbound connection attempts denied.
@@ -67,6 +79,8 @@ database-plus-filesystem or database-plus-provider operation crash-atomic. Assis
 uses separate requested and terminal audit transactions around the external call;
 process death can leave an unmatched request record. Standalone backups and exports
 have no external signature or integrity anchor and must be protected by the operator.
+Request fulfillment is database-read-only but its two filesystem writes have the same
+caught-error versus process/power-loss limitation as existing export.
 
 ## Deferred decisions
 

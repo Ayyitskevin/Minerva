@@ -11,6 +11,7 @@ import pytest
 
 import minerva.cli.main as cli_module
 import minerva.integrations.research_packet_file as packet_file_module
+import minerva.integrations.safe_artifact_file as artifact_file_module
 from minerva.cli._common import EXIT_DOMAIN
 from minerva.integrations.research_packet import MAX_RESEARCH_PACKET_BYTES
 
@@ -228,7 +229,7 @@ def test_packet_reader_classifies_device_through_path_only_descriptor(
             return real_open(path, flags, mode)
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr(packet_file_module.os, "open", recording_open)
+    monkeypatch.setattr(artifact_file_module.os, "open", recording_open)
 
     _failure(capsys, "verify", Path(os.devnull), "packet_input_unsafe")
 
@@ -258,7 +259,11 @@ def test_packet_reader_rejects_content_change_between_pinned_reads(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(packet_file_module, "_reread_bounded", lambda _descriptor: b"changed")
+    monkeypatch.setattr(
+        artifact_file_module,
+        "_reread_bounded",
+        lambda _descriptor, *, max_bytes: b"changed",
+    )
 
     _failure(capsys, "verify", _GOLDEN, "packet_input_changed")
 

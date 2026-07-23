@@ -51,6 +51,39 @@ source digest or prove that unavailable source content matched the recorded quot
 Protect packets through separate OS access control or a future approved signing seam
 when origin assurance matters.
 
+## Offline research requests
+
+`minerva request verify` applies the standalone no-follow file boundary to a strict
+`minerva.research-request.v1` file with a 64 KiB pre-decode limit. It does not open
+SQLite, read provider credentials, construct a provider, or contact a network.
+Identifiers are fixed Minerva prefix/lowercase-hex forms; unknown fields, free text,
+paths, URLs, credentials, identity/authority, transport, callback, execution, approval,
+and run-control fields are rejected by the contract. Verification output and errors
+are bounded and non-reflective.
+
+`minerva request fulfill` validates the complete request before database construction
+or open, then uses one connection-local query-only read snapshot. The only policy
+requires the request's sorted active citation IDs to equal the target claim's complete
+active ledger. Unknown/out-of-scope, withdrawn, omitted, and newly added evidence fail
+closed, so the request cannot silently filter opposing, contextual, or inconclusive
+stances. Fulfilled output retains the claim's withdrawn/supersession/status and exact
+source/audit/run closure.
+
+Fulfillment creates no Minerva identity/run, audit event, export row, or research
+mutation and has no network/provider dependency. Fixed `research-brief.json` and
+`research-result.json` files use exclusive owner-only no-follow writes; caught second-
+write failures remove only files created by that operation. SQLite and filesystem
+writes are not crash-atomic, so process or power loss can leave a partial new output
+directory that Minerva will refuse to overwrite.
+
+The request digest and result artifact SHA-256 prove self-consistency and exact byte
+binding only. They do not authenticate a producer, establish origin/authority,
+approve work, grant disclosure permission, or prove database completeness. The
+claim-scoped v2 packet contains no request/scope marker; retain its request/result
+binding when scope interpretation matters. Milestone 1.3 adds no Athena adapter,
+transport, remote identity, shared run envelope, MCP, publication, execution,
+messaging, approval, or automatic adoption.
+
 ## Optional external model assistance
 
 Model assistance is disabled unless the operator installs an optional provider extra,

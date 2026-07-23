@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-22
+- Amended: 2026-07-23 (Milestone 1.3 local request/result artifacts)
 
 ## Context
 
@@ -43,6 +44,30 @@ broken cross-references, and evidence-valid statuses that lack the required acti
 citation stances. Open and inconclusive claims remain legitimate research states
 rather than verification failures.
 
+### Offline research request and result artifacts
+
+Milestone 1.3 adds strict `minerva.research-request.v1` as an inert local input
+artifact. It binds one Minerva mission and claim, the sole
+`complete_claim_ledger` policy, a sorted exact active-citation freshness precondition,
+and requested output schema `minerva.research-brief.v2`. It contains no request/run
+identity, free text, path, URL, credential, remote actor, authority, approval,
+transport, callback, execution, publication, or orchestration field. Its canonical
+payload digest establishes self-consistency only.
+
+The installed CLI may verify this artifact without SQLite and may fulfill it against
+one local database in one query-only read snapshot. Fulfillment requires the declared
+claim to belong to the mission and the supplied active-citation set to equal the
+claim's complete active ledger. The resulting claim-scoped v2 packet retains every
+stance plus withdrawn, supersession, status, source, finding, uncertainty, audit, and
+run closure required by the canonical verifier; unrelated mission entities are
+omitted. The packet contract itself is unchanged and carries no request/scope fields.
+
+The fixed local `minerva.research-result.v1` file contains only bounded fulfilled
+status, request digest, output schema, and SHA-256 over exact v2 file bytes. It is not
+an Athena response, run envelope, publication record, authentication token, approval,
+or authority grant. Request fulfillment creates only operator-selected files; it does
+not mutate research, audit, identity/run, or export records.
+
 ### Future sibling artifact exchange
 
 - Minerva owns research questions, claims, source snapshots, evidence, citations,
@@ -65,14 +90,14 @@ rather than verification failures.
 - Artifact references bind an artifact `schema_version` and SHA-256 digest. They are
   opaque integrity references, not filesystem paths or URLs for Minerva to dereference.
 
-`api/v1/capabilities` and the versioned JSON packet are the only current
-protocol-ready surfaces for future sibling work; neither exchanges artifacts. The
-additive `minerva.capabilities.v2` manifest advertises local packet support and the
-reviewed optional CLI-only provider-assistance exception while explicitly reporting
-sibling exchange, orchestration, experiment execution, approval authority, and a
-shared run envelope as unavailable. The provider adapters are not sibling-system
-integrations. There is no MCP server, remote actor-header trust, remote authentication,
-or multi-user boundary.
+`api/v1/capabilities`, the versioned JSON packet, and the inert local request/result
+contracts are the only current protocol-ready surfaces for future sibling work; none
+exchanges artifacts. The additive `minerva.capabilities.v2` manifest advertises local
+packet/request CLI support and the reviewed optional CLI-only provider-assistance
+exception while explicitly reporting sibling exchange, orchestration, experiment
+execution, approval authority, and a shared run envelope as unavailable. The provider
+adapters are not sibling-system integrations. There is no Athena adapter, MCP server,
+remote actor-header trust, remote authentication, or multi-user boundary.
 
 ### Future shared run envelope
 
@@ -101,11 +126,13 @@ local identity/run context.
 
 ## Consequences
 
-The vertical slice remains offline, testable, and independently deployable. A sibling
-can eventually verify a portable research packet without reading Minerva's database,
-while a packet cannot silently trigger work or imply approval. Later integrations must
-handle authentication, replay/idempotency, artifact verification, authorization,
-recovery, and version negotiation explicitly rather than reaching into Minerva tables.
+The vertical slice remains offline, testable, and independently deployable. A future
+sibling can construct the reviewed request bytes or verify a portable packet without
+reading Minerva's database, while neither artifact can silently trigger work or imply
+approval. A claim-scoped packet's selection meaning is established by its request and
+result binding, not by new packet fields. Later integrations must handle
+authentication, replay/idempotency, artifact verification, authorization, recovery,
+and version negotiation explicitly rather than reaching into Minerva tables.
 
 ## Rejected alternatives
 
@@ -113,6 +140,10 @@ recovery, and version negotiation explicitly rather than reaching into Minerva t
 - Shared database tables: destroys ownership and migration boundaries.
 - Putting run coordination fields inside the research packet: couples immutable
   research meaning to per-execution transport metadata and destabilizes its digest.
+- Putting request/run identity or transport controls inside the local research request:
+  turns an inert research selection into an unauthenticated coordination surface.
+- Allowing arbitrary evidence subsets: permits a requester to suppress adverse or
+  contextual evidence and breaks complete-ledger semantics.
 - Treating artifact references as paths or URLs: creates an implicit fetch surface and
   crosses the offline boundary.
 - Building MCP before the core is proven: exposes an unstable contract and expands the

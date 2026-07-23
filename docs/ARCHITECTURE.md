@@ -19,6 +19,13 @@ assist CLI --> preview + exact digest confirmation --> reviewed provider adapter
 packet CLI --> no-follow bounded file reader --> strict packet parser/verifier
                                                      |
                                                      +--> bounded JSON report
+
+request verify --> no-follow 64 KiB reader --> strict request parser/verifier
+
+request fulfill --> verified inert request --> one query-only SQLite snapshot
+                                                  |
+                                                  +--> claim-scoped canonical v2
+                                                       + digest-bound result file
 ```
 
 The SQLite database is authoritative for structured research state and source
@@ -34,7 +41,8 @@ they may not reimplement domain validation or write SQL directly.
   immutable snapshot registration.
 - `evidence`: byte-span citations, stance, ledgers, withdrawal, and supersession.
 - `synthesis`: canonical research-packet assembly, citation verification,
-  Markdown/JSON rendering, digesting, and contained file export.
+  claim-scoped request fulfillment, Markdown/JSON rendering, digesting, and contained
+  file export.
 - `api`: strict Pydantic request/response adapters and structured error mapping.
 - `web`: loopback-only, read-only server-rendered review pages, local HTTP controls,
   and CSRF primitives reserved for any future unsafe browser form.
@@ -42,9 +50,9 @@ they may not reimplement domain validation or write SQL directly.
   validation, candidate labeling, and metadata-only invocation audit coordination.
 - `cli`: local operator commands, optional external-assistance consent, demo,
   backup/restore, doctor, and server startup.
-- `integrations`: strict, SQLite-independent research-packet DTO, parser, canonical
-  serializer, verifier, safe standalone file reader, and bounded metadata reports plus
-  two live, narrowly reviewed provider adapters. Only
+- `integrations`: strict, SQLite-independent research-packet and research-request DTOs,
+  parsers, canonical serializers, verifiers, shared safe standalone file reader, and
+  bounded metadata reports plus two live, narrowly reviewed provider adapters. Only
   `integrations/ai/openai.py` and `integrations/ai/anthropic.py` may import their SDK
   and network client; there are no live sibling-system adapters.
 
@@ -165,6 +173,56 @@ bounded counts and provenance/audit coverage; it omits stored research text, lab
 URLs, identifiers, and paths. The digest proves internal canonical consistency, not
 authenticity or source truth; source bytes are not embedded for independent rehashing.
 
+## Offline research request validation and fulfillment
+
+`minerva.research-request.v1` is a second protocol contract, not a second research
+packet. Its strict canonical envelope binds a mission ID, claim ID, the sole
+`complete_claim_ledger` selection policy, a sorted exact active-citation precondition,
+and the requested `minerva.research-brief.v2` schema. It has no free text, path, URL,
+credential, actor, authority, approval, timestamp, callback, transport, execution, or
+run-coordination field. Request bytes are limited to 64 KiB and use the same hostile
+JSON and stable descriptor-walk defenses as packet input.
+
+`request verify` is file-only. It validates size and stable file identity before
+decoding, rejects duplicate/non-standard/excessively shaped JSON, applies strict DTO
+and identifier validation, recomputes the request-payload digest, and emits only
+bounded fixed-key metadata. The digest proves canonical self-consistency; authenticity
+and authorization remain explicitly unestablished.
+
+`request fulfill` invokes that complete file validation before it constructs a
+`Database` or opens SQLite. The fulfillment application service then owns one
+`Database.read()` transaction, enables connection-local `PRAGMA query_only=ON`, and
+passes the same connection through mission lookup, claim lookup, evidence-ledger
+verification, and synthesis. The claim must belong to the declared mission. Every
+supplied citation must belong to that claim and be active, and the supplied set must
+equal the snapshot's complete active set. Unknown/out-of-scope, withdrawn, omitted,
+or newly added evidence fails closed; no evidence stance is filtered.
+
+The selected synthesis path constructs a fresh claim-scoped v2 payload before packet
+serialization. It includes the mission, target question and claim, complete active and
+withdrawn ledger, supersession and status provenance, referenced sources, claim-linked
+findings/assumptions/unresolved questions and uncertainty, and exact audit/run closure.
+Unrelated mission entities and mission-global findings are omitted. Existing
+full-mission brief calls remain unchanged. The result is revalidated and serialized by
+the existing canonical v2 builder; request/scope/result metadata never enters v2.
+
+After the SQLite snapshot closes, fulfillment builds `minerva.research-result.v1` with
+only a bounded fulfilled status, request digest, output schema, and SHA-256 over the
+exact newline-terminated `research-brief.json` bytes. The fixed `research-brief.json`
+and `research-result.json` files are published with owner-only modes, no-follow
+descriptor-relative writes, `O_EXCL`, file `fsync`, and inode-aware caught-error
+cleanup. The service has no identity, clock, ID factory, audit sink, mutation
+transaction, provider, credential, or network dependency. It never calls the normal
+brief export method because that method intentionally records export state and audit.
+
+A scoped v2 packet is internally canonical but v2 has no database-completeness marker.
+The request digest and result artifact hash bind the external selection meaning; packet
+verification alone does not prove that unrelated mission state was included. A future
+Athena adapter must authenticate and authorize independently before creating or moving
+these inert files. Milestone 1.3 adds no adapter, transport, remote identity, shared
+database, shared run envelope, MCP surface, Icarus exchange, publication, messaging,
+execution, approval, or automatic adoption.
+
 Synthesis work is bounded before rendering, and each rendered output is checked against
 its byte limit before exposure or export. File export uses fixed filenames beneath an
 operator-selected root, rejects symlinks and pre-existing targets, and never publishes
@@ -207,15 +265,17 @@ executable HTML; Minerva does not render user Markdown as raw HTML.
 
 ## Four operational invariants
 
-- **State lives** in the migrated SQLite database and immutable export files. Provider
-  credentials and candidate responses are ephemeral and never become research state.
+- **State lives** in the migrated SQLite database and intentionally written immutable
+  export/request-result files. Provider credentials and candidate responses are
+  ephemeral and never become research state.
 - **Feedback lives** in structured errors, CLI exit status, health/ready endpoints,
   doctor output, tests, and the append-only audit ledger. External assistance adds
   metadata-only requested/terminal events and explicit unknown outcomes.
 - **Deleting a snapshot breaks** evidence and brief provenance, so foreign keys and
   append-only triggers prohibit it. Deleting/rewriting the database is outside the app.
-- **Timing works** because one command owns one `BEGIN IMMEDIATE` transaction; WAL
-  permits readers, bounded busy waits expose write contention, and deterministic query
-  ordering removes completion-order ambiguity. The declared external-call exception
-  is bracketed, not atomic: it has one attempt, bounded timeout, post-call context
-  revalidation, and no automatic retry.
+- **Timing works** because one command owns one transaction; mutations use
+  `BEGIN IMMEDIATE`, while request fulfillment uses one query-only WAL read snapshot.
+  Bounded busy waits expose contention and deterministic ordering removes completion-
+  order ambiguity. The declared external-call exception is bracketed, not atomic: it
+  has one attempt, bounded timeout, post-call context revalidation, and no automatic
+  retry.

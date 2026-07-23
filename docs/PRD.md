@@ -1,4 +1,4 @@
-# Minerva product requirements: Milestones 1, 1.2, and 2B
+# Minerva product requirements: Milestones 1, 1.2, 1.3, and 2B
 
 ## Product identity
 
@@ -35,6 +35,25 @@ Digest verification proves packet self-consistency, not authenticity, origin, tr
 approval, or the contents of source snapshots that are not embedded in the packet.
 Athena/Icarus exchange and every execution, orchestration, approval, publication, or
 remote transport surface remain deferred.
+
+## Milestone 1.3 outcome
+
+An offline producer can create a strict deterministic `minerva.research-request.v1`
+artifact selecting one mission/claim and asserting the exact complete active evidence
+ledger expected at fulfillment time. An installed Minerva command verifies the file
+without SQLite, network access, provider code, or credentials. A separate command
+validates the request before database open, resolves it in one query-only read
+snapshot, and exclusively writes a claim-scoped canonical v2 brief plus a minimal
+digest-bound result manifest without changing research, audit, run, or export state.
+
+The one supported selection policy prevents arbitrary evidence subsets: every active
+stance must be present, while canonical output retains withdrawn and supersession
+history and exact provenance closure. Request/result digests establish internal
+self-consistency and binding only. They do not authenticate an Athena caller, grant
+authority, approve work, establish completeness beyond the selected claim, or permit
+disclosure. No Athena adapter, transport, shared database/run envelope, Icarus request,
+MCP surface, execution, orchestration, publication, messaging, or automatic adoption
+is implemented.
 
 ## Milestone 2B outcome
 
@@ -83,6 +102,11 @@ publication, messaging, or autonomous research.
 - **Research brief:** a deterministic, portable Markdown/JSON synthesis of a mission,
   including claims, both favorable and adverse evidence, findings, assumptions,
   uncertainty, citations, and digests.
+- **Research request:** an inert canonical file that names one existing mission/claim,
+  binds an exact active-ledger precondition, and requests canonical v2 output. It is not
+  authenticated work coordination or authorization.
+- **Research result manifest:** a minimal canonical file binding one verified request
+  digest to the schema and exact SHA-256 of its fulfilled brief bytes.
 
 ## Statement classes
 
@@ -148,6 +172,22 @@ unresolved question under the same citation rules as human-authored material.
     proxy use, automatic retries, provider fallback, or tools. A timeout or connection
     loss is an unknown provider outcome. Requested and terminal audit events contain
     bounded metadata and digests only and are separate transactions around the call.
+13. Research-request DTOs are strict, SQLite-independent, canonical, and limited to
+    mission/claim identifiers, the one complete-ledger policy, a sorted exact active
+    citation set, and output schema. Paths, URLs, credentials, free text, actors,
+    authority, approvals, timestamps, callbacks, transports, and run controls are not
+    request fields.
+14. Request verification completes before any fulfillment database construction/open.
+    Mission, claim, ledger, and synthesis use the same query-only read snapshot. The
+    requested set must equal the complete active claim ledger; unknown, out-of-scope,
+    withdrawn, omitted, or newly added evidence fails closed without stance filtering.
+15. Fulfillment is read-only research behavior. It creates no identity/run, audit
+    event, `brief_exports` row, domain mutation, provider request, or network activity.
+    Fixed output files are canonical, owner-only, exclusive, and cleaned as a group
+    after caught write failures; existing files are never overwritten.
+16. A claim-scoped v2 packet preserves exact target-claim evidence/provenance closure
+    but carries no selection marker. Its request/result binding supplies that external
+    meaning; standalone packet verification does not prove database completeness.
 
 ## User surfaces
 
@@ -155,6 +195,9 @@ unresolved question under the same citation rules as human-authored material.
   mutation, inspection, audit, backup/restore, doctor, export, and serve operations.
 - `minerva packet verify` and `minerva packet inspect` are file-only offline commands;
   they require no database and return bounded JSON success or error records.
+- `minerva request verify` is a file-only offline command. `minerva request fulfill`
+  adds one explicitly supplied local database and output directory while remaining
+  read-only with respect to Minerva state.
 - `minerva-demo` creates a disposable synthetic mission and exports its brief without
   contacting a network service. It refuses an existing database.
 - The web interface is a restrained, server-rendered review surface.

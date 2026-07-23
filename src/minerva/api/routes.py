@@ -56,6 +56,10 @@ from minerva.integrations.research_packet import (
     RESEARCH_PACKET_SCHEMA_VERSION,
     parse_research_packet,
 )
+from minerva.integrations.research_request import (
+    MAX_RESEARCH_REQUEST_BYTES,
+    RESEARCH_REQUEST_SCHEMA_VERSION,
+)
 from minerva.research.service import ResearchService
 from minerva.sources.service import DEFAULT_MAX_SOURCE_BYTES, SourceService
 from minerva.synthesis.service import SynthesisService
@@ -269,6 +273,7 @@ def create_api_router(database: Database) -> APIRouter:
             identity_boundary="local_os_user",
             citation_scheme=CITATION_SCHEME,
             brief_schema_version=BRIEF_SCHEMA_VERSION,
+            research_request_schema_version=RESEARCH_REQUEST_SCHEMA_VERSION,
             capabilities=[
                 "mission.create",
                 "question.create",
@@ -281,6 +286,10 @@ def create_api_router(database: Database) -> APIRouter:
                 "brief.preview.markdown_json",
                 "brief.export.markdown_json",
                 "research.packet.v2.canonical",
+                "research.request.v1.canonical",
+                "research.request.v1.verify.cli",
+                "research.request.v1.fulfill.cli",
+                "research.result.v1.canonical",
                 "web.review",
                 "assist.finding_candidates.preview.cli",
                 "assist.finding_candidates.invoke.cli.byok.optional",
@@ -304,6 +313,7 @@ def create_api_router(database: Database) -> APIRouter:
             limits=LimitsRead(
                 source_bytes=DEFAULT_MAX_SOURCE_BYTES,
                 request_body_bytes=MAX_REQUEST_BODY_BYTES,
+                research_request_bytes=MAX_RESEARCH_REQUEST_BYTES,
                 mission_page_size=MAX_MISSION_PAGE_SIZE,
                 assistant_context_bytes=MAX_ASSISTANCE_CONTEXT_BYTES,
                 assistant_evidence_cards=MAX_ASSISTANCE_EVIDENCE_CARDS,

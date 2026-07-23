@@ -1,1 +1,2 @@
 include tests/fixtures/minerva.research-brief.v2.golden.json
+include tests/fixtures/minerva.research-request.v1.golden.json

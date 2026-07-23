@@ -42,6 +42,27 @@
 - Digest integrity remains explicitly distinct from authenticity, and Athena/Icarus
   artifact exchange remains unimplemented.
 
+## Milestone 1.3: offline research request contract
+
+- Strict `minerva.research-request.v1` canonical JSON and SHA-256 self-verification
+  are independent of SQLite, provider credentials, network access, and sibling systems.
+- The sole `complete_claim_ledger` selection policy uses a sorted exact active-citation
+  set as a freshness/completeness precondition, preventing silent adverse-evidence
+  omission while retaining withdrawn and supersession history in fulfilled output.
+- `minerva request verify` returns bounded, non-reflective metadata and rejects unsafe
+  files, hostile JSON, unsupported versions/policies, invalid identifiers, and digest
+  changes before any database is constructed or opened.
+- `minerva request fulfill` resolves mission, claim, ledger, and claim-scoped synthesis
+  in one query-only read snapshot, writes fixed canonical brief/result files without
+  overwrite, and performs no research, audit, identity/run, or export-table mutation.
+- `minerva.research-result.v1` binds the request digest to the exact canonical v2 output
+  bytes and carries no path, URL, actor, authority, timestamp, or coordination fields.
+- Installed-wheel smoke exercises verify, fulfill, and packet verification outside the
+  checkout. Capabilities advertise only these local CLI/file surfaces.
+- A claim-scoped v2 packet remains internally canonical but has no completeness marker;
+  request/result artifacts carry the selection meaning. Digest integrity is not
+  authentication, authorization, approval, origin, or permission to disclose.
+
 ## Milestone 2B: explicit evidence-constrained model assistance
 
 - Optional OpenAI and Anthropic extras with operator-supplied environment credentials
@@ -54,7 +75,9 @@
 
 ## Later milestones, not implemented now
 
-- Authenticated Athena mission/identity coordination adapter
+- Authenticated Athena mission/identity coordination adapter that may produce the
+  existing request artifact only after a separately reviewed identity/authorization
+  boundary; no transport or adapter exists in Milestone 1.3
 - Approved Icarus experiment request/result artifacts
 - Tribunal approval references that bind a packet digest without changing research
   claim status
