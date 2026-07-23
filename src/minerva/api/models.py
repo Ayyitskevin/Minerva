@@ -212,6 +212,7 @@ class ReadinessRead(StrictModel):
 class LimitsRead(StrictModel):
     source_bytes: int
     request_body_bytes: int
+    research_request_bytes: int
     mission_page_size: int
     assistant_context_bytes: int
     assistant_evidence_cards: int
@@ -228,6 +229,7 @@ class CapabilityManifestRead(StrictModel):
     identity_boundary: str
     citation_scheme: str
     brief_schema_version: str
+    research_request_schema_version: str
     capabilities: list[str]
     unavailable: list[str]
     limits: LimitsRead

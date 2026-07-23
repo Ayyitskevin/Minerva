@@ -195,6 +195,7 @@ def test_capability_manifest_is_versioned_and_truthful(client: TestClient) -> No
         "identity_boundary": "local_os_user",
         "citation_scheme": "utf8-byte-offset-v1",
         "brief_schema_version": "minerva.research-brief.v2",
+        "research_request_schema_version": "minerva.research-request.v1",
         "capabilities": [
             "mission.create",
             "question.create",
@@ -207,6 +208,10 @@ def test_capability_manifest_is_versioned_and_truthful(client: TestClient) -> No
             "brief.preview.markdown_json",
             "brief.export.markdown_json",
             "research.packet.v2.canonical",
+            "research.request.v1.canonical",
+            "research.request.v1.verify.cli",
+            "research.request.v1.fulfill.cli",
+            "research.result.v1.canonical",
             "web.review",
             "assist.finding_candidates.preview.cli",
             "assist.finding_candidates.invoke.cli.byok.optional",
@@ -230,6 +235,7 @@ def test_capability_manifest_is_versioned_and_truthful(client: TestClient) -> No
         "limits": {
             "source_bytes": 1_048_576,
             "request_body_bytes": 5_242_880,
+            "research_request_bytes": 65_536,
             "mission_page_size": 200,
             "assistant_context_bytes": 65_536,
             "assistant_evidence_cards": 50,

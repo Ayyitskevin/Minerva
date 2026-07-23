@@ -15,6 +15,12 @@ Milestone 1.2 adds a standalone offline operator surface for that packet. An ins
 `minerva` command can verify or inspect `research-brief.json` directly without a
 Minerva database, network connection, sibling system, provider SDK, or credential.
 
+Milestone 1.3 adds an inert, deterministic `minerva.research-request.v1` artifact for
+requesting one claim's complete evidence ledger. The CLI can verify it entirely
+offline, then resolve it against one local database snapshot and write a claim-scoped
+canonical v2 brief plus a digest-bound result manifest without changing research or
+audit state.
+
 Milestone 2B adds one deliberately narrow, optional assistance surface. A local CLI
 operator can preview a bounded request made from one claim and its active evidence,
 then explicitly authorize that exact request for OpenAI or Anthropic using their own
@@ -170,6 +176,85 @@ Athena coordination and Icarus experiment exchange seams remain unimplemented. A
 future exchange must use explicit versioned artifact references and the protocol
 boundary described in [ADR 0002](docs/adr/0002-system-boundaries.md); neither packet
 command publishes, sends, fetches, executes, approves, or orchestrates anything.
+
+## Offline research request contract
+
+`minerva.research-request.v1` is a strict, SQLite-independent input artifact. Its
+envelope contains only a canonical payload digest and this bounded payload shape:
+
+```json
+{
+  "schema_version": "minerva.research-request.v1",
+  "request_digest": "<SHA-256 of the canonical request payload>",
+  "request": {
+    "schema_version": "minerva.research-request.v1",
+    "mission_id": "mis_<32 lowercase hex characters>",
+    "claim_id": "clm_<32 lowercase hex characters>",
+    "evidence_selection": {
+      "policy": "complete_claim_ledger",
+      "expected_active_citation_ids": ["evd_<32 lowercase hex characters>"]
+    },
+    "requested_output_schema": "minerva.research-brief.v2"
+  }
+}
+```
+
+The citation IDs must be unique and lexicographically sorted, with at most 200 entries.
+The list is an exact active-ledger freshness precondition, not a subset selector:
+fulfillment refuses omitted, newly added, unknown, out-of-scope, or explicitly
+withdrawn evidence. This prevents a requester from suppressing opposing, contextual,
+or inconclusive active evidence. A successful brief also retains the claim's withdrawn
+history, supersession chain, status provenance, linked findings and uncertainty, source
+snapshots, and exact audit/run closure.
+
+Verify a request without opening SQLite or loading provider/network code:
+
+```bash
+minerva request verify --input research-request.json
+```
+
+Verification rejects files above 64 KiB before JSON decoding, unsafe or changing file
+paths, malformed/duplicate/non-standard JSON, unsupported schema, policy, or output
+versions, digest changes, unknown fields, invalid identifier shapes, and excessive JSON
+depth, width, or validation fanout. Success is compact fixed-key JSON that reports only
+the schema, request digest, output schema, selection policy/count, and the distinction
+between digest integrity and unestablished authenticity/authorization.
+
+Fulfill a verified request into a new local output directory:
+
+```bash
+minerva request fulfill --db research.db --input research-request.json \
+  --output-dir ./research-result
+```
+
+The request is completely validated before Minerva constructs or opens the database.
+Fulfillment resolves the mission, claim, complete ledger, and canonical synthesis in
+one query-only SQLite read snapshot. It creates no identity/run, audit event,
+`brief_exports` row, research mutation, provider call, network operation, publication,
+message, execution, approval, or orchestration. It exclusively writes fixed owner-only
+files and never overwrites an existing target:
+
+- `research-brief.json` — the canonical `minerva.research-brief.v2` claim-scoped packet.
+- `research-result.json` — strict `minerva.research-result.v1` status containing only
+  the request digest and the exact output schema/SHA-256.
+
+The result SHA-256 covers the complete `research-brief.json` bytes, including its final
+newline, and is distinct from the packet's inner semantic export digest. The v2 packet
+deliberately contains no request, selection, path, URL, actor, authority, or run-control
+metadata. Consequently, standalone packet verification proves internal consistency,
+not completeness relative to a database; retain the request and result manifest when
+the claim-scoped selection meaning matters.
+
+Both request commands use the existing CLI exit contract: `0` success, `2` usage,
+`3` expected validation/scope/domain refusal, `4` unexpected local OS/SQLite failure,
+and `1` unexpected internal failure. Errors are bounded and never reflect request
+contents, identifiers, credentials, or filesystem paths.
+
+This milestone implements no Athena adapter, transport, authentication, remote actor,
+shared run envelope, MCP server, Icarus artifact, or automatic request adoption. A
+future adapter must authenticate and authorize its caller independently; a valid
+request digest establishes self-consistency only, never identity, authority, approval,
+or permission to disclose the selected research.
 
 ## Optional external finding candidates
 

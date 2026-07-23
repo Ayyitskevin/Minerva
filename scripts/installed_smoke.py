@@ -275,6 +275,14 @@ if unexpected:
         if not isinstance(claim_ids, list) or not claim_ids or not isinstance(claim_ids[0], str):
             raise SmokeError("installed demo did not return a claim identifier")
         claim_id = claim_ids[0]
+        evidence_ids = demo.get("evidence_ids")
+        if (
+            not isinstance(evidence_ids, list)
+            or len(evidence_ids) < 2
+            or not all(isinstance(item, str) for item in evidence_ids[:2])
+        ):
+            raise SmokeError("installed demo did not return target-claim evidence identifiers")
+        active_citation_ids = sorted(evidence_ids[:2])
         assistant_preview = _json_object(
             _run_checked(
                 [
@@ -405,6 +413,116 @@ if unexpected:
         ):
             raise SmokeError("installed packet inspection returned an invalid result")
 
+        request_path = smoke_directory / "research-request.json"
+        request_builder = """
+import sys
+from pathlib import Path
+
+from minerva.integrations.research_request import (
+    build_research_request,
+    serialize_research_request,
+)
+
+document = build_research_request(
+    mission_id=sys.argv[2],
+    claim_id=sys.argv[3],
+    expected_active_citation_ids=tuple(sys.argv[4:]),
+)
+Path(sys.argv[1]).write_bytes(serialize_research_request(document))
+""".strip()
+        _run_checked(
+            [
+                str(python),
+                "-c",
+                request_builder,
+                str(request_path),
+                mission_id,
+                claim_id,
+                *active_citation_ids,
+            ],
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        request_verify = _json_object(
+            _run_checked(
+                [str(minerva_command), "request", "verify", "--input", str(request_path)],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed request verify",
+        )
+        selection = request_verify.get("evidence_selection")
+        if (
+            request_verify.get("status") != "verified"
+            or request_verify.get("schema_version") != "minerva.research-request.v1"
+            or request_verify.get("requested_output_schema") != "minerva.research-brief.v2"
+            or not isinstance(request_verify.get("request_digest"), str)
+            or not isinstance(selection, dict)
+            or selection.get("policy") != "complete_claim_ledger"
+            or selection.get("expected_active_citation_count") != 2
+        ):
+            raise SmokeError("installed request verification returned an invalid result")
+
+        request_output = smoke_directory / "request-result"
+        fulfillment = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "request",
+                    "fulfill",
+                    "--db",
+                    str(demo_database),
+                    "--input",
+                    str(request_path),
+                    "--output-dir",
+                    str(request_output),
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed request fulfill",
+        )
+        produced_names = sorted(path.name for path in request_output.iterdir())
+        if produced_names != ["research-brief.json", "research-result.json"]:
+            raise SmokeError("installed request fulfillment wrote unexpected files")
+        fulfilled_brief_path = request_output / "research-brief.json"
+        fulfilled_brief_bytes = fulfilled_brief_path.read_bytes()
+        result_manifest = _json_object(
+            (request_output / "research-result.json").read_text(encoding="utf-8"),
+            label="installed research result",
+        )
+        if fulfillment != result_manifest:
+            raise SmokeError("installed fulfillment output and result manifest disagree")
+        output_artifact = result_manifest.get("output_artifact")
+        if (
+            result_manifest.get("schema_version") != "minerva.research-result.v1"
+            or result_manifest.get("status") != "fulfilled"
+            or result_manifest.get("request_digest") != request_verify.get("request_digest")
+            or not isinstance(output_artifact, dict)
+            or output_artifact.get("schema_version") != "minerva.research-brief.v2"
+            or output_artifact.get("sha256") != sha256(fulfilled_brief_bytes).hexdigest()
+        ):
+            raise SmokeError("installed research result manifest is invalid")
+        fulfilled_packet = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "packet",
+                    "verify",
+                    "--input",
+                    str(fulfilled_brief_path),
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed fulfilled packet verify",
+        )
+        if (
+            fulfilled_packet.get("status") != "verified"
+            or fulfilled_packet.get("schema_version") != "minerva.research-brief.v2"
+        ):
+            raise SmokeError("installed fulfilled packet verification failed")
+
         doctor = _json_object(
             _run_checked(
                 [
@@ -519,9 +637,15 @@ async def main():
         or capabilities.get("identity_boundary") != "local_os_user"
         or capabilities.get("citation_scheme") != "utf8-byte-offset-v1"
         or capabilities.get("brief_schema_version") != "minerva.research-brief.v2"
+        or capabilities.get("research_request_schema_version")
+        != "minerva.research-request.v1"
         or not isinstance(advertised, list)
         or "brief.export.markdown_json" not in advertised
         or "research.packet.v2.canonical" not in advertised
+        or "research.request.v1.canonical" not in advertised
+        or "research.request.v1.verify.cli" not in advertised
+        or "research.request.v1.fulfill.cli" not in advertised
+        or "research.result.v1.canonical" not in advertised
         or "assist.finding_candidates.preview.cli" not in advertised
         or "assist.finding_candidates.invoke.cli.byok.optional" not in advertised
         or not isinstance(unavailable, list)
@@ -536,6 +660,7 @@ async def main():
         or "experiment_execution" not in unavailable
         or "approval_authority" not in unavailable
         or not isinstance(limits, dict)
+        or limits.get("research_request_bytes") != 65_536
         or limits.get("assistant_context_bytes") != 65_536
         or limits.get("assistant_evidence_cards") != 50
         or limits.get("assistant_candidates") != 3

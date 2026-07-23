@@ -24,9 +24,14 @@ from minerva.integrations.research_packet_file import (
     packet_inspection_report,
     packet_verification_report,
 )
+from minerva.integrations.research_request_file import (
+    load_research_request,
+    request_verification_report,
+)
 from minerva.research.models import ClaimStatus, FindingStatus, StatementKind
 from minerva.research.service import ResearchService
 from minerva.sources.service import SourceService
+from minerva.synthesis.request_fulfillment import ResearchRequestFulfillmentService
 from minerva.synthesis.service import SynthesisService
 
 CommandHandler = Callable[[argparse.Namespace], Outcome]
@@ -223,6 +228,30 @@ def _cmd_packet_verify(args: argparse.Namespace) -> Outcome:
 def _cmd_packet_inspect(args: argparse.Namespace) -> Outcome:
     document = load_research_packet(cast(Path, args.input))
     return Outcome(packet_inspection_report(document))
+
+
+def _cmd_request_verify(args: argparse.Namespace) -> Outcome:
+    document = load_research_request(cast(Path, args.input))
+    return Outcome(request_verification_report(document))
+
+
+def _cmd_request_fulfill(args: argparse.Namespace) -> Outcome:
+    document = load_research_request(cast(Path, args.input))
+    result = ResearchRequestFulfillmentService(_database(args)).fulfill(
+        request=document,
+        output_dir=cast(Path, args.output_dir),
+    )
+    return Outcome(
+        {
+            "schema_version": result.schema_version,
+            "status": result.status,
+            "request_digest": result.request_digest,
+            "output_artifact": {
+                "schema_version": result.output_schema_version,
+                "sha256": result.output_sha256,
+            },
+        }
+    )
 
 
 def _cmd_audit_list(args: argparse.Namespace) -> Outcome:
@@ -513,6 +542,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     packet_inspect.add_argument("--input", required=True, type=Path)
     _set_handler(packet_inspect, _cmd_packet_inspect)
+
+    request_parser = commands.add_parser(
+        "request",
+        help="verify or fulfill an offline research request",
+    )
+    request_commands = request_parser.add_subparsers(dest="request_command", required=True)
+    request_verify = request_commands.add_parser(
+        "verify",
+        help="verify one canonical research request without a database",
+    )
+    request_verify.add_argument("--input", required=True, type=Path)
+    _set_handler(request_verify, _cmd_request_verify)
+    request_fulfill = request_commands.add_parser(
+        "fulfill",
+        help="write a claim-scoped canonical brief without mutating research state",
+    )
+    _add_database(request_fulfill)
+    request_fulfill.add_argument("--input", required=True, type=Path)
+    request_fulfill.add_argument("--output-dir", required=True, type=Path)
+    _set_handler(request_fulfill, _cmd_request_fulfill)
 
     audit_parser = commands.add_parser("audit", help="inspect append-only audit events")
     audit_commands = audit_parser.add_subparsers(dest="audit_command", required=True)

@@ -245,6 +245,7 @@ def _verify_sdist(sdist: Path) -> tuple[tuple[str, str], set[PurePosixPath]]:
                 PurePosixPath("README.md"),
                 PurePosixPath("pyproject.toml"),
                 PurePosixPath("tests/fixtures/minerva.research-brief.v2.golden.json"),
+                PurePosixPath("tests/fixtures/minerva.research-request.v1.golden.json"),
             }
             missing_root_files = sorted(required_root_files - relative_names, key=str)
             if missing_root_files:

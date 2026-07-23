@@ -57,6 +57,27 @@
   authenticity, source-byte revalidation, transport, signing, Athena/Icarus exchange,
   and any execution or approval authority remain future seams.
 
+## Milestone 1.3 implementation decisions
+
+- `minerva.research-request.v1` is an inert canonical selection contract, not an
+  Athena adapter or shared run envelope. It contains only exact Minerva identifiers,
+  complete-ledger selection, and requested output schema; its digest is
+  self-consistency, not authentication or authority.
+- `complete_claim_ledger` is the only policy. Its sorted active citation IDs are an
+  exact freshness precondition, never a subset: fulfillment preserves every active
+  stance and all withdrawn/supersession/status history needed by canonical v2.
+- Fulfillment validates the request before database open and resolves mission, claim,
+  ledger, and claim-scoped synthesis through one query-only read snapshot. It does not
+  call the mutating/audited brief-export path.
+- Claim-scoped output remains `minerva.research-brief.v2`; request/scope metadata does
+  not fork or extend the packet schema. Minimal `minerva.research-result.v1` binds the
+  request digest to exact output bytes. Consumers need that external binding to
+  interpret selection completeness.
+- Fixed request-result files use the existing exclusive no-follow writer and caught-
+  error cleanup. No migration, identity/run, audit record, provider/model, network,
+  transport, publication, messaging, execution, approval, or automatic adoption is
+  added.
+
 ## Milestone 2B implementation decisions
 
 - Model assistance is an optional CLI-only exception to the offline Milestone 1
