@@ -52,10 +52,31 @@ NETWORK_CALLS = {
     "asyncio.open_connection",
     "http.client.HTTPConnection",
     "http.client.HTTPSConnection",
+    "httpx.delete",
+    "httpx.get",
+    "httpx.head",
+    "httpx.options",
+    "httpx.patch",
+    "httpx.post",
+    "httpx.put",
+    "httpx.request",
+    "httpx.stream",
     "socket.create_connection",
     "urllib.request.urlopen",
 }
 NETWORK_METHODS = {"create_connection", "create_datagram_endpoint"}
+HTTPX_CLIENT_METHODS = {
+    "delete",
+    "get",
+    "head",
+    "options",
+    "patch",
+    "post",
+    "put",
+    "request",
+    "send",
+    "stream",
+}
 PROCESS_CALLS = {
     "asyncio.create_subprocess_exec",
     "asyncio.create_subprocess_shell",
@@ -120,6 +141,11 @@ DYNAMIC_CODE_CALLS = {
     "exec",
 }
 
+PROVIDER_IMPORT_ALLOWLIST = {
+    "integrations/ai/openai.py": frozenset({"httpx", "openai"}),
+    "integrations/ai/anthropic.py": frozenset({"anthropic", "httpx"}),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class Violation:
@@ -140,8 +166,9 @@ def _matches_module(module: str, prohibited: Iterable[str]) -> str | None:
 class PolicyVisitor(ast.NodeVisitor):
     """Resolve imported aliases and inspect exact qualified call targets."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, allowed_imports: Iterable[str] = ()) -> None:
         self.path = path
+        self.allowed_imports = frozenset(allowed_imports)
         self.aliases: dict[str, str] = {"__builtins__": "builtins"}
         self.violations: list[Violation] = []
         self._seen: set[tuple[int, int, str, str]] = set()
@@ -172,6 +199,8 @@ class PolicyVisitor(ast.NodeVisitor):
         for modules, code, label in policies:
             match = _matches_module(qualified_name, modules)
             if match is not None:
+                if match in self.allowed_imports:
+                    continue
                 self._add(node, code, f"{label} is prohibited: {qualified_name}")
 
     def visit_Import(self, node: ast.Import) -> None:
@@ -197,11 +226,20 @@ class PolicyVisitor(ast.NodeVisitor):
         if isinstance(expression, ast.Attribute):
             parent = self._qualified_name(expression.value)
             return f"{parent}.{expression.attr}" if parent is not None else None
+        if isinstance(expression, ast.Call):
+            constructor = self._qualified_name(expression.func)
+            if constructor in {"httpx.Client", "httpx.AsyncClient"}:
+                return f"{constructor}.instance"
         return None
 
     def _bind_alias(self, target: ast.expr, value: ast.expr | None) -> None:
         if not isinstance(target, ast.Name):
             return
+        if isinstance(value, ast.Call):
+            constructor = self._qualified_name(value.func)
+            if constructor in {"httpx.Client", "httpx.AsyncClient"}:
+                self.aliases[target.id] = f"{constructor}.instance"
+                return
         qualified_name = self._qualified_name(value) if value is not None else None
         if qualified_name is None:
             self.aliases.pop(target.id, None)
@@ -217,6 +255,18 @@ class PolicyVisitor(ast.NodeVisitor):
         self._bind_alias(node.target, node.value)
         self.generic_visit(node)
 
+    def visit_With(self, node: ast.With) -> None:
+        for item in node.items:
+            if item.optional_vars is not None:
+                self._bind_alias(item.optional_vars, item.context_expr)
+        self.generic_visit(node)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+        for item in node.items:
+            if item.optional_vars is not None:
+                self._bind_alias(item.optional_vars, item.context_expr)
+        self.generic_visit(node)
+
     def visit_Call(self, node: ast.Call) -> None:
         qualified_name = self._qualified_name(node.func)
         network_method = (
@@ -224,6 +274,12 @@ class PolicyVisitor(ast.NodeVisitor):
         )
         if qualified_name in NETWORK_CALLS or network_method in NETWORK_METHODS:
             self._add(node, "MIN001", f"network client call is prohibited: {qualified_name}")
+        if (
+            qualified_name is not None
+            and qualified_name.startswith(("httpx.Client.instance.", "httpx.AsyncClient.instance."))
+            and network_method in HTTPX_CLIENT_METHODS
+        ):
+            self._add(node, "MIN001", f"direct HTTP client call is prohibited: {qualified_name}")
         if qualified_name in PROCESS_CALLS:
             self._add(node, "MIN002", f"process execution call is prohibited: {qualified_name}")
         if qualified_name in DYNAMIC_CODE_CALLS:
@@ -251,7 +307,11 @@ def scan_tree(source_root: Path) -> list[Violation]:
         except (OSError, SyntaxError, UnicodeError) as exc:
             violations.append(Violation(path, 1, 1, "MIN000", f"unable to parse source: {exc}"))
             continue
-        visitor = PolicyVisitor(path)
+        relative_path = path.relative_to(source_root).as_posix()
+        visitor = PolicyVisitor(
+            path,
+            allowed_imports=PROVIDER_IMPORT_ALLOWLIST.get(relative_path, ()),
+        )
         visitor.visit(tree)
         violations.extend(visitor.violations)
     return sorted(

@@ -42,6 +42,11 @@ from minerva.api.models import (
     question_read,
     snapshot_read,
 )
+from minerva.assist.service import (
+    MAX_ASSISTANCE_CANDIDATES,
+    MAX_ASSISTANCE_CONTEXT_BYTES,
+    MAX_ASSISTANCE_EVIDENCE_CARDS,
+)
 from minerva.core.db import Database
 from minerva.core.errors import ConflictError, IntegrityError, SecurityBoundaryError
 from minerva.core.types import IdentityContext, local_identity
@@ -60,7 +65,7 @@ _CURSOR_KINDS: Final = frozenset(
 )
 _CURSOR_ID_RE: Final = re.compile(r"[a-z]{3}_[0-9a-f]{32}\Z")
 _CURSOR_TIMESTAMP_RE: Final = re.compile(r"[0-9T:+.Z-]{1,64}\Z")
-CAPABILITY_SCHEMA_VERSION: Final = "minerva.capabilities.v1"
+CAPABILITY_SCHEMA_VERSION: Final = "minerva.capabilities.v2"
 MAX_REQUEST_BODY_BYTES: Final = 5_242_880
 MAX_MISSION_PAGE_SIZE: Final = 200
 
@@ -251,7 +256,10 @@ def create_api_router(database: Database) -> APIRouter:
         return CapabilityManifestRead(
             schema_version=CAPABILITY_SCHEMA_VERSION,
             api_version=API_VERSION,
-            local_only=True,
+            local_only=False,
+            loopback_only=True,
+            external_egress="disabled_by_default_cli_only",
+            supported_external_providers=["openai", "anthropic"],
             identity_boundary="local_os_user",
             citation_scheme=CITATION_SCHEME,
             brief_schema_version=BRIEF_SCHEMA_VERSION,
@@ -266,10 +274,15 @@ def create_api_router(database: Database) -> APIRouter:
                 "claim.evidence_ledger.read",
                 "brief.preview.markdown_json",
                 "web.review",
+                "assist.finding_candidates.preview.cli",
+                "assist.finding_candidates.invoke.cli.byok.optional",
             ],
             unavailable=[
                 "network.fetch",
-                "model.invoke",
+                "model.invoke.api",
+                "model.invoke.web",
+                "model.output.auto_adopt",
+                "provider.credential.persist",
                 "mcp",
                 "multi_user_auth",
                 "publish",
@@ -279,6 +292,9 @@ def create_api_router(database: Database) -> APIRouter:
                 source_bytes=DEFAULT_MAX_SOURCE_BYTES,
                 request_body_bytes=MAX_REQUEST_BODY_BYTES,
                 mission_page_size=MAX_MISSION_PAGE_SIZE,
+                assistant_context_bytes=MAX_ASSISTANCE_CONTEXT_BYTES,
+                assistant_evidence_cards=MAX_ASSISTANCE_EVIDENCE_CARDS,
+                assistant_candidates=MAX_ASSISTANCE_CANDIDATES,
             ),
         )
 

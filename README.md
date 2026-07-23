@@ -11,13 +11,26 @@ and opposing evidence; inspect its ledger; record labeled findings; and export a
 deterministic Markdown/JSON brief with resolvable citations and an append-only audit
 trail.
 
+Milestone 2B adds one deliberately narrow, optional assistance surface. A local CLI
+operator can preview a bounded request made from one claim and its active evidence,
+then explicitly authorize that exact request for OpenAI or Anthropic using their own
+API key. Returned text is untrusted, ephemeral candidate material; Minerva does not
+adopt it as evidence, a finding, or research state.
+
 ## Trust boundary
 
 Minerva is alpha software for one trusted OS user. The web server binds to
 `127.0.0.1`; loopback is not authentication. Do not expose it remotely. Source data
-remains local, URL metadata is never fetched, and the first milestone has no model,
+remains local during every Milestone 1 workflow, URL metadata is never fetched, and
+the offline demo performs no network operation. The first milestone has no model,
 shell, notebook, plugin, sibling-repository integration, publishing, or messaging
-surface. See [the threat model](docs/THREAT_MODEL.md) and [security policy](SECURITY.md).
+surface.
+
+The reviewed Milestone 2B exception is CLI-only and opt-in. Preview performs no
+network operation and shows the exact JSON context, destination, limits, and request
+SHA-256. Egress occurs only when the operator re-runs the command with explicit
+confirmation and that exact digest. See [the threat model](docs/THREAT_MODEL.md),
+[security policy](SECURITY.md), and [ADR 0003](docs/adr/0003-explicit-byok-model-assistance.md).
 
 ## Platform and development install
 
@@ -33,6 +46,15 @@ uv run minerva --help
 For an installed artifact, build the project and install the generated wheel into an
 isolated environment. The package distribution name is `minerva-research`; its command
 is `minerva`.
+
+Model assistance is not installed in the base package. Install only the provider you
+intend to use, or the combined extra:
+
+```bash
+uv sync --extra ai-openai
+uv sync --extra ai-anthropic
+uv sync --extra ai
+```
 
 ## Synthetic demo
 
@@ -74,6 +96,54 @@ Repeat `evidence add` with an opposing source to make contradiction visible. Mat
 findings are created with `finding add` and require evidence IDs; assumptions and
 unresolved questions remain explicitly labeled.
 
+## Optional external finding candidates
+
+Choose a supported provider and a provider-specific model identifier with CLI options
+or non-secret preference environment variables. Keep the provider key only in the
+current OS-user environment:
+
+```bash
+export MINERVA_AI_PROVIDER=openai
+export MINERVA_AI_MODEL=provider-model-id
+export OPENAI_API_KEY=your-provider-key
+
+minerva assist finding-candidates --db research.db --claim CLM_ID
+```
+
+For Anthropic, select `anthropic` and set `ANTHROPIC_API_KEY` instead. Do not put API
+keys in command-line arguments, source files, databases, fixtures, logs, or committed
+environment files.
+
+The first command is preview-only: it does not read the provider credential or call a
+network service. Review `context_json`, `destination`, limits, and `request_sha256`.
+The context contains the exact claim ID, statement, and falsification criterion plus
+the bounded active evidence citation IDs, quotes, and stances that will leave the
+machine. Withdrawn evidence is excluded and reported as such. Byte offsets, snapshot
+digests, and supersession references remain local but are bound into the authorization
+digest as provenance. To authorize only that reviewed request, re-run with both
+confirmation fields:
+
+```bash
+minerva assist finding-candidates --db research.db --claim CLM_ID \
+  --confirm-external-send \
+  --expected-request-sha256 REQUEST_SHA256_FROM_PREVIEW
+```
+
+Any change to the selected context or digest-bound request parameters changes the
+digest and requires a fresh preview. The selected provider may charge for the request
+and may retain or process submitted data under its own terms and settings; the
+operator must review those terms and must not send material they are not authorized
+to disclose. Minerva disables automatic retries, redirects, provider fallback, tool
+use, and provider-side storage where the provider API exposes a request control. A
+timeout or connection loss has an unknown provider outcome, so Minerva does not retry
+automatically.
+
+Minerva validates the structured response against the authorized evidence IDs and
+returns at most three labeled `agent_inference` candidates with explicit uncertainty.
+Candidates are not evidence or truth, do not update claim status, and are not stored
+or adopted by Minerva. The audit ledger records bounded request/result metadata and
+digests, not credentials, prompts, evidence text, or returned candidate text.
+
 ## Web and API
 
 ```bash
@@ -82,7 +152,8 @@ minerva serve --db research.db --host 127.0.0.1 --port 8765
 
 Open `http://127.0.0.1:8765/`. Health, readiness, and the capability manifest are at
 `/healthz`, `/readyz`, and `/api/v1/capabilities`. Versioned REST contracts live under
-`/api/v1`; OpenAPI is available locally while the process is running.
+`/api/v1`; OpenAPI is available locally while the process is running. Model assistance
+cannot be invoked from the API or web interface.
 
 ## Operations and verification
 

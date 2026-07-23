@@ -14,6 +14,12 @@ from collections.abc import Sequence
 from hashlib import sha256
 from pathlib import Path
 
+PROVIDER_EXTRA_CASES = (
+    ("ai-openai", ("openai",)),
+    ("ai-anthropic", ("anthropic",)),
+    ("ai", ("anthropic", "openai")),
+)
+
 
 class SmokeError(RuntimeError):
     """Raised when the installed artifact fails its smoke contract."""
@@ -75,6 +81,103 @@ def _venv_executable(venv_root: Path, name: str) -> Path:
     return executable.resolve()
 
 
+def _provision_locked_environment(
+    *,
+    uv_command: Path,
+    checkout: Path,
+    wheel: Path,
+    venv_root: Path,
+    cwd: Path,
+    environment: dict[str, str],
+    extra: str | None,
+) -> Path:
+    venv.EnvBuilder(with_pip=False, system_site_packages=False, clear=True).create(venv_root)
+    python = _venv_executable(venv_root, "python")
+    requirements = venv_root.with_name(f"{venv_root.name}-requirements.txt")
+    extra_arguments = [] if extra is None else ["--extra", extra]
+
+    _run_checked(
+        [
+            str(uv_command),
+            "export",
+            "--project",
+            str(checkout),
+            "--frozen",
+            *extra_arguments,
+            "--no-emit-project",
+            "--no-hashes",
+            "--output-file",
+            str(requirements),
+            "--offline",
+        ],
+        cwd=cwd,
+        environment=environment,
+    )
+    if not requirements.is_file() or not requirements.read_text(encoding="utf-8").strip():
+        raise SmokeError("uv exported an empty locked dependency set")
+
+    try:
+        _run_checked(
+            [
+                str(uv_command),
+                "pip",
+                "install",
+                "--python",
+                str(python),
+                "--requirement",
+                str(requirements),
+                "--offline",
+            ],
+            cwd=cwd,
+            environment=environment,
+        )
+    except SmokeError as pip_error:
+        sync_environment = environment.copy()
+        sync_environment["UV_PROJECT_ENVIRONMENT"] = str(venv_root)
+        try:
+            _run_checked(
+                [
+                    str(uv_command),
+                    "sync",
+                    "--project",
+                    str(checkout),
+                    "--frozen",
+                    *extra_arguments,
+                    "--no-install-project",
+                    "--offline",
+                ],
+                cwd=cwd,
+                environment=sync_environment,
+            )
+        except SmokeError as sync_error:
+            extra_label = "base dependencies" if extra is None else f"extra {extra!r}"
+            raise SmokeError(
+                f"unable to provision locked {extra_label} offline; "
+                f"export install failed: {pip_error}; lock sync failed: {sync_error}"
+            ) from sync_error
+
+    _run_checked(
+        [
+            str(uv_command),
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--no-deps",
+            "--offline",
+            str(wheel),
+        ],
+        cwd=cwd,
+        environment=environment,
+    )
+    _run_checked(
+        [str(uv_command), "pip", "check", "--python", str(python)],
+        cwd=cwd,
+        environment=environment,
+    )
+    return python
+
+
 def smoke_wheel(dist_directory: Path) -> Path:
     """Install and exercise the sole wheel in *dist_directory* outside the checkout."""
     wheel = _single_wheel(dist_directory)
@@ -88,13 +191,17 @@ def smoke_wheel(dist_directory: Path) -> Path:
         if smoke_directory.is_relative_to(checkout):
             raise SmokeError("temporary smoke directory unexpectedly resides inside the checkout")
 
-        venv_root = temporary_root / "venv"
-        venv.EnvBuilder(with_pip=False, system_site_packages=False, clear=True).create(venv_root)
-        python = _venv_executable(venv_root, "python")
-        requirements = temporary_root / "locked-requirements.txt"
-
         environment = os.environ.copy()
-        environment.pop("PYTHONPATH", None)
+        for variable in (
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_BASE_URL",
+            "MINERVA_AI_MODEL",
+            "MINERVA_AI_PROVIDER",
+            "OPENAI_API_KEY",
+            "OPENAI_BASE_URL",
+            "PYTHONPATH",
+        ):
+            environment.pop(variable, None)
         environment.update(
             {
                 "PYTHONDONTWRITEBYTECODE": "1",
@@ -102,85 +209,15 @@ def smoke_wheel(dist_directory: Path) -> Path:
             }
         )
 
-        _run_checked(
-            [
-                str(uv_command),
-                "export",
-                "--project",
-                str(checkout),
-                "--frozen",
-                "--extra",
-                "dev",
-                "--no-emit-project",
-                "--no-hashes",
-                "--output-file",
-                str(requirements),
-                "--offline",
-            ],
+        venv_root = temporary_root / "venv-base"
+        python = _provision_locked_environment(
+            uv_command=uv_command,
+            checkout=checkout,
+            wheel=wheel,
+            venv_root=venv_root,
             cwd=smoke_directory,
             environment=environment,
-        )
-        if not requirements.is_file() or not requirements.read_text(encoding="utf-8").strip():
-            raise SmokeError("uv exported an empty locked dependency set")
-
-        try:
-            _run_checked(
-                [
-                    str(uv_command),
-                    "pip",
-                    "install",
-                    "--python",
-                    str(python),
-                    "--requirement",
-                    str(requirements),
-                    "--offline",
-                ],
-                cwd=smoke_directory,
-                environment=environment,
-            )
-        except SmokeError as pip_error:
-            sync_environment = environment.copy()
-            sync_environment["UV_PROJECT_ENVIRONMENT"] = str(venv_root)
-            try:
-                _run_checked(
-                    [
-                        str(uv_command),
-                        "sync",
-                        "--project",
-                        str(checkout),
-                        "--frozen",
-                        "--extra",
-                        "dev",
-                        "--no-install-project",
-                        "--offline",
-                    ],
-                    cwd=smoke_directory,
-                    environment=sync_environment,
-                )
-            except SmokeError as sync_error:
-                raise SmokeError(
-                    "unable to provision locked dependencies offline after `uv sync --frozen "
-                    f"--extra dev`; export install failed: {pip_error}; "
-                    f"lock sync failed: {sync_error}"
-                ) from sync_error
-        _run_checked(
-            [
-                str(uv_command),
-                "pip",
-                "install",
-                "--python",
-                str(python),
-                "--no-deps",
-                "--offline",
-                str(wheel),
-            ],
-            cwd=smoke_directory,
-            environment=environment,
-        )
-        _run_checked(
-            [str(uv_command), "pip", "check", "--python", str(python)],
-            cwd=smoke_directory,
-            environment=environment,
+            extra=None,
         )
 
         probe = (
@@ -199,6 +236,14 @@ def smoke_wheel(dist_directory: Path) -> Path:
         imported_path = Path(output_lines[1]).resolve()
         if not imported_path.is_relative_to(venv_root):
             raise SmokeError("package import did not resolve to the temporary wheel installation")
+        sdk_probe = """
+from importlib.util import find_spec
+
+unexpected = [name for name in ("anthropic", "openai") if find_spec(name) is not None]
+if unexpected:
+    raise RuntimeError(f"provider SDKs leaked into base installation: {unexpected}")
+""".strip()
+        _run_checked([str(python), "-c", sdk_probe], cwd=smoke_directory, environment=environment)
 
         minerva_command = _venv_executable(venv_root, "minerva")
         demo_command = _venv_executable(venv_root, "minerva-demo")
@@ -230,6 +275,37 @@ def smoke_wheel(dist_directory: Path) -> Path:
         if not isinstance(claim_ids, list) or not claim_ids or not isinstance(claim_ids[0], str):
             raise SmokeError("installed demo did not return a claim identifier")
         claim_id = claim_ids[0]
+        assistant_preview = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "assist",
+                    "finding-candidates",
+                    "--db",
+                    str(demo_database),
+                    "--claim",
+                    claim_id,
+                    "--provider",
+                    "openai",
+                    "--model",
+                    "test-model-1",
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed assistant preview",
+        )
+        if assistant_preview.get("mode") != "preview":
+            raise SmokeError("installed assistant did not return preview mode")
+        if assistant_preview.get("network_called") is not False:
+            raise SmokeError("installed assistant preview reported a network call")
+        preview_document = assistant_preview.get("preview")
+        if not isinstance(preview_document, dict):
+            raise SmokeError("installed assistant preview omitted its request document")
+        request_sha256 = preview_document.get("request_sha256")
+        if not isinstance(request_sha256, str) or len(request_sha256) != 64:
+            raise SmokeError("installed assistant preview omitted its request digest")
+
         preview = _json_object(
             _run_checked(
                 [
@@ -279,12 +355,53 @@ def smoke_wheel(dist_directory: Path) -> Path:
             raise SmokeError("installed deep doctor did not report a healthy database")
 
         web_probe = """
+import asyncio
 import sys
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
 from minerva.web.app import create_app
+
+async def get(app, path):
+    messages = []
+    request_delivered = False
+
+    async def receive():
+        nonlocal request_delivered
+        if request_delivered:
+            return {"type": "http.disconnect"}
+        request_delivered = True
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    await app(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode("ascii"),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [(b"host", b"testserver")],
+            "client": ("127.0.0.1", 50000),
+            "server": ("testserver", 80),
+        },
+        receive,
+        send,
+    )
+    status = next(
+        message["status"] for message in messages if message["type"] == "http.response.start"
+    )
+    body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    return status, body
 
 database = Path(sys.argv[1])
 mission_id = sys.argv[2]
@@ -297,19 +414,67 @@ routes = (
     f"/missions/{mission_id}/brief",
     "/static/style.css",
 )
-with TestClient(create_app(database, testing=True)) as client:
+app = create_app(database, testing=True)
+
+async def main():
     for route in routes:
-        response = client.get(route)
-        if response.status_code != 200:
-            raise RuntimeError(f"installed web route {route} returned {response.status_code}")
-        if route == "/static/style.css" and not response.content:
+        status, body = await get(app, route)
+        if status != 200:
+            raise RuntimeError(f"installed web route {route} returned {status}")
+        if route == "/static/style.css" and not body:
             raise RuntimeError("installed static CSS is empty")
+
+asyncio.run(main())
 """.strip()
         _run_checked(
             [str(python), "-c", web_probe, str(demo_database), mission_id, claim_id],
             cwd=smoke_directory,
             environment=environment,
         )
+
+        provider_probe = """
+import socket
+import sys
+from importlib.util import find_spec
+
+def deny_network(*_args, **_kwargs):
+    raise RuntimeError("provider adapter construction attempted network access")
+
+socket.create_connection = deny_network
+socket.getaddrinfo = deny_network
+
+from minerva.assist.models import ModelProvider
+from minerva.integrations.ai import candidate_provider
+
+expected = frozenset(sys.argv[1:])
+for module in ("anthropic", "openai"):
+    present = find_spec(module) is not None
+    if present != (module in expected):
+        raise RuntimeError(
+            f"provider SDK presence mismatch for {module}: present={present}, expected={expected}"
+        )
+
+for name in sorted(expected):
+    provider = ModelProvider(name)
+    adapter = candidate_provider(provider)
+    if adapter.provider is not provider:
+        raise RuntimeError(f"constructed adapter reports the wrong provider for {name}")
+""".strip()
+        for extra, expected_providers in PROVIDER_EXTRA_CASES:
+            extra_python = _provision_locked_environment(
+                uv_command=uv_command,
+                checkout=checkout,
+                wheel=wheel,
+                venv_root=temporary_root / f"venv-{extra}",
+                cwd=smoke_directory,
+                environment=environment,
+                extra=extra,
+            )
+            _run_checked(
+                [str(extra_python), "-c", provider_probe, *expected_providers],
+                cwd=smoke_directory,
+                environment=environment,
+            )
 
     return wheel
 

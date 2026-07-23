@@ -8,14 +8,30 @@ import email.parser
 import sys
 import tarfile
 import zipfile
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
+
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
 
 EXPECTED_DISTRIBUTION = "minerva-research"
 EXPECTED_ENTRY_POINTS = {
     "minerva": "minerva.cli.main:main",
     "minerva-demo": "minerva.cli.demo:main",
 }
+EXPECTED_AI_EXTRAS = frozenset({"ai", "ai-anthropic", "ai-openai"})
+EXPECTED_AI_REQUIREMENTS = {
+    "ai": {
+        "anthropic": SpecifierSet(">=0.117,<1"),
+        "openai": SpecifierSet(">=2.46,<3"),
+    },
+    "ai-anthropic": {"anthropic": SpecifierSet(">=0.117,<1")},
+    "ai-openai": {"openai": SpecifierSet(">=2.46,<3")},
+}
+_PROVIDER_DISTRIBUTIONS = frozenset({"anthropic", "openai"})
+type _NormalizedProviderRequirement = tuple[str, SpecifierSet, str | None, frozenset[str]]
 
 EXPECTED_RESOURCES = frozenset(
     PurePosixPath(name)
@@ -79,6 +95,61 @@ def _require_exact_resources(names: set[PurePosixPath], artifact: Path) -> None:
         raise VerificationError(f"{artifact.name} has unmanifested package resources: {detail}")
 
 
+def _verify_ai_extra_metadata(metadata: object, artifact: Path) -> None:
+    get_all = getattr(metadata, "get_all", None)
+    if not callable(get_all):
+        raise VerificationError(f"{artifact.name} contains unreadable package metadata")
+
+    provided_extras = {
+        canonicalize_name(value.strip())
+        for value in get_all("Provides-Extra", [])
+        if isinstance(value, str) and value.strip()
+    }
+    missing_extras = sorted(EXPECTED_AI_EXTRAS - provided_extras)
+    if missing_extras:
+        detail = ", ".join(missing_extras)
+        raise VerificationError(f"{artifact.name} is missing required AI extras: {detail}")
+
+    requirements: list[Requirement] = []
+    for raw_requirement in get_all("Requires-Dist", []):
+        try:
+            requirements.append(Requirement(raw_requirement))
+        except (InvalidRequirement, TypeError) as exc:
+            raise VerificationError(
+                f"{artifact.name} contains invalid Requires-Dist metadata"
+            ) from exc
+
+    for requirement in requirements:
+        if canonicalize_name(requirement.name) not in _PROVIDER_DISTRIBUTIONS:
+            continue
+        if requirement.marker is None or requirement.marker.evaluate(environment={"extra": ""}):
+            raise VerificationError(
+                f"{artifact.name} makes provider SDK {requirement.name!r} a base dependency"
+            )
+
+    for extra, expected_requirements in EXPECTED_AI_REQUIREMENTS.items():
+        actual: Counter[_NormalizedProviderRequirement] = Counter(
+            (
+                canonicalize_name(requirement.name),
+                requirement.specifier,
+                requirement.url,
+                frozenset(requirement.extras),
+            )
+            for requirement in requirements
+            if canonicalize_name(requirement.name) in _PROVIDER_DISTRIBUTIONS
+            and requirement.marker is not None
+            and requirement.marker.evaluate(environment={"extra": extra})
+        )
+        expected: Counter[_NormalizedProviderRequirement] = Counter(
+            (distribution, specifier, None, frozenset())
+            for distribution, specifier in expected_requirements.items()
+        )
+        if actual != expected:
+            raise VerificationError(
+                f"{artifact.name} has incorrect provider requirements for extra {extra!r}"
+            )
+
+
 def _parse_metadata(raw_metadata: bytes, artifact: Path) -> tuple[str, str]:
     try:
         metadata = email.parser.BytesParser().parsebytes(raw_metadata)
@@ -93,6 +164,7 @@ def _parse_metadata(raw_metadata: bytes, artifact: Path) -> tuple[str, str]:
         )
     if not version:
         raise VerificationError(f"{artifact.name} metadata has no Version field")
+    _verify_ai_extra_metadata(metadata, artifact)
     return name, version
 
 
