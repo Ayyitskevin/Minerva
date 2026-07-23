@@ -23,7 +23,8 @@ evidence leaves the machine.
 | Unsafe standalone packet path | Reject `..`; descriptor-relative component walk with `O_NOFOLLOW`; `O_PATH`-pin and type-check the final target before readable open; metadata cap before read; two stable reads | A trusted same-OS-user process can still coordinate changes outside the finite observation window |
 | Hostile offline research request | Same no-follow stable-file boundary; 64 KiB cap before decode; strict canonical DTO/digest; duplicate/non-standard/shape/fanout defenses; exact prefix/hex IDs; unknown fields rejected | Digest self-consistency does not establish origin, authenticity, authority, disclosure permission, or freshness against a later database snapshot |
 | Evidence cherry-picking or stale request | Only `complete_claim_ledger`; requested sorted active set must exactly equal the target claim's snapshot ledger; no stance filtering; withdrawn history retained | A producer can choose which claim to request; policy does not assess whether the mission itself is complete or research is true |
-| Request scope crosses mission/claim boundary | Mission and claim resolved through domain services in one query-only read snapshot; claim mission checked; all missing/out-of-scope evidence fails closed with non-reflective errors | The trusted OS user who owns the database remains the security principal; no remote authorization exists |
+| Request scope crosses mission/claim boundary | Mission and claim resolved by parameterized primary-key lookups in one query-only read snapshot; claim mission checked; all missing/out-of-scope evidence fails closed with non-reflective errors | The trusted OS user who owns the database remains the security principal; no remote authorization exists |
+| Excessive work or text materialization during fulfillment | Bounded claim-history/preflight queries, one connection-local progress budget over the complete query-only snapshot, and an exact-multiplicity NUL-safe storage-byte lower bound before full database text or snapshot content is returned to Python; exhaustion becomes non-reflective `brief_work_limit` before file writes | The SQLite budget limits virtual-machine instructions, not elapsed time; aggregate length queries inspect stored values and are not an SQLite-memory limit; final canonical byte validation remains authoritative; missing claim/audit-oriented indexes can false-refuse a valid request when unrelated history is scan-heavy |
 | Script/HTML/Markdown injection | Jinja autoescape; CSP; stored text rendered as text/`pre`; no raw HTML Markdown mode | Future rich rendering requires a reviewed sanitizer policy |
 | SQL injection | Parameterized SQL; dynamic choices selected from fixed enums/queries only | A future ad hoc query could violate the rule; tests and review remain necessary |
 | Import traversal or symlink escape | Root-relative paths only; reject absolute/`..`; descriptor traversal with `O_NOFOLLOW`; regular-file and size checks | The OS user can still submit any directory they are authorized to choose as root |
@@ -56,7 +57,8 @@ evidence leaves the machine.
   before JSON decoding, and emit bounded metadata or fixed non-reflective errors.
 - Request verification applies the same file discipline with a 64 KiB cap and opens no
   database, credential source, provider, or network. Fulfillment validates first, then
-  uses one query-only snapshot and creates no Minerva state or audit record.
+  uses one query-only snapshot under one cumulative SQLite work guard. Exhaustion creates
+  no artifacts, Minerva state, or audit record.
 - The complete-ledger active precondition prevents silent stance omission. Result
   bytes bind request digest to exact canonical output without paths, URLs, identity,
   authority, approval, timestamps, transport, or run-coordination metadata.

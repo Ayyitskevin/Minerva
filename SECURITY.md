@@ -69,6 +69,22 @@ closed, so the request cannot silently filter opposing, contextual, or inconclus
 stances. Fulfilled output retains the claim's withdrawn/supersession/status and exact
 source/audit/run closure.
 
+The query-only snapshot has one cumulative SQLite virtual-machine instruction budget.
+Exhaustion fails closed as `brief_work_limit` (CLI exit `3`) before artifact publication;
+it is not a wall-clock timeout. Because this milestone deliberately adds no schema
+migration, valid requests can be refused when existing indexes require excessive scans.
+A later human-reviewed indexing migration may reduce that availability tradeoff while
+retaining the guard.
+
+Before full database text or snapshot content is returned to Python, claim-scoped
+synthesis asks SQLite for NUL-safe storage-byte lengths at every emitted string's exact
+packet multiplicity. UTF-8 is compared directly and UTF-16 uses a conservative
+two-to-one threshold. A derived lower bound above the export byte cap fails as
+`brief_work_limit`; canonical serialization remains the final byte-size check. This
+prevents cumulative quote, metadata, provenance, and finding text from being returned
+to Python when the packet cannot fit. SQLite still inspects the stored values, so this
+is not an SQLite-memory limit.
+
 Fulfillment creates no Minerva identity/run, audit event, export row, or research
 mutation and has no network/provider dependency. Fixed `research-brief.json` and
 `research-result.json` files use exclusive owner-only no-follow writes; caught second-

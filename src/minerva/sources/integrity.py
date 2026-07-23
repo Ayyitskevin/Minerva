@@ -46,6 +46,7 @@ def verify_snapshot_integrity(
             FROM audit_events
             WHERE event_type = ? AND entity_id = ?
             ORDER BY sequence
+            LIMIT 2
             """,
             (_IMPORT_EVENT_TYPE, str(row["id"])),
         )

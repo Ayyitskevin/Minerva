@@ -16,7 +16,7 @@ from minerva.core.audit import AuditRecorder, AuditSink
 from minerva.core.db import Database
 from minerva.core.errors import ConflictError, IntegrityError, NotFoundError
 from minerva.core.types import Clock, IdentityContext, IdFactory, new_id, utc_now
-from minerva.evidence.integrity import VerifiedCitation, verify_evidence_reference
+from minerva.evidence.integrity import verify_evidence_references
 from minerva.integrations.research_packet import (
     CITATION_SCHEME,
     RESEARCH_PACKET_SCHEMA_VERSION,
@@ -45,6 +45,120 @@ _PACKET_AUDIT_EVENT_TYPES = (
     "research.mission.created",
     "research.question.created",
     "source.snapshot.imported",
+)
+
+_SCOPED_PACKET_AUDIT_CTE = """
+    WITH relevant_events AS MATERIALIZED (
+        SELECT audit.sequence, audit.id, audit.event_type, audit.entity_type,
+               audit.entity_id, audit.mission_id, audit.actor_id, audit.run_id,
+               audit.occurred_at
+        FROM audit_events AS audit
+        WHERE audit.mission_id = ?
+          AND audit.event_type IN (?, ?, ?, ?, ?, ?, ?, ?)
+          AND (
+              (audit.entity_type = 'research_mission' AND audit.entity_id = ?)
+              OR (
+                  audit.entity_type = 'research_question'
+                  AND EXISTS (
+                      SELECT 1 FROM claims AS target
+                      WHERE target.id = ? AND target.question_id = audit.entity_id
+                  )
+              )
+              OR (audit.entity_type = 'claim' AND audit.entity_id = ?)
+              OR (
+                  audit.entity_type = 'source_snapshot'
+                  AND EXISTS (
+                      SELECT 1 FROM evidence_cards AS evidence
+                      WHERE evidence.claim_id = ?
+                        AND evidence.snapshot_id = audit.entity_id
+                  )
+              )
+              OR (
+                  audit.entity_type = 'evidence_card'
+                  AND EXISTS (
+                      SELECT 1 FROM evidence_cards AS evidence
+                      WHERE evidence.id = audit.entity_id
+                        AND evidence.claim_id = ?
+                  )
+              )
+              OR (
+                  audit.entity_type = 'finding'
+                  AND EXISTS (
+                      SELECT 1 FROM findings AS finding
+                      WHERE finding.id = audit.entity_id
+                        AND finding.claim_id = ?
+                  )
+              )
+          )
+        ORDER BY audit.sequence
+        LIMIT ?
+    ),
+    required_runs AS MATERIALIZED (
+        SELECT DISTINCT run_id FROM relevant_events
+    ),
+    scoped_events AS MATERIALIZED (
+        SELECT sequence, id, event_type, entity_type, entity_id, mission_id,
+               actor_id, run_id, occurred_at
+        FROM relevant_events
+        UNION ALL
+        SELECT started.sequence, started.id, started.event_type, started.entity_type,
+               started.entity_id, started.mission_id, started.actor_id, started.run_id,
+               started.occurred_at
+        FROM audit_events AS started
+        JOIN required_runs ON required_runs.run_id = started.entity_id
+        WHERE started.event_type = 'research.run.started'
+          AND started.entity_type = 'research_run'
+        ORDER BY sequence
+        LIMIT ?
+    )
+"""
+
+_SCOPED_PACKET_AUDIT_ROWS_SQL = (
+    _SCOPED_PACKET_AUDIT_CTE  # noqa: S608 - SQL fragments are module constants.
+    + """
+    SELECT sequence, id, event_type, entity_type, entity_id, mission_id,
+           actor_id, run_id, occurred_at
+    FROM scoped_events
+    ORDER BY sequence
+"""
+)
+
+_SCOPED_PACKET_AUDIT_TEXT_STORAGE_SQL = (
+    _SCOPED_PACKET_AUDIT_CTE  # noqa: S608 - SQL fragments are module constants.
+    + """,
+    packet_run_ids AS MATERIALIZED (
+        SELECT DISTINCT run_id FROM scoped_events
+    )
+    SELECT
+        (SELECT COUNT(*) FROM scoped_events) AS audit_count,
+        (
+            SELECT COALESCE(SUM(
+                LENGTH(CAST(id AS BLOB)) + LENGTH(CAST(event_type AS BLOB)) +
+                LENGTH(CAST(entity_type AS BLOB)) +
+                LENGTH(CAST(entity_id AS BLOB)) +
+                LENGTH(CAST(COALESCE(mission_id, '') AS BLOB)) +
+                LENGTH(CAST(actor_id AS BLOB)) + LENGTH(CAST(run_id AS BLOB)) +
+                LENGTH(CAST(occurred_at AS BLOB))
+            ), 0)
+            FROM scoped_events
+        ) AS audit_text_storage_bytes,
+        (SELECT COUNT(*) FROM packet_run_ids) AS expected_run_count,
+        (
+            SELECT COUNT(*)
+            FROM research_runs AS run
+            JOIN packet_run_ids ON packet_run_ids.run_id = run.id
+        ) AS resolved_run_count,
+        (
+            SELECT COALESCE(SUM(
+                LENGTH(CAST(run.id AS BLOB)) + LENGTH(CAST(run.actor_id AS BLOB)) +
+                LENGTH(CAST(run.actor_kind AS BLOB)) +
+                LENGTH(CAST(run.purpose AS BLOB)) +
+                LENGTH(CAST(run.created_at AS BLOB))
+            ), 0)
+            FROM research_runs AS run
+            JOIN packet_run_ids ON packet_run_ids.run_id = run.id
+        ) AS run_text_storage_bytes
+"""
 )
 
 
@@ -225,43 +339,19 @@ def _preflight_synthesis(
     *,
     mission_id: str,
     claim_id: str | None,
+    max_export_bytes: int,
 ) -> None:
     if claim_id is not None:
-        row = connection.execute(
-            """
-            SELECT
-                COALESCE((
-                    SELECT SUM(ss.byte_length)
-                    FROM source_snapshots AS ss
-                    WHERE ss.mission_id = ?
-                      AND EXISTS (
-                          SELECT 1 FROM evidence_cards AS evidence
-                          WHERE evidence.snapshot_id = ss.id
-                            AND evidence.claim_id = ?
-                      )
-                ), 0) AS source_bytes,
-                (
-                    2 +
-                    (SELECT COUNT(*) FROM claim_status_events WHERE claim_id = ?) +
-                    (
-                        SELECT COUNT(DISTINCT snapshot_id)
-                        FROM evidence_cards WHERE claim_id = ?
-                    ) +
-                    (SELECT COUNT(*) FROM evidence_cards WHERE claim_id = ?) +
-                    (SELECT COUNT(*) FROM findings WHERE claim_id = ?)
-                ) AS record_count,
-                (
-                    SELECT COUNT(*)
-                    FROM finding_citations AS reference
-                    JOIN findings AS finding ON finding.id = reference.finding_id
-                    WHERE finding.claim_id = ?
-                ) AS reference_count
-            """,
-            (mission_id, claim_id, claim_id, claim_id, claim_id, claim_id, claim_id),
-        ).fetchone()
-    else:
-        row = connection.execute(
-            """
+        _preflight_claim_synthesis(
+            connection,
+            mission_id=mission_id,
+            claim_id=claim_id,
+            max_export_bytes=max_export_bytes,
+        )
+        return
+
+    row = connection.execute(
+        """
             SELECT
                 COALESCE((
                     SELECT SUM(byte_length) FROM source_snapshots WHERE mission_id = ?
@@ -278,8 +368,8 @@ def _preflight_synthesis(
                     SELECT COUNT(*) FROM finding_citations WHERE mission_id = ?
                 ) AS reference_count
             """,
-            (mission_id,) * 8,
-        ).fetchone()
+        (mission_id,) * 8,
+    ).fetchone()
     if row is None:
         raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
     if (
@@ -288,6 +378,321 @@ def _preflight_synthesis(
         or int(row["reference_count"]) > MAX_SYNTHESIS_REFERENCES
     ):
         raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+
+
+def _accumulate_materialized_text_storage_bytes(
+    current: int,
+    row: sqlite3.Row,
+    *keys: str,
+    limit: int,
+) -> int:
+    try:
+        additions = tuple(int(row[key]) for key in keys)
+    except (TypeError, ValueError) as error:
+        raise IntegrityError(
+            "packet_integrity_invalid",
+            "Research packet integrity validation failed.",
+        ) from error
+    if any(value < 0 for value in additions):
+        raise IntegrityError(
+            "packet_integrity_invalid",
+            "Research packet integrity validation failed.",
+        )
+    updated = current + sum(additions)
+    if updated > limit:
+        raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+    return updated
+
+
+def _preflight_claim_synthesis(
+    connection: sqlite3.Connection,
+    *,
+    mission_id: str,
+    claim_id: str,
+    max_export_bytes: int,
+) -> int:
+    remaining_records = MAX_SYNTHESIS_RECORDS - 2
+    if remaining_records < 0:
+        raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+
+    encoding_row = connection.execute("PRAGMA encoding").fetchone()
+    encoding = str(encoding_row[0]).upper() if encoding_row is not None else ""
+    if encoding not in {"UTF-8", "UTF-16LE", "UTF-16BE"}:
+        raise IntegrityError(
+            "packet_integrity_invalid",
+            "Research packet integrity validation failed.",
+        )
+    # UTF-16 storage is at most twice the canonical UTF-8 size for valid text.
+    storage_bytes_per_output_byte = 1 if encoding == "UTF-8" else 2
+    text_storage_limit = max_export_bytes * storage_bytes_per_output_byte
+
+    core_row = connection.execute(
+        """
+        SELECT
+            LENGTH(CAST(mission.id AS BLOB)) + LENGTH(CAST(mission.title AS BLOB)) +
+            LENGTH(CAST(mission.objective AS BLOB)) +
+            LENGTH(CAST(mission.creator_id AS BLOB)) +
+            LENGTH(CAST(mission.run_id AS BLOB)) + LENGTH(CAST(mission.created_at AS BLOB)) +
+            LENGTH(CAST(question.id AS BLOB)) + LENGTH(CAST(question.question_text AS BLOB)) +
+            LENGTH(CAST(question.creator_id AS BLOB)) + LENGTH(CAST(question.run_id AS BLOB)) +
+            LENGTH(CAST(question.created_at AS BLOB)) +
+            LENGTH(CAST(claim.id AS BLOB)) + LENGTH(CAST(claim.question_id AS BLOB)) +
+            LENGTH(CAST(claim.statement AS BLOB)) +
+            LENGTH(CAST(claim.falsification_criteria AS BLOB)) +
+            LENGTH(CAST(claim.creator_id AS BLOB)) + LENGTH(CAST(claim.run_id AS BLOB)) +
+            LENGTH(CAST(claim.created_at AS BLOB)) + LENGTH(CAST(status.status AS BLOB)) +
+            LENGTH(CAST(status.reason AS BLOB)) + LENGTH(CAST(status.creator_id AS BLOB)) +
+            LENGTH(CAST(status.run_id AS BLOB)) + LENGTH(CAST(status.created_at AS BLOB))
+                AS core_text_storage_bytes
+        FROM research_missions AS mission
+        JOIN claims AS claim
+          ON claim.id = ? AND claim.mission_id = mission.id
+        JOIN research_questions AS question
+          ON question.id = claim.question_id AND question.mission_id = mission.id
+        JOIN claim_status_events AS status
+          ON status.claim_id = claim.id AND status.mission_id = mission.id
+        WHERE mission.id = ?
+        ORDER BY status.version DESC
+        LIMIT 1
+        """,
+        (claim_id, mission_id),
+    ).fetchone()
+    if core_row is None:
+        raise IntegrityError(
+            "packet_integrity_invalid",
+            "Research packet integrity validation failed.",
+        )
+    materialized_text_storage_bytes = _accumulate_materialized_text_storage_bytes(
+        0,
+        core_row,
+        "core_text_storage_bytes",
+        limit=text_storage_limit,
+    )
+
+    status_rows = list(
+        connection.execute(
+            """
+            SELECT 1
+            FROM claim_status_events INDEXED BY idx_claim_status_claim
+            WHERE claim_id = ?
+            ORDER BY version
+            LIMIT ?
+            """,
+            (claim_id, remaining_records + 1),
+        )
+    )
+    if len(status_rows) > remaining_records:
+        raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+    remaining_records -= len(status_rows)
+
+    evidence_rows = list(
+        connection.execute(
+            """
+            SELECT evidence.snapshot_id, snapshot.byte_length,
+                   (
+                       (2 * LENGTH(CAST(evidence.id AS BLOB))) +
+                       LENGTH(CAST(evidence.claim_id AS BLOB)) +
+                       LENGTH(CAST(evidence.snapshot_id AS BLOB)) +
+                       LENGTH(CAST(evidence.snapshot_sha256 AS BLOB)) +
+                       LENGTH(CAST(snapshot.original_label AS BLOB)) +
+                       LENGTH(CAST(evidence.quote AS BLOB)) +
+                       (2 * LENGTH(CAST(evidence.stance AS BLOB))) +
+                       LENGTH(CAST(evidence.creator_id AS BLOB)) +
+                       LENGTH(CAST(evidence.run_id AS BLOB)) +
+                       LENGTH(CAST(evidence.created_at AS BLOB)) +
+                       LENGTH(CAST(COALESCE(withdrawal.reason, '') AS BLOB)) +
+                       LENGTH(CAST(COALESCE(withdrawal.creator_id, '') AS BLOB)) +
+                       LENGTH(CAST(COALESCE(withdrawal.run_id, '') AS BLOB)) +
+                       LENGTH(CAST(COALESCE(withdrawal.created_at, '') AS BLOB)) +
+                       LENGTH(CAST(
+                           COALESCE(evidence.supersedes_evidence_id, '') AS BLOB
+                       ))
+                   ) AS citation_text_storage_bytes
+            FROM evidence_cards AS evidence INDEXED BY idx_evidence_claim
+            LEFT JOIN source_snapshots AS snapshot
+              ON snapshot.id = evidence.snapshot_id
+             AND snapshot.mission_id = evidence.mission_id
+            LEFT JOIN evidence_withdrawals AS withdrawal
+              ON withdrawal.evidence_id = evidence.id
+            WHERE evidence.mission_id = ? AND evidence.claim_id = ?
+            ORDER BY evidence.created_at, evidence.id
+            LIMIT ?
+            """,
+            (mission_id, claim_id, remaining_records + 1),
+        )
+    )
+    if len(evidence_rows) > remaining_records:
+        raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+    remaining_records -= len(evidence_rows)
+
+    for row in evidence_rows:
+        if row["byte_length"] is None:
+            raise IntegrityError(
+                "snapshot_tampered",
+                "Stored source snapshot integrity failed.",
+            )
+        materialized_text_storage_bytes = _accumulate_materialized_text_storage_bytes(
+            materialized_text_storage_bytes,
+            row,
+            "citation_text_storage_bytes",
+            limit=text_storage_limit,
+        )
+
+    source_rows = list(
+        connection.execute(
+            """
+            WITH selected_snapshots AS MATERIALIZED (
+                SELECT DISTINCT evidence.snapshot_id
+                FROM evidence_cards AS evidence INDEXED BY idx_evidence_claim
+                WHERE evidence.claim_id = ? AND evidence.mission_id = ?
+            )
+            SELECT selected.snapshot_id,
+                   snapshot.id AS resolved_snapshot_id,
+                   source.id AS resolved_source_id,
+                   snapshot.byte_length,
+                   (
+                       LENGTH(CAST(snapshot.id AS BLOB)) +
+                       LENGTH(CAST(snapshot.source_id AS BLOB)) +
+                       LENGTH(CAST(snapshot.original_label AS BLOB)) +
+                       LENGTH(CAST(snapshot.media_type AS BLOB)) +
+                       LENGTH(CAST(snapshot.encoding AS BLOB)) +
+                       LENGTH(CAST(snapshot.sha256 AS BLOB)) +
+                       LENGTH(CAST(snapshot.imported_at AS BLOB)) +
+                       LENGTH(CAST(snapshot.creator_id AS BLOB)) +
+                       LENGTH(CAST(snapshot.run_id AS BLOB)) +
+                       LENGTH(CAST(COALESCE(source.url_metadata, '') AS BLOB))
+                   ) AS source_text_storage_bytes
+            FROM selected_snapshots AS selected
+            LEFT JOIN source_snapshots AS snapshot
+              ON snapshot.id = selected.snapshot_id AND snapshot.mission_id = ?
+            LEFT JOIN sources AS source
+              ON source.id = snapshot.source_id AND source.mission_id = snapshot.mission_id
+            ORDER BY snapshot.imported_at, snapshot.id
+            LIMIT ?
+            """,
+            (claim_id, mission_id, mission_id, remaining_records + 1),
+        )
+    )
+    if len(source_rows) > remaining_records:
+        raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+
+    source_bytes = 0
+    for row in source_rows:
+        if row["resolved_snapshot_id"] is None or row["resolved_source_id"] is None:
+            raise IntegrityError(
+                "snapshot_tampered",
+                "Stored source snapshot integrity failed.",
+            )
+        try:
+            source_bytes += int(row["byte_length"])
+        except (TypeError, ValueError) as error:
+            raise IntegrityError(
+                "snapshot_tampered",
+                "Stored source snapshot integrity failed.",
+            ) from error
+        if source_bytes > MAX_SYNTHESIS_SOURCE_BYTES:
+            raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+        materialized_text_storage_bytes = _accumulate_materialized_text_storage_bytes(
+            materialized_text_storage_bytes,
+            row,
+            "source_text_storage_bytes",
+            limit=text_storage_limit,
+        )
+    remaining_records -= len(source_rows)
+
+    finding_rows = list(
+        connection.execute(
+            """
+            SELECT id,
+                   (
+                       LENGTH(CAST(id AS BLOB)) +
+                       LENGTH(CAST(COALESCE(claim_id, '') AS BLOB)) +
+                       LENGTH(CAST(statement AS BLOB)) +
+                       LENGTH(CAST(statement_kind AS BLOB)) +
+                       LENGTH(CAST(status AS BLOB)) +
+                       LENGTH(CAST(uncertainty AS BLOB)) +
+                       LENGTH(CAST(creator_id AS BLOB)) + LENGTH(CAST(run_id AS BLOB)) +
+                       LENGTH(CAST(created_at AS BLOB)) +
+                       CASE WHEN LENGTH(CAST(uncertainty AS BLOB)) > 0
+                           THEN LENGTH(CAST(id AS BLOB)) +
+                                LENGTH(CAST(uncertainty AS BLOB))
+                           ELSE 0
+                       END
+                   ) AS finding_text_storage_bytes
+            FROM findings INDEXED BY idx_findings_mission
+            WHERE mission_id = ? AND claim_id = ?
+            ORDER BY created_at, id
+            LIMIT ?
+            """,
+            (mission_id, claim_id, remaining_records + 1),
+        )
+    )
+    if len(finding_rows) > remaining_records:
+        raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+
+    for row in finding_rows:
+        materialized_text_storage_bytes = _accumulate_materialized_text_storage_bytes(
+            materialized_text_storage_bytes,
+            row,
+            "finding_text_storage_bytes",
+            limit=text_storage_limit,
+        )
+
+    reference_rows = list(
+        connection.execute(
+            """
+            SELECT LENGTH(CAST(reference.evidence_id AS BLOB)) AS reference_text_storage_bytes
+            FROM findings AS finding INDEXED BY idx_findings_mission
+            JOIN finding_citations AS reference INDEXED BY idx_finding_citations_finding
+              ON reference.finding_id = finding.id
+            WHERE finding.mission_id = ? AND finding.claim_id = ?
+            ORDER BY finding.created_at, finding.id, reference.evidence_id
+            LIMIT ?
+            """,
+            (mission_id, claim_id, MAX_SYNTHESIS_REFERENCES + 1),
+        )
+    )
+    if len(reference_rows) > MAX_SYNTHESIS_REFERENCES:
+        raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+
+    for row in reference_rows:
+        materialized_text_storage_bytes = _accumulate_materialized_text_storage_bytes(
+            materialized_text_storage_bytes,
+            row,
+            "reference_text_storage_bytes",
+            limit=text_storage_limit,
+        )
+
+    audit_row = connection.execute(
+        _SCOPED_PACKET_AUDIT_TEXT_STORAGE_SQL,
+        (
+            mission_id,
+            *_PACKET_AUDIT_EVENT_TYPES,
+            mission_id,
+            claim_id,
+            claim_id,
+            claim_id,
+            claim_id,
+            claim_id,
+            MAX_SYNTHESIS_RECORDS + 1,
+            MAX_SYNTHESIS_RECORDS + 1,
+        ),
+    ).fetchone()
+    if audit_row is None or int(audit_row["audit_count"]) > MAX_SYNTHESIS_RECORDS:
+        raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+    if int(audit_row["expected_run_count"]) != int(audit_row["resolved_run_count"]):
+        raise IntegrityError(
+            "packet_provenance_invalid",
+            "Research packet provenance could not be resolved.",
+        )
+    materialized_text_storage_bytes = _accumulate_materialized_text_storage_bytes(
+        materialized_text_storage_bytes,
+        audit_row,
+        "audit_text_storage_bytes",
+        "run_text_storage_bytes",
+        limit=text_storage_limit,
+    )
+    return materialized_text_storage_bytes // storage_bytes_per_output_byte
 
 
 def _claim_status_evidence_valid(
@@ -378,69 +783,7 @@ def _scoped_packet_audit_rows(
 ) -> list[sqlite3.Row]:
     rows = list(
         connection.execute(
-            """
-            WITH relevant_events AS MATERIALIZED (
-                SELECT audit.sequence, audit.id, audit.event_type, audit.entity_type,
-                       audit.entity_id, audit.mission_id, audit.actor_id, audit.run_id,
-                       audit.occurred_at
-                FROM audit_events AS audit
-                WHERE audit.mission_id = ?
-                  AND audit.event_type IN (?, ?, ?, ?, ?, ?, ?, ?)
-                  AND (
-                      (audit.entity_type = 'research_mission' AND audit.entity_id = ?)
-                      OR (
-                          audit.entity_type = 'research_question'
-                          AND EXISTS (
-                              SELECT 1 FROM claims AS target
-                              WHERE target.id = ? AND target.question_id = audit.entity_id
-                          )
-                      )
-                      OR (audit.entity_type = 'claim' AND audit.entity_id = ?)
-                      OR (
-                          audit.entity_type = 'source_snapshot'
-                          AND EXISTS (
-                              SELECT 1 FROM evidence_cards AS evidence
-                              WHERE evidence.claim_id = ?
-                                AND evidence.snapshot_id = audit.entity_id
-                          )
-                      )
-                      OR (
-                          audit.entity_type = 'evidence_card'
-                          AND EXISTS (
-                              SELECT 1 FROM evidence_cards AS evidence
-                              WHERE evidence.id = audit.entity_id
-                                AND evidence.claim_id = ?
-                          )
-                      )
-                      OR (
-                          audit.entity_type = 'finding'
-                          AND EXISTS (
-                              SELECT 1 FROM findings AS finding
-                              WHERE finding.id = audit.entity_id
-                                AND finding.claim_id = ?
-                          )
-                      )
-                  )
-                ORDER BY audit.sequence
-                LIMIT ?
-            ),
-            required_runs AS (
-                SELECT DISTINCT run_id FROM relevant_events
-            )
-            SELECT sequence, id, event_type, entity_type, entity_id, mission_id,
-                   actor_id, run_id, occurred_at
-            FROM relevant_events
-            UNION ALL
-            SELECT started.sequence, started.id, started.event_type, started.entity_type,
-                   started.entity_id, started.mission_id, started.actor_id, started.run_id,
-                   started.occurred_at
-            FROM audit_events AS started
-            JOIN required_runs ON required_runs.run_id = started.entity_id
-            WHERE started.event_type = 'research.run.started'
-              AND started.entity_type = 'research_run'
-            ORDER BY sequence
-            LIMIT ?
-            """,
+            _SCOPED_PACKET_AUDIT_ROWS_SQL,
             (
                 mission_id,
                 *_PACKET_AUDIT_EVENT_TYPES,
@@ -513,6 +856,32 @@ def _assemble_brief(
     claim_id: str | None = None,
     include_markdown: bool = True,
 ) -> BriefArtifacts:
+    if (
+        connection.execute(
+            "SELECT 1 FROM research_missions WHERE id = ?",
+            (mission_id,),
+        ).fetchone()
+        is None
+    ):
+        raise NotFoundError("mission_not_found")
+
+    if (
+        claim_id is not None
+        and connection.execute(
+            "SELECT 1 FROM claims WHERE id = ? AND mission_id = ?",
+            (claim_id, mission_id),
+        ).fetchone()
+        is None
+    ):
+        raise NotFoundError("claim_not_found")
+
+    _preflight_synthesis(
+        connection,
+        mission_id=mission_id,
+        claim_id=claim_id,
+        max_export_bytes=max_export_bytes,
+    )
+
     mission = connection.execute(
         """
         SELECT id, title, objective, creator_id, run_id, created_at
@@ -526,17 +895,12 @@ def _assemble_brief(
     selected_question_id: str | None = None
     if claim_id is not None:
         selected_claim = connection.execute(
-            """
-            SELECT question_id FROM claims
-            WHERE id = ? AND mission_id = ?
-            """,
+            "SELECT question_id FROM claims WHERE id = ? AND mission_id = ?",
             (claim_id, mission_id),
         ).fetchone()
         if selected_claim is None:
             raise NotFoundError("claim_not_found")
         selected_question_id = str(selected_claim["question_id"])
-
-    _preflight_synthesis(connection, mission_id=mission_id, claim_id=claim_id)
     if selected_question_id is None:
         question_rows = connection.execute(
             """
@@ -582,19 +946,21 @@ def _assemble_brief(
     else:
         source_rows = connection.execute(
             """
+            WITH selected_snapshots AS MATERIALIZED (
+                SELECT DISTINCT evidence.snapshot_id
+                FROM evidence_cards AS evidence INDEXED BY idx_evidence_claim
+                WHERE evidence.claim_id = ? AND evidence.mission_id = ?
+            )
             SELECT ss.id, ss.source_id, ss.mission_id, ss.content, ss.sha256, ss.byte_length,
                    ss.encoding, ss.media_type, ss.original_label, ss.imported_at,
                    ss.creator_id, ss.run_id, s.url_metadata
-            FROM source_snapshots AS ss
+            FROM selected_snapshots AS selected
+            JOIN source_snapshots AS ss ON ss.id = selected.snapshot_id
             JOIN sources AS s ON s.id = ss.source_id
             WHERE ss.mission_id = ?
-              AND EXISTS (
-                  SELECT 1 FROM evidence_cards AS evidence
-                  WHERE evidence.snapshot_id = ss.id AND evidence.claim_id = ?
-              )
             ORDER BY ss.imported_at, ss.id
             """,
-            (mission_id, claim_id),
+            (claim_id, mission_id, mission_id),
         )
     sources: list[dict[str, Any]] = []
     for row in source_rows:
@@ -652,19 +1018,16 @@ def _assemble_brief(
                 (mission_id, claim_id),
             )
         )
-    verified_citations: list[VerifiedCitation] = []
+    verified_citations = verify_evidence_references(
+        connection,
+        evidence_ids=tuple(str(row["id"]) for row in evidence_rows),
+        mission_id=mission_id,
+        allow_withdrawn=True,
+    )
     supersedes: dict[str, str | None] = {}
     citation_provenance: dict[str, dict[str, str | None]] = {}
     for row in evidence_rows:
         evidence_id = str(row["id"])
-        verified_citations.append(
-            verify_evidence_reference(
-                connection,
-                evidence_id=evidence_id,
-                mission_id=mission_id,
-                allow_withdrawn=True,
-            )
-        )
         supersedes[evidence_id] = (
             str(row["supersedes_evidence_id"])
             if row["supersedes_evidence_id"] is not None

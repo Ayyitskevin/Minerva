@@ -3,13 +3,14 @@ from __future__ import annotations
 import os
 import sqlite3
 import stat
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
 import pytest
 
+import minerva.evidence.integrity as evidence_integrity_module
 import minerva.synthesis.service as synthesis_module
 from conftest import ClaimSeed, Lab, SequenceIds, fixed_clock
 from minerva.core.audit import AuditRecorder
@@ -632,34 +633,161 @@ def test_synthesis_preflight_rejects_work_bound_before_snapshot_materialization(
     assert caught.value.code == "brief_work_limit"
 
 
-def test_finding_citations_reuse_the_single_verified_evidence_cache(
+def test_claim_materialization_lower_bound_never_exceeds_canonical_json(lab: Lab) -> None:
+    scenario = _populate_brief(lab)
+
+    packet = lab.synthesis.build_research_packet_json(
+        scenario.seed.mission.id,
+        claim_id=scenario.seed.claim.id,
+    )
+    with lab.database.read() as connection:
+        lower_bound = synthesis_module._preflight_claim_synthesis(
+            connection,
+            mission_id=scenario.seed.mission.id,
+            claim_id=scenario.seed.claim.id,
+            max_export_bytes=synthesis_module.MAX_EXPORT_BYTES,
+        )
+
+    assert lower_bound <= len(packet)
+
+
+@pytest.mark.parametrize(
+    "target",
+    ("mission", "status", "citation", "source", "finding", "audit", "run"),
+)
+def test_claim_preflight_bounds_each_emitted_text_family_before_materialization(
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+) -> None:
+    scenario = _populate_brief(lab)
+    with lab.database.read() as connection:
+        baseline = synthesis_module._preflight_claim_synthesis(
+            connection,
+            mission_id=scenario.seed.mission.id,
+            claim_id=scenario.seed.claim.id,
+            max_export_bytes=synthesis_module.MAX_EXPORT_BYTES,
+        )
+
+    padding = "Q\x00" + ("Z" * 256)
+    with lab.database.transaction() as connection:
+        if target == "mission":
+            connection.execute("DROP TRIGGER missions_no_update")
+            connection.execute(
+                "UPDATE research_missions SET created_at = created_at || ? WHERE id = ?",
+                (padding, scenario.seed.mission.id),
+            )
+        elif target == "status":
+            connection.execute("DROP TRIGGER claim_status_no_update")
+            connection.execute(
+                "UPDATE claim_status_events SET created_at = created_at || ? WHERE claim_id = ?",
+                (padding, scenario.seed.claim.id),
+            )
+        elif target == "citation":
+            connection.execute("DROP TRIGGER evidence_no_update")
+            connection.execute(
+                "UPDATE evidence_cards SET created_at = created_at || ? WHERE id = ?",
+                (padding, scenario.support.id),
+            )
+        elif target == "source":
+            connection.execute("DROP TRIGGER sources_no_update")
+            connection.execute(
+                """
+                UPDATE sources SET url_metadata = COALESCE(url_metadata, '') || ?
+                WHERE id = (SELECT source_id FROM source_snapshots WHERE id = ?)
+                """,
+                (padding, scenario.seed.snapshot.snapshot_id),
+            )
+        elif target == "finding":
+            connection.execute("DROP TRIGGER findings_no_update")
+            connection.execute(
+                "UPDATE findings SET created_at = created_at || ? WHERE claim_id = ?",
+                (padding, scenario.seed.claim.id),
+            )
+        elif target == "audit":
+            connection.execute("DROP TRIGGER audit_no_update")
+            connection.execute(
+                """
+                UPDATE audit_events SET occurred_at = occurred_at || ?
+                WHERE event_type = 'evidence.card.created' AND entity_id = ?
+                """,
+                (padding, scenario.support.id),
+            )
+        else:
+            connection.execute("DROP TRIGGER research_runs_no_update")
+            connection.execute(
+                "UPDATE research_runs SET created_at = created_at || ? WHERE id = ?",
+                (padding, lab.identity.run_id),
+            )
+
+    synthesis = SynthesisService(lab.database)
+    monkeypatch.setattr(synthesis, "_max_export_bytes", baseline + 128)
+
+    def unexpected_packet_build(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("bounded text reached packet construction")
+
+    monkeypatch.setattr(synthesis_module, "build_research_packet", unexpected_packet_build)
+    statements: list[str] = []
+    with lab.database.read() as connection:
+        connection.set_trace_callback(statements.append)
+        try:
+            with pytest.raises(IntegrityError) as caught:
+                synthesis.build_research_packet_json(
+                    scenario.seed.mission.id,
+                    connection=connection,
+                    claim_id=scenario.seed.claim.id,
+                )
+        finally:
+            connection.set_trace_callback(None)
+
+    assert caught.value.code == "brief_work_limit"
+    assert not any("SELECT id, title, objective" in statement for statement in statements)
+    assert not any("ss.content" in statement for statement in statements)
+
+
+def test_synthesis_batches_citation_verification_and_caches_shared_snapshots(
     lab: Lab,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     scenario = _populate_brief(lab)
-    verified_ids: list[str] = []
-    original_verify = synthesis_module.verify_evidence_reference
+    verified_batches: list[tuple[str, ...]] = []
+    verified_snapshot_ids: list[str] = []
+    original_verify = synthesis_module.verify_evidence_references
+    original_verify_snapshot = evidence_integrity_module.verify_snapshot_integrity
 
     def count_verification(
         connection: sqlite3.Connection,
         *,
-        evidence_id: str,
+        evidence_ids: Sequence[str],
         mission_id: str,
         allow_withdrawn: bool,
     ) -> object:
-        verified_ids.append(evidence_id)
+        evidence_batch = tuple(evidence_ids)
+        verified_batches.append(evidence_batch)
         return original_verify(
             connection,
-            evidence_id=evidence_id,
+            evidence_ids=evidence_batch,
             mission_id=mission_id,
             allow_withdrawn=allow_withdrawn,
         )
 
-    monkeypatch.setattr(synthesis_module, "verify_evidence_reference", count_verification)
+    def count_snapshot_verification(connection: sqlite3.Connection, row: sqlite3.Row) -> bytes:
+        verified_snapshot_ids.append(str(row["id"]))
+        return original_verify_snapshot(connection, row)
+
+    monkeypatch.setattr(synthesis_module, "verify_evidence_references", count_verification)
+    monkeypatch.setattr(
+        evidence_integrity_module,
+        "verify_snapshot_integrity",
+        count_snapshot_verification,
+    )
 
     lab.synthesis.build_brief(scenario.seed.mission.id)
 
-    assert sorted(verified_ids) == sorted([scenario.support.id, scenario.opposition.id])
+    assert [sorted(batch) for batch in verified_batches] == [
+        [scenario.support.id, scenario.opposition.id]
+    ]
+    assert verified_snapshot_ids == [scenario.seed.snapshot.snapshot_id]
 
 
 def test_concurrent_mutation_during_export_fails_and_cleans_files(

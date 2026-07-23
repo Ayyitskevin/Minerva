@@ -189,6 +189,14 @@ unresolved question under the same citation rules as human-authored material.
     but carries no selection marker. Its request/result binding supplies that external
     meaning; standalone packet verification does not prove database completeness.
 
+17. Request fulfillment caps cumulative SQLite virtual-machine work across its query-only
+    snapshot. Exhaustion is a stable `brief_work_limit` refusal before output; this is an
+    availability guard, not a wall-clock or successful-fulfillment guarantee.
+    Claim-scoped preflight also refuses before full database text or snapshot content
+    is returned to Python when the exact-multiplicity NUL-safe storage-byte lower bound
+    for emitted strings exceeds the export byte cap. SQLite may inspect those values;
+    canonical serialization remains the final byte check.
+
 ## User surfaces
 
 - The `minerva` CLI proves the entire workflow without a browser and provides init,
