@@ -1,4 +1,4 @@
-# Minerva product requirements: Milestone 1 and Milestone 2B
+# Minerva product requirements: Milestones 1, 1.2, and 2B
 
 ## Product identity
 
@@ -20,6 +20,21 @@ exactly located supporting and opposing evidence; inspect the evidence ledger;
 record labeled findings and uncertainty; and export deterministic Markdown and JSON
 briefs whose material statements resolve to stored snapshots and citations. Every
 state change is attributable through an append-only audit trail.
+
+## Milestone 1.2 outcome
+
+An offline operator or future local consumer can verify and inspect the canonical
+`research-brief.json` directly from an installed Minerva command without opening
+SQLite, contacting a network, or loading provider credentials. Verification applies
+the existing strict `minerva.research-brief.v2` contract, including canonical digest,
+ownership, citation/evidence, provenance, audit coverage, and audit dependency-order
+checks. Inspection exposes bounded inventory and verification metadata, never
+research text or private path/identity values.
+
+Digest verification proves packet self-consistency, not authenticity, origin, truth,
+approval, or the contents of source snapshots that are not embedded in the packet.
+Athena/Icarus exchange and every execution, orchestration, approval, publication, or
+remote transport surface remain deferred.
 
 ## Milestone 2B outcome
 
@@ -138,6 +153,8 @@ unresolved question under the same citation rules as human-authored material.
 
 - The `minerva` CLI proves the entire workflow without a browser and provides init,
   mutation, inspection, audit, backup/restore, doctor, export, and serve operations.
+- `minerva packet verify` and `minerva packet inspect` are file-only offline commands;
+  they require no database and return bounded JSON success or error records.
 - `minerva-demo` creates a disposable synthetic mission and exports its brief without
   contacting a network service. It refuses an existing database.
 - The web interface is a restrained, server-rendered review surface.

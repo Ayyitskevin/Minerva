@@ -36,6 +36,27 @@
 - The project license is intentionally not selected here; licensing is a human legal
   decision and is not required to prove the vertical slice.
 
+## Milestone 1.2 implementation decisions
+
+- The existing `minerva.research-brief.v2` document remains the only packet format.
+  Standalone tooling calls its canonical parser and verifier rather than introducing a
+  second validation path.
+- Packet intake is a Linux file-boundary adapter: it rejects parent segments, walks
+  path components with descriptor-relative no-follow opens, pins and type-checks the
+  final target with `O_PATH`, accepts only one stable regular file, enforces the 20 MiB
+  limit before decoding, and parses only bytes captured from the pinned descriptor.
+- `packet verify` and `packet inspect` are database-free, offline commands. Their
+  compact JSON outputs are fixed-key and bounded; inspection exposes inventory and
+  provenance/audit coverage, not stored research text, identifiers, URLs, or paths.
+- Audit references must respect dependency order as well as coverage: a recorded
+  mutation cannot precede the entities or evidence state it depends on.
+- Untrusted sequence fields stop validation on the first invalid item; JSON
+  object-width/nesting preflight and bounded error classification prevent hostile
+  packets from multiplying validation errors into attacker-sized output or memory.
+- Canonical digest verification establishes self-consistency only. Packet
+  authenticity, source-byte revalidation, transport, signing, Athena/Icarus exchange,
+  and any execution or approval authority remain future seams.
+
 ## Milestone 2B implementation decisions
 
 - Model assistance is an optional CLI-only exception to the offline Milestone 1

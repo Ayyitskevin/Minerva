@@ -11,6 +11,10 @@ opposing, contextual, or inconclusive evidence; inspect its ledger; record label
 findings; and export a deterministic Markdown brief plus a canonical, machine-verifiable
 JSON research packet with resolvable citations and append-only audit provenance.
 
+Milestone 1.2 adds a standalone offline operator surface for that packet. An installed
+`minerva` command can verify or inspect `research-brief.json` directly without a
+Minerva database, network connection, sibling system, provider SDK, or credential.
+
 Milestone 2B adds one deliberately narrow, optional assistance surface. A local CLI
 operator can preview a bounded request made from one claim and its active evidence,
 then explicitly authorize that exact request for OpenAI or Anthropic using their own
@@ -116,9 +120,56 @@ canonical semantic payload, so fixed research state and schema produce byte-iden
 packet output. The packet also states its authority boundary in data: Minerva
 researches; it does not execute, approve, orchestrate, or publish.
 
-No sibling system consumes or receives the packet in this milestone. Future exchange
-must use explicit versioned artifact references and the protocol boundary described in
-[ADR 0002](docs/adr/0002-system-boundaries.md).
+Verify an exported packet directly from its file:
+
+```bash
+minerva packet verify --input research-brief.json
+```
+
+Success returns one compact JSON object on stdout with `status: "verified"`, the
+schema version, canonical export digest, integrity/authenticity distinction, and
+ownership boundary. The command rejects parent (`..`) segments, symbolic links in any
+path component, non-regular or changing files, packets above 20 MiB before JSON
+decoding, malformed or duplicate JSON fields, non-standard numbers, unsupported
+schemas, excessive JSON shape or validation-error fanout, digest changes, and every
+structural or semantic inconsistency enforced by the canonical verifier.
+
+Inspect bounded packet metadata without exposing its research text:
+
+```bash
+minerva packet inspect --input research-brief.json
+```
+
+Inspection uses the CLI's normal machine-readable JSON convention. It reports only
+fixed-key metadata: verification status, schema and digest, mission/question/claim and
+finding-class counts, citation stance and active/withdrawn counts, source counts,
+creator/run and audit coverage, and the ownership boundary. Counts are inventory,
+not confidence. It does not print mission, claim, finding, source, quote, actor, run,
+audit, URL, credential, or input-path values.
+
+Both commands are file-only and offline: they do not open SQLite, contact a network,
+load provider credentials, or import source bytes from elsewhere. Exit status is
+stable:
+
+| Status | Meaning |
+| --- | --- |
+| `0` | Packet verified; bounded JSON is on stdout. |
+| `2` | Command-line usage error from `argparse`. |
+| `3` | Expected unsafe-input, malformed-packet, or verification failure; bounded JSON error is on stderr. |
+| `4` | Unexpected local operating-system failure. |
+| `1` | Unexpected internal failure. |
+
+The export SHA-256 establishes canonical payload self-consistency only. It is not a
+signature, proof of origin, authenticity guarantee, approval, or evidence that a
+claim is true. A same-OS-user actor can rewrite a packet and recompute its digest, and
+the packet contains source digests and citation metadata rather than source bytes, so
+standalone verification cannot independently rehash the original source content.
+
+No sibling system consumes or receives the packet in this milestone. The future
+Athena coordination and Icarus experiment exchange seams remain unimplemented. Any
+future exchange must use explicit versioned artifact references and the protocol
+boundary described in [ADR 0002](docs/adr/0002-system-boundaries.md); neither packet
+command publishes, sends, fetches, executes, approves, or orchestrates anything.
 
 ## Optional external finding candidates
 

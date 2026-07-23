@@ -15,6 +15,10 @@ server HTML ---/             |                     |
 assist CLI --> preview + exact digest confirmation --> reviewed provider adapter
                                                         |
                                                         +--> OpenAI or Anthropic
+
+packet CLI --> no-follow bounded file reader --> strict packet parser/verifier
+                                                     |
+                                                     +--> bounded JSON report
 ```
 
 The SQLite database is authoritative for structured research state and source
@@ -39,7 +43,8 @@ they may not reimplement domain validation or write SQL directly.
 - `cli`: local operator commands, optional external-assistance consent, demo,
   backup/restore, doctor, and server startup.
 - `integrations`: strict, SQLite-independent research-packet DTO, parser, canonical
-  serializer, and verifier plus two live, narrowly reviewed provider adapters. Only
+  serializer, verifier, safe standalone file reader, and bounded metadata reports plus
+  two live, narrowly reviewed provider adapters. Only
   `integrations/ai/openai.py` and `integrations/ai/anthropic.py` may import their SDK
   and network client; there are no live sibling-system adapters.
 
@@ -140,7 +145,25 @@ and evidence requirements before another component may accept the packet. A clai
 honestly remains open or inconclusive is preserved; a status presented as
 evidence-valid must satisfy its stance requirements with active, resolvable citations.
 Citation supersession cycles are checked in linear time, and protocol parsing rejects
-input above 20 MiB before JSON decoding.
+input above 20 MiB before JSON decoding. Untrusted JSON receives a bounded object/depth
+preflight; sequence DTOs fail on their first invalid element, and error classification
+inspects only a fixed maximum number of validation details.
+
+`minerva packet verify` and `minerva packet inspect` apply that same verifier to a
+direct operator-selected file. The adapter rejects parent segments, lexically anchors
+the path, and walks every component through directory descriptors with symbolic-link
+following disabled. It pins the final target with Linux `O_PATH`, verifies that target
+is regular before opening a readable handle through the pinned descriptor, checks the
+size from metadata before reading, performs a limit-plus-one bounded read, and confirms
+stable path/file identity and identical bytes across two reads. It then parses only the
+captured bytes. Expected failures map to fixed, non-reflective JSON errors.
+
+These commands construct no database or identity context, use no provider adapter or
+credential loader, and perform no network operation. Verification output contains
+only schema, digest, integrity/authenticity status, and ownership. Inspection adds
+bounded counts and provenance/audit coverage; it omits stored research text, labels,
+URLs, identifiers, and paths. The digest proves internal canonical consistency, not
+authenticity or source truth; source bytes are not embedded for independent rehashing.
 
 Synthesis work is bounded before rendering, and each rendered output is checked against
 its byte limit before exposure or export. File export uses fixed filenames beneath an
