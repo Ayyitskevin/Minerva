@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import stat
@@ -17,6 +16,11 @@ from minerva.core.audit import AuditRecorder
 from minerva.core.errors import ConflictError, IntegrityError, NotFoundError
 from minerva.core.types import IdentityContext
 from minerva.evidence.models import EvidenceCard, EvidenceStance
+from minerva.integrations.research_packet import (
+    canonical_research_payload_bytes,
+    parse_research_packet,
+    serialize_research_packet,
+)
 from minerva.research.models import ClaimStatus, FindingStatus, StatementKind
 from minerva.synthesis.service import SynthesisService
 
@@ -93,21 +97,184 @@ def test_build_brief_is_byte_deterministic_and_digests_are_reproducible(lab: Lab
 
     first = lab.synthesis.build_brief(scenario.seed.mission.id)
     second = lab.synthesis.build_brief(scenario.seed.mission.id)
-    document = json.loads(first.json)
-    canonical_payload = json.dumps(
-        document["brief"],
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    document = parse_research_packet(first.json)
+    canonical_payload = canonical_research_payload_bytes(document.brief)
 
     assert first == second
     assert first.export_digest == sha256(canonical_payload).hexdigest()
-    assert document["export_digest"] == first.export_digest
+    assert document.export_digest == first.export_digest
+    assert document.brief.model_dump(mode="json") == first.payload
     assert first.json_sha256 == sha256(first.json).hexdigest()
     assert first.markdown_sha256 == sha256(first.markdown).hexdigest()
     assert first.json.endswith(b"\n")
+    assert b'\n  "' not in first.json
     assert first.markdown.endswith(b"\n")
+
+
+def test_packet_preserves_ownership_provenance_and_audit_references(lab: Lab) -> None:
+    scenario = _populate_brief(lab)
+
+    artifacts = lab.synthesis.build_brief(scenario.seed.mission.id)
+    payload = artifacts.payload
+
+    assert payload["ownership"] == {
+        "system": "minerva",
+        "researches": True,
+        "executes": False,
+        "approves": False,
+        "orchestrates": False,
+        "publishes": False,
+    }
+    assert payload["runs"] == [
+        {
+            "id": lab.identity.run_id,
+            "actor_id": lab.identity.actor_id,
+            "actor_kind": lab.identity.actor_kind.value,
+            "purpose": lab.identity.purpose,
+            "created_at": fixed_clock(),
+        }
+    ]
+    assert {reference["event_type"] for reference in payload["audit_references"]} == {
+        "research.run.started",
+        "research.mission.created",
+        "research.question.created",
+        "research.claim.created",
+        "source.snapshot.imported",
+        "evidence.card.created",
+        "research.finding.created",
+    }
+    assert all(
+        item["creator_id"] == lab.identity.actor_id and item["run_id"] == lab.identity.run_id
+        for collection in (
+            payload["questions"],
+            payload["claims"],
+            payload["findings"],
+            payload["assumptions"],
+            payload["unresolved_questions"],
+            payload["citations"],
+            payload["sources"],
+        )
+        for item in collection
+    )
+
+
+def test_packet_preserves_optional_citations_on_non_material_statements(lab: Lab) -> None:
+    seed = lab.seed_claim()
+    context = lab.cite(
+        seed,
+        "Café context remains uncertain.",
+        EvidenceStance.CONTEXT,
+    )
+    assumption = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="The observed context may generalize.",
+        statement_kind=StatementKind.ASSUMPTION,
+        status=FindingStatus.INCONCLUSIVE,
+        uncertainty="Generalizability remains untested.",
+        evidence_ids=(context.id,),
+        identity=lab.identity,
+    )
+    unresolved = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="Which observation resolves the remaining context?",
+        statement_kind=StatementKind.UNRESOLVED_QUESTION,
+        status=FindingStatus.INCONCLUSIVE,
+        uncertainty="No resolving observation is recorded.",
+        evidence_ids=(context.id,),
+        identity=lab.identity,
+    )
+
+    payload = lab.synthesis.build_brief(seed.mission.id).payload
+
+    assumptions = {item["id"]: item for item in payload["assumptions"]}
+    unresolved_questions = {item["id"]: item for item in payload["unresolved_questions"]}
+    assert assumptions[assumption.id]["citation_ids"] == [context.id]
+    assert unresolved_questions[unresolved.id]["citation_ids"] == [context.id]
+
+
+def test_packet_matches_the_checked_in_golden_fixture(lab: Lab) -> None:
+    scenario = _populate_brief(lab)
+
+    artifacts = lab.synthesis.build_brief(scenario.seed.mission.id)
+    golden = Path(__file__).parent / "fixtures" / "minerva.research-brief.v2.golden.json"
+    golden_bytes = golden.read_bytes()
+    golden_document = parse_research_packet(golden_bytes)
+
+    assert artifacts.json == golden_bytes
+    assert golden_bytes == serialize_research_packet(golden_document)
+    assert (
+        artifacts.export_digest
+        == "80a6579008f23314463bedb5f62fbeed478537f0d3718684f42ef7d451066576"
+    )
+    assert golden_document.export_digest == artifacts.export_digest
+
+
+def test_packet_rejects_audit_provenance_tampering(lab: Lab) -> None:
+    scenario = _populate_brief(lab)
+    with lab.database.transaction() as connection:
+        connection.execute("DROP TRIGGER audit_no_update")
+        connection.execute(
+            """
+            UPDATE audit_events SET actor_id = ?
+            WHERE event_type = 'evidence.card.created' AND entity_id = ?
+            """,
+            ("os-user:forged", scenario.support.id),
+        )
+
+    with pytest.raises(IntegrityError) as caught:
+        lab.synthesis.build_brief(scenario.seed.mission.id)
+
+    assert caught.value.code == "packet_integrity_invalid"
+
+
+def test_packet_rejects_duplicate_run_start_audit_history(lab: Lab) -> None:
+    seed = lab.seed_claim()
+    with lab.database.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO audit_events(
+                id, event_type, entity_type, entity_id, mission_id,
+                actor_id, run_id, occurred_at, details_json
+            ) VALUES (?, 'research.run.started', 'research_run', ?, NULL, ?, ?, ?, '{}')
+            """,
+            (
+                lab.ids("aud"),
+                lab.identity.run_id,
+                lab.identity.actor_id,
+                lab.identity.run_id,
+                fixed_clock(),
+            ),
+        )
+
+    with pytest.raises(IntegrityError) as caught:
+        lab.synthesis.build_brief(seed.mission.id)
+
+    assert caught.value.code == "packet_provenance_invalid"
+
+
+def test_packet_rejects_noncontiguous_claim_status_history(lab: Lab) -> None:
+    seed = lab.seed_claim()
+    lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    lab.research.set_claim_status(
+        claim_id=seed.claim.id,
+        status=ClaimStatus.PROVISIONALLY_SUPPORTED,
+        reason="The exact observation supports a provisional status.",
+        expected_version=1,
+        identity=lab.identity,
+    )
+    with lab.database.transaction() as connection:
+        connection.execute("DROP TRIGGER claim_status_no_delete")
+        connection.execute(
+            "DELETE FROM claim_status_events WHERE claim_id = ? AND version = 1",
+            (seed.claim.id,),
+        )
+
+    with pytest.raises(IntegrityError) as caught:
+        lab.synthesis.build_brief(seed.mission.id)
+
+    assert caught.value.code == "packet_provenance_invalid"
 
 
 def test_brief_keeps_support_opposition_and_exact_citation_locations(lab: Lab) -> None:

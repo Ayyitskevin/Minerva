@@ -29,8 +29,8 @@ they may not reimplement domain validation or write SQL directly.
 - `sources`: safe local-file reading, validation, secret-pattern defense, and
   immutable snapshot registration.
 - `evidence`: byte-span citations, stance, ledgers, withdrawal, and supersession.
-- `synthesis`: canonical brief assembly, citation verification, Markdown/JSON
-  rendering, digesting, and contained file export.
+- `synthesis`: canonical research-packet assembly, citation verification,
+  Markdown/JSON rendering, digesting, and contained file export.
 - `api`: strict Pydantic request/response adapters and structured error mapping.
 - `web`: loopback-only, read-only server-rendered review pages, local HTTP controls,
   and CSRF primitives reserved for any future unsafe browser form.
@@ -38,9 +38,10 @@ they may not reimplement domain validation or write SQL directly.
   validation, candidate labeling, and metadata-only invocation audit coordination.
 - `cli`: local operator commands, optional external-assistance consent, demo,
   backup/restore, doctor, and server startup.
-- `integrations`: protocol seams plus two live, narrowly reviewed provider adapters.
-  Only `integrations/ai/openai.py` and `integrations/ai/anthropic.py` may import their
-  SDK and network client; other planned integrations remain documentation-only.
+- `integrations`: strict, SQLite-independent research-packet DTO, parser, canonical
+  serializer, and verifier plus two live, narrowly reviewed provider adapters. Only
+  `integrations/ai/openai.py` and `integrations/ai/anthropic.py` may import their SDK
+  and network client; there are no live sibling-system adapters.
 
 Imports point inward: adapters may import domain services; domain packages do not
 import FastAPI, Jinja, or CLI modules. Cross-domain writes are coordinated by an
@@ -115,7 +116,7 @@ trust boundary.
 Stable human-readable citation IDs are the evidence card IDs. Brief JSON contains the
 full tuple; Markdown footnotes display the card ID, source label, digest, and offsets.
 
-## Deterministic synthesis
+## Deterministic synthesis and packet verification
 
 Queries use explicit stable ordering. The canonical brief payload contains no export
 wall-clock time. JSON uses UTF-8, sorted keys, compact separators, and a trailing
@@ -123,6 +124,23 @@ newline. SHA-256 is computed over that canonical payload; both output formats in
 the same digest envelope. Markdown is rendered from the payload without interpreting
 stored text as HTML. Fixed database state plus fixed export schema/config therefore
 produces byte-identical output.
+
+The fixed `research-brief.json` filename is the single canonical agent-facing artifact
+under `minerva.research-brief.v2`; there is no redundant packet file. Its semantic
+payload preserves the mission, questions, proposition-only claims, all evidence
+stances, exact byte-span locations and quotes, source digests, findings, assumptions,
+unresolved questions, uncertainties, creator/run provenance, and relevant append-only
+audit references. Its machine-readable ownership block says Minerva researches and
+does not execute, approve, orchestrate, or publish.
+
+The protocol model does not import SQLite. Strict parsing rejects unknown or duplicate
+fields and non-standard numeric values. Semantic verification recomputes the canonical
+SHA-256 digest and resolves cross-references, provenance, audit references, citations,
+and evidence requirements before another component may accept the packet. A claim that
+honestly remains open or inconclusive is preserved; a status presented as
+evidence-valid must satisfy its stance requirements with active, resolvable citations.
+Citation supersession cycles are checked in linear time, and protocol parsing rejects
+input above 20 MiB before JSON decoding.
 
 Synthesis work is bounded before rendering, and each rendered output is checked against
 its byte limit before exposure or export. File export uses fixed filenames beneath an
@@ -139,6 +157,19 @@ inspect and remove the disposable partial target explicitly.
 Database migrations are forward-only. Operators must create and verify a standalone
 pre-upgrade backup. Rollback means stopping the new binary and restoring that backup to
 a new path with the prior binary; no in-place schema downgrade is implemented.
+
+## Future protocol seam
+
+Milestone 1.1 exposes the packet and capability manifest locally but performs no
+sibling artifact exchange. A future shared run envelope, if approved, is separately
+versioned and remains outside the packet and its semantic digest. It can carry run and
+task correlation, actor/capability/scope declarations, schema-and-digest artifact
+references, idempotency and status metadata, timestamps, model/node observations, and
+a recovery checkpoint. Those fields are correlation metadata, not authentication,
+authority, truth, approval, or a recovery guarantee. Artifact references bind a schema
+version and SHA-256 digest; they are not filesystem paths or URLs for Minerva to
+dereference. See [ADR 0002](adr/0002-system-boundaries.md) for the bounded roles of
+Athena, Icarus, Tribunal, Oracle, Vanguard, and Warren.
 
 ## Web and local trust boundary
 

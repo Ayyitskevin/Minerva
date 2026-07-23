@@ -241,7 +241,11 @@ def _verify_sdist(sdist: Path) -> tuple[tuple[str, str], set[PurePosixPath]]:
             relative_names = {
                 PurePosixPath(*name.parts[1:]) for name in raw_names if len(name.parts) > 1
             }
-            required_root_files = {PurePosixPath("README.md"), PurePosixPath("pyproject.toml")}
+            required_root_files = {
+                PurePosixPath("README.md"),
+                PurePosixPath("pyproject.toml"),
+                PurePosixPath("tests/fixtures/minerva.research-brief.v2.golden.json"),
+            }
             missing_root_files = sorted(required_root_files - relative_names, key=str)
             if missing_root_files:
                 missing = ", ".join(str(path) for path in missing_root_files)
