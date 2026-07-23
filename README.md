@@ -240,10 +240,13 @@ files and never overwrites an existing target:
 
 The result SHA-256 covers the complete `research-brief.json` bytes, including its final
 newline, and is distinct from the packet's inner semantic export digest. The v2 packet
-deliberately contains no request, selection, path, URL, actor, authority, or run-control
-metadata. Consequently, standalone packet verification proves internal consistency,
-not completeness relative to a database; retain the request and result manifest when
-the claim-scoped selection meaning matters.
+deliberately contains no request/scope marker or request-specific authority, approval,
+transport, callback, or run-control fields. It does retain canonical v2 research and
+provenance fields, including source labels (which may be path-like), inert URL metadata,
+creator/actor identifiers, and run/audit references; review the packet itself as a
+disclosure-bearing artifact. Consequently, standalone packet verification proves
+internal consistency, not completeness relative to a database; retain the request and
+result manifest when the claim-scoped selection meaning matters.
 
 Both request commands use the existing CLI exit contract: `0` success, `2` usage,
 `3` expected validation/scope/domain refusal, `4` unexpected local OS/SQLite failure,
