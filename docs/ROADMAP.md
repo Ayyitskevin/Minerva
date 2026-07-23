@@ -37,7 +37,7 @@
   and over-limit input before JSON decoding; expected errors are stable and
   non-reflective, with fail-fast sequence validation and bounded error classification.
 - Audit verification rejects dependency-order inversions and forward citation
-  supersession while retaining linear-time validation.
+  supersession with linear-time dependency and supersession checks.
 - Installed-wheel smoke exercises both commands outside the source checkout.
 - Digest integrity remains explicitly distinct from authenticity, and Athena/Icarus
   artifact exchange remains unimplemented.
