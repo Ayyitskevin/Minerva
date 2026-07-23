@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from minerva.core.errors import IntegrityError, NotFoundError
@@ -34,6 +35,43 @@ def verify_evidence_reference(
     mission_id: str,
     allow_withdrawn: bool,
 ) -> VerifiedCitation:
+    return _verify_evidence_reference(
+        connection,
+        evidence_id=evidence_id,
+        mission_id=mission_id,
+        allow_withdrawn=allow_withdrawn,
+        snapshot_cache={},
+    )
+
+
+def verify_evidence_references(
+    connection: sqlite3.Connection,
+    *,
+    evidence_ids: Sequence[str],
+    mission_id: str,
+    allow_withdrawn: bool,
+) -> list[VerifiedCitation]:
+    snapshot_cache: dict[str, tuple[sqlite3.Row, bytes]] = {}
+    return [
+        _verify_evidence_reference(
+            connection,
+            evidence_id=evidence_id,
+            mission_id=mission_id,
+            allow_withdrawn=allow_withdrawn,
+            snapshot_cache=snapshot_cache,
+        )
+        for evidence_id in evidence_ids
+    ]
+
+
+def _verify_evidence_reference(
+    connection: sqlite3.Connection,
+    *,
+    evidence_id: str,
+    mission_id: str,
+    allow_withdrawn: bool,
+    snapshot_cache: dict[str, tuple[sqlite3.Row, bytes]],
+) -> VerifiedCitation:
     row = connection.execute(
         """
         SELECT e.id, e.mission_id, e.claim_id, e.snapshot_id, e.start_byte, e.end_byte,
@@ -48,18 +86,24 @@ def verify_evidence_reference(
     if row is None:
         raise NotFoundError("evidence_not_found")
 
-    snapshot = connection.execute(
-        """
-        SELECT id, source_id, mission_id, content, sha256, byte_length,
-               encoding, media_type, original_label, creator_id, run_id
-        FROM source_snapshots
-        WHERE id = ? AND mission_id = ?
-        """,
-        (str(row["snapshot_id"]), mission_id),
-    ).fetchone()
-    if snapshot is None:
-        raise IntegrityError("snapshot_tampered", "Stored source snapshot integrity failed.")
-    raw_content = verify_snapshot_integrity(connection, snapshot)
+    snapshot_id = str(row["snapshot_id"])
+    cached_snapshot = snapshot_cache.get(snapshot_id)
+    if cached_snapshot is None:
+        snapshot = connection.execute(
+            """
+            SELECT id, source_id, mission_id, content, sha256, byte_length,
+                   encoding, media_type, original_label, creator_id, run_id
+            FROM source_snapshots
+            WHERE id = ? AND mission_id = ?
+            """,
+            (snapshot_id, mission_id),
+        ).fetchone()
+        if snapshot is None:
+            raise IntegrityError("snapshot_tampered", "Stored source snapshot integrity failed.")
+        raw_content = verify_snapshot_integrity(connection, snapshot)
+        snapshot_cache[snapshot_id] = (snapshot, raw_content)
+    else:
+        snapshot, raw_content = cached_snapshot
     citation_digest = str(row["snapshot_sha256"])
     if citation_digest != str(snapshot["sha256"]):
         raise IntegrityError("citation_tampered", "Stored citation integrity failed.")
@@ -93,7 +137,7 @@ def verify_evidence_reference(
         evidence_id=str(row["id"]),
         mission_id=str(row["mission_id"]),
         claim_id=str(row["claim_id"]),
-        snapshot_id=str(row["snapshot_id"]),
+        snapshot_id=snapshot_id,
         snapshot_sha256=citation_digest,
         source_label=str(snapshot["original_label"]),
         start_byte=start,

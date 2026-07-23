@@ -198,13 +198,32 @@ supplied citation must belong to that claim and be active, and the supplied set 
 equal the snapshot's complete active set. Unknown/out-of-scope, withdrawn, omitted,
 or newly added evidence fails closed; no evidence stance is filtered.
 
+Fulfillment installs a connection-local SQLite progress handler around that complete
+snapshot. All SQLite work used by mission/claim lookup, complete-ledger validation,
+claim-scoped preflight, assembly, and provenance closure shares one cumulative SQLite
+virtual-machine instruction budget. Only an interrupt raised by that handler maps to
+`brief_work_limit`; the handler is always cleared, and artifact publication begins after
+the guarded snapshot succeeds. This guard is specific to `request fulfill`; ordinary
+full-mission brief preview/export retains its existing source/record/reference
+preflights without the cumulative handler.
+
+Before full database text or snapshot content is returned to Python, claim-scoped
+preflight asks SQLite for identifiers, content byte lengths, and aggregate NUL-safe
+storage-byte lengths at each emitted string's canonical JSON multiplicity. The fields
+cover target scope, citations and ledger, distinct source metadata, findings and
+references, audits, and runs. UTF-8 storage bytes are exact; UTF-16 storage is at most
+twice the UTF-8 output size, so its threshold is doubled. Exceeding the threshold is a
+sound early refusal. These aggregate queries still inspect values inside SQLite, so the
+control bounds Python materialization rather than SQLite's internal memory use.
+
 The selected synthesis path constructs a fresh claim-scoped v2 payload before packet
 serialization. It includes the mission, target question and claim, complete active and
 withdrawn ledger, supersession and status provenance, referenced sources, claim-linked
 findings/assumptions/unresolved questions and uncertainty, and exact audit/run closure.
 Unrelated mission entities and mission-global findings are omitted. Existing
-full-mission brief calls remain unchanged. The result is revalidated and serialized by
-the existing canonical v2 builder; request/scope/result metadata never enters v2.
+full-mission packet contracts and output bytes remain unchanged. The claim-scoped result
+is revalidated by the existing canonical v2 builder; request/scope/result metadata
+never enters v2.
 
 After the SQLite snapshot closes, fulfillment builds `minerva.research-result.v1` with
 only a bounded fulfilled status, request digest, output schema, and SHA-256 over the
@@ -222,6 +241,11 @@ Athena adapter must authenticate and authorize independently before creating or 
 these inert files. Milestone 1.3 adds no adapter, transport, remote identity, shared
 database, shared run envelope, MCP surface, Icarus exchange, publication, messaging,
 execution, approval, or automatic adoption.
+
+Milestone 1.3 deliberately adds no indexing migration. Existing claim/audit access paths
+can therefore make a valid sparse request exceed the work budget; a separately
+human-reviewed migration may add targeted indexes to reduce false refusals while
+retaining the cumulative guard as defense in depth.
 
 Synthesis work is bounded before rendering, and each rendered output is checked against
 its byte limit before exposure or export. File export uses fixed filenames beneath an

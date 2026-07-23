@@ -15,6 +15,7 @@ import pytest
 
 import minerva.cli.main as cli_module
 import minerva.evidence.service as evidence_service_module
+import minerva.synthesis.request_fulfillment as request_fulfillment_module
 import minerva.synthesis.service as synthesis_module
 from conftest import ClaimSeed, Lab, fixed_clock
 from minerva.cli._common import EXIT_DOMAIN
@@ -296,6 +297,39 @@ def test_fulfillment_rejects_missing_and_cross_mission_scope(
     )
 
     assert not output_dir.exists()
+
+
+@pytest.mark.security
+def test_fulfillment_rejects_claim_without_status_history(
+    lab: Lab,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seed = lab.seed_claim()
+    request_path, _document = _write_request(
+        tmp_path,
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        evidence_ids=(),
+    )
+    output_dir = tmp_path / "output"
+
+    with lab.database.transaction() as connection:
+        connection.execute("DROP TRIGGER claim_status_no_delete")
+        connection.execute(
+            "DELETE FROM claim_status_events WHERE claim_id = ?",
+            (seed.claim.id,),
+        )
+    before = _database_dump(lab.database)
+
+    _failure(
+        capsys,
+        _fulfill_argv(lab.database, request_path, output_dir),
+        "claim_not_found",
+    )
+
+    assert not output_dir.exists()
+    assert _database_dump(lab.database) == before
 
 
 @pytest.mark.security
@@ -706,6 +740,168 @@ def test_fulfillment_uses_one_database_read_snapshot(
 
 
 @pytest.mark.security
+def test_cumulative_citation_text_budget_rejects_before_materialization(
+    lab: Lab,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    quote = "A" * 400
+    seed = lab.seed_claim(content=(quote + "\n").encode("utf-8"))
+    evidence_ids = tuple(lab.cite(seed, quote, EvidenceStance.SUPPORTS).id for _index in range(4))
+    _request_path, document = _write_request(
+        tmp_path,
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        evidence_ids=evidence_ids,
+    )
+    output_dir = tmp_path / "output"
+    fulfillment = ResearchRequestFulfillmentService(lab.database)
+    monkeypatch.setattr(
+        fulfillment._synthesis,
+        "_max_export_bytes",
+        1_024,
+    )
+
+    def forbidden(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError("oversized citation text reached materialization")
+
+    monkeypatch.setattr(synthesis_module, "verify_evidence_references", forbidden)
+    before = _database_dump(lab.database)
+
+    with pytest.raises(IntegrityError) as caught:
+        fulfillment.fulfill(request=document, output_dir=output_dir)
+
+    assert caught.value.code == "brief_work_limit"
+    assert not output_dir.exists()
+    assert _database_dump(lab.database) == before
+
+
+@pytest.mark.security
+def test_claim_history_overflow_is_rejected_before_synthesis(
+    lab: Lab,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed = lab.seed_claim(content=b"Repeated bounded observation.\n")
+    evidence_ids = tuple(
+        lab.cite(
+            seed,
+            "Repeated bounded observation.",
+            EvidenceStance.SUPPORTS,
+        ).id
+        for _index in range(6)
+    )
+    request_path, _document = _write_request(
+        tmp_path,
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        evidence_ids=evidence_ids,
+    )
+    output_dir = tmp_path / "output"
+
+    def forbidden(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError("oversized claim history reached synthesis")
+
+    monkeypatch.setattr(request_fulfillment_module, "MAX_SYNTHESIS_RECORDS", 5)
+    monkeypatch.setattr(
+        synthesis_module.SynthesisService,
+        "build_research_packet_json",
+        forbidden,
+    )
+
+    _failure(
+        capsys,
+        _fulfill_argv(lab.database, request_path, output_dir),
+        "brief_work_limit",
+    )
+
+    assert not output_dir.exists()
+
+
+@pytest.mark.security
+def test_unrelated_mission_history_is_cut_off_by_cumulative_query_budget(
+    lab: Lab,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    request_path, _document = _write_request(
+        tmp_path,
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        evidence_ids=(evidence.id,),
+    )
+    monkeypatch.setattr(request_fulfillment_module, "MAX_REQUEST_QUERY_VM_STEPS", 50_000)
+    monkeypatch.setattr(request_fulfillment_module, "_QUERY_PROGRESS_GRANULARITY", 100)
+
+    baseline_output_dir = tmp_path / "baseline-output"
+    _success(
+        capsys,
+        _fulfill_argv(lab.database, request_path, baseline_output_dir),
+    )
+    question_rows: list[tuple[object, ...]] = []
+    audit_rows: list[tuple[object, ...]] = []
+    for index in range(2_000):
+        question_id = f"que_{100_000 + index:032x}"
+        question_rows.append(
+            (
+                question_id,
+                seed.mission.id,
+                f"Unrelated mission question {index}?",
+                lab.identity.actor_id,
+                lab.identity.run_id,
+                fixed_clock(),
+            )
+        )
+        audit_rows.append(
+            (
+                f"aud_{100_000 + index:032x}",
+                "research.question.created",
+                "research_question",
+                question_id,
+                seed.mission.id,
+                lab.identity.actor_id,
+                lab.identity.run_id,
+                fixed_clock(),
+                "{}",
+            )
+        )
+    with lab.database.transaction() as connection:
+        connection.executemany(
+            """
+            INSERT INTO research_questions(
+                id, mission_id, question_text, creator_id, run_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            question_rows,
+        )
+        connection.executemany(
+            """
+            INSERT INTO audit_events(
+                id, event_type, entity_type, entity_id, mission_id,
+                actor_id, run_id, occurred_at, details_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            audit_rows,
+        )
+    output_dir = tmp_path / "output"
+    before = _database_dump(lab.database)
+
+    error = _failure(
+        capsys,
+        _fulfill_argv(lab.database, request_path, output_dir),
+        "brief_work_limit",
+    )
+
+    assert "Unrelated mission question" not in error
+    assert not output_dir.exists()
+    assert _database_dump(lab.database) == before
+
+
+@pytest.mark.security
 def test_active_selection_overflow_is_rejected_before_synthesis(
     lab: Lab,
     tmp_path: Path,
@@ -732,6 +928,7 @@ def test_active_selection_overflow_is_rejected_before_synthesis(
     def forbidden(*_args: object, **_kwargs: object) -> NoReturn:
         raise AssertionError("selection drift reached synthesis")
 
+    monkeypatch.setattr(request_fulfillment_module, "MAX_SYNTHESIS_RECORDS", 2)
     monkeypatch.setattr(
         synthesis_module.SynthesisService,
         "build_research_packet_json",
@@ -779,7 +976,7 @@ def test_withdrawn_history_hits_preflight_before_citation_materialization(
         raise AssertionError("bounded preflight materialized claim history")
 
     monkeypatch.setattr(synthesis_module, "MAX_SYNTHESIS_RECORDS", 5)
-    monkeypatch.setattr(synthesis_module, "verify_evidence_reference", forbidden)
+    monkeypatch.setattr(synthesis_module, "verify_evidence_references", forbidden)
     monkeypatch.setattr(synthesis_module, "verify_snapshot_integrity", forbidden)
     monkeypatch.setattr(evidence_service_module, "verify_evidence_reference", forbidden)
 

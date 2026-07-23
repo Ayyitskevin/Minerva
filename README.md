@@ -234,6 +234,21 @@ one query-only SQLite read snapshot. It creates no identity/run, audit event,
 message, execution, approval, or orchestration. It exclusively writes fixed owner-only
 files and never overwrites an existing target:
 
+Across that snapshot, fulfillment caps cumulative SQLite virtual-machine work. Exhaustion
+fails closed as the stable `brief_work_limit` domain refusal (CLI exit `3`) before either
+artifact is written. This is an instruction-work bound, not a wall-clock timeout; under
+the current schema, scan-heavy unrelated finding or audit history can false-refuse a
+valid request. Retrying against the same unchanged database is not a remedy.
+
+Before full mission/question/claim, source, citation, finding, audit, or run text—or
+snapshot content—is returned to Python, claim-scoped preflight asks SQLite for
+identifiers, content byte lengths, and aggregate NUL-safe storage-byte lengths at each
+string's exact packet multiplicity. UTF-8 is compared directly with the export limit;
+UTF-16 uses a conservative two-to-one threshold. If the derived lower bound cannot fit,
+fulfillment refuses with `brief_work_limit`; canonical serialization still enforces the
+final byte limit. The aggregate queries inspect stored values inside SQLite, so this is
+a Python-materialization guard, not an SQLite-memory limit.
+
 - `research-brief.json` — the canonical `minerva.research-brief.v2` claim-scoped packet.
 - `research-result.json` — strict `minerva.research-result.v1` status containing only
   the request digest and the exact output schema/SHA-256.

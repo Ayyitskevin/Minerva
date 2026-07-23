@@ -69,6 +69,16 @@
 - Fulfillment validates the request before database open and resolves mission, claim,
   ledger, and claim-scoped synthesis through one query-only read snapshot. It does not
   call the mutating/audited brief-export path.
+- Fulfillment bounds cumulative SQLite virtual-machine work with a connection-local
+  progress handler and maps only its own exhaustion interrupt to the existing
+  `brief_work_limit` refusal. This schema-free hardening accepts possible false refusal
+  on scan-heavy databases; targeted indexes are deferred to a human-reviewed migration.
+- Before full database text or snapshot content is returned to Python, claim-scoped
+  synthesis preflights NUL-safe storage-byte lengths at every emitted string's exact
+  packet multiplicity. UTF-8 is exact and UTF-16 uses a conservative two-to-one
+  threshold; canonical serialization remains authoritative. SQLite still inspects the
+  stored values, so this is a Python-materialization guard rather than an SQLite-memory
+  limit.
 - Claim-scoped output remains `minerva.research-brief.v2`; request/scope metadata does
   not fork or extend the packet schema. Minimal `minerva.research-result.v1` binds the
   request digest to exact output bytes. Consumers need that external binding to

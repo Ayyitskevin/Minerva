@@ -55,6 +55,13 @@
 - `minerva request fulfill` resolves mission, claim, ledger, and claim-scoped synthesis
   in one query-only read snapshot, writes fixed canonical brief/result files without
   overwrite, and performs no research, audit, identity/run, or export-table mutation.
+- Fulfillment caps cumulative SQLite virtual-machine work across the complete read
+  snapshot and fails closed with `brief_work_limit` before artifact writes; this
+  milestone includes no schema migration.
+- Before full database text or snapshot content is returned to Python, claim-scoped
+  preflight applies an exact-multiplicity NUL-safe storage-byte lower bound, preventing
+  oversized valid-schema history from reaching Python when the canonical packet cannot
+  fit. SQLite may still inspect the stored values.
 - `minerva.research-result.v1` binds the request digest to the exact canonical v2 output
   bytes and carries no path, URL, actor, authority, timestamp, or coordination fields.
 - Installed-wheel smoke exercises verify, fulfill, and packet verification outside the
@@ -75,6 +82,8 @@
 
 ## Later milestones, not implemented now
 
+- A separately reviewed claim/audit indexing migration to reduce valid fulfillment
+  false refusals while retaining the cumulative work guard
 - Authenticated Athena mission/identity coordination adapter that may produce the
   existing request artifact only after a separately reviewed identity/authorization
   boundary; no transport or adapter exists in Milestone 1.3
