@@ -27,6 +27,30 @@ loading, publication, or messaging surface. URL values are inert metadata. Miles
 2B adds only the reviewed CLI assistance exception described below; it does not add an
 API or web invocation surface.
 
+## Standalone packet verification
+
+`minerva packet verify` and `minerva packet inspect` are offline, file-only commands.
+They do not open SQLite, contact a network, load provider credentials, publish an
+artifact, or invoke a sibling system. Packet input must be one stable regular file;
+parent (`..`) segments, symbolic links in any path component, and non-regular targets
+are rejected. The final target is type-checked through a path-only descriptor before a
+readable handle is opened. The 20 MiB protocol limit is enforced from file metadata
+and by a bounded read before UTF-8 or JSON decoding. Expected validation failures use
+fixed messages that do not include submitted content or filesystem paths. Sequence
+validation stops at the first invalid element, object width and nesting are bounded,
+and error classification never expands an attacker-sized validation-error set.
+Inspection returns bounded counts rather than stored research text or identifiers.
+
+A successful canonical SHA-256 check establishes internal packet consistency only.
+It is not a digital signature, identity assertion, proof of origin, authenticity
+guarantee, approval record, or evidence that a claim/source assertion is true. A
+determined same-OS-user actor can rewrite the semantic payload and compute its new
+digest. The packet carries source digests, citation locations, and quotes but not the
+source snapshot bytes, so this standalone workflow cannot independently recompute a
+source digest or prove that unavailable source content matched the recorded quote.
+Protect packets through separate OS access control or a future approved signing seam
+when origin assurance matters.
+
 ## Optional external model assistance
 
 Model assistance is disabled unless the operator installs an optional provider extra,

@@ -11,9 +11,10 @@ import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from hashlib import sha256
+from itertools import pairwise
 from typing import Annotated, Literal, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, FailFast, Field, StringConstraints, model_validator
 
 RESEARCH_PACKET_SCHEMA_VERSION: Literal["minerva.research-brief.v2"] = "minerva.research-brief.v2"
 CITATION_SCHEME = "utf8-byte-offset-v1"
@@ -22,9 +23,12 @@ EXPORT_DIGEST_ALGORITHM = "sha256-canonical-json-v1"
 MAX_RESEARCH_PACKET_BYTES = 20_971_520
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
+_MAX_JSON_DEPTH = 64
+_MAX_JSON_OBJECT_FIELDS = 64
 _NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 _Sha256 = Annotated[str, StringConstraints(pattern=_SHA256_PATTERN)]
 _AuditKey = tuple[str, str, str, str | None, str, str]
+type _FailFastTuple[ItemT] = Annotated[tuple[ItemT, ...], FailFast()]
 
 ClaimStatus = Literal[
     "open",
@@ -99,7 +103,7 @@ class ClaimRecord(_StrictFrozenModel):
     created_at: _NonEmptyStr
     epistemic_role: Literal["claim_under_evaluation"]
     contested: bool
-    evidence_ledger: tuple[EvidenceLedgerEntry, ...]
+    evidence_ledger: _FailFastTuple[EvidenceLedgerEntry]
 
     @model_validator(mode="after")
     def _initial_status_is_open(self) -> Self:
@@ -120,7 +124,7 @@ class MaterialFindingRecord(_StrictFrozenModel):
     statement: _NonEmptyStr
     statement_kind: MaterialStatementKind
     status: FindingStatus
-    citation_ids: tuple[_NonEmptyStr, ...] = Field(min_length=1)
+    citation_ids: _FailFastTuple[_NonEmptyStr] = Field(min_length=1)
     uncertainty: str
     creator_id: _NonEmptyStr
     run_id: _NonEmptyStr
@@ -133,7 +137,7 @@ class AssumptionRecord(_StrictFrozenModel):
     statement: _NonEmptyStr
     statement_kind: Literal["assumption"]
     status: FindingStatus
-    citation_ids: tuple[_NonEmptyStr, ...]
+    citation_ids: _FailFastTuple[_NonEmptyStr]
     uncertainty: str
     creator_id: _NonEmptyStr
     run_id: _NonEmptyStr
@@ -146,7 +150,7 @@ class UnresolvedQuestionRecord(_StrictFrozenModel):
     statement: _NonEmptyStr
     statement_kind: Literal["unresolved_question"]
     status: FindingStatus
-    citation_ids: tuple[_NonEmptyStr, ...]
+    citation_ids: _FailFastTuple[_NonEmptyStr]
     uncertainty: str
     creator_id: _NonEmptyStr
     run_id: _NonEmptyStr
@@ -268,16 +272,16 @@ class ResearchBriefPayload(_StrictFrozenModel):
     doctrine: _NonEmptyStr
     ownership: Ownership
     mission: MissionRecord
-    questions: tuple[QuestionRecord, ...]
-    claims: tuple[ClaimRecord, ...]
-    findings: tuple[MaterialFindingRecord, ...]
-    assumptions: tuple[AssumptionRecord, ...]
-    unresolved_questions: tuple[UnresolvedQuestionRecord, ...]
-    uncertainties: tuple[UncertaintyRecord, ...]
-    citations: tuple[CitationRecord, ...]
-    sources: tuple[SourceRecord, ...]
-    runs: tuple[ResearchRunRecord, ...]
-    audit_references: tuple[AuditReference, ...]
+    questions: _FailFastTuple[QuestionRecord]
+    claims: _FailFastTuple[ClaimRecord]
+    findings: _FailFastTuple[MaterialFindingRecord]
+    assumptions: _FailFastTuple[AssumptionRecord]
+    unresolved_questions: _FailFastTuple[UnresolvedQuestionRecord]
+    uncertainties: _FailFastTuple[UncertaintyRecord]
+    citations: _FailFastTuple[CitationRecord]
+    sources: _FailFastTuple[SourceRecord]
+    runs: _FailFastTuple[ResearchRunRecord]
+    audit_references: _FailFastTuple[AuditReference]
     integrity: IntegrityPolicy
 
     @model_validator(mode="after")
@@ -344,7 +348,8 @@ def parse_research_packet(data: bytes | str) -> ResearchPacketDocument:
     encoded = data if isinstance(data, bytes) else data.encode("utf-8")
     _require_packet_size(encoded)
     text = encoded.decode("utf-8")
-    _strict_json_loads(text)
+    parsed = _strict_json_loads(text)
+    _require_bounded_json_shape(parsed)
     return ResearchPacketDocument.model_validate_json(text, strict=True)
 
 
@@ -389,6 +394,19 @@ def _strict_json_loads(text: str) -> object:
             parse_constant=reject_non_finite,
         ),
     )
+
+
+def _require_bounded_json_shape(value: object, *, depth: int = 0) -> None:
+    if depth > _MAX_JSON_DEPTH:
+        raise ValueError("research packet JSON nesting exceeds the safety limit")
+    if isinstance(value, dict):
+        if len(value) > _MAX_JSON_OBJECT_FIELDS:
+            raise ValueError("research packet JSON object exceeds the field safety limit")
+        for child in value.values():
+            _require_bounded_json_shape(child, depth=depth + 1)
+    elif isinstance(value, list):
+        for child in value:
+            _require_bounded_json_shape(child, depth=depth + 1)
 
 
 def _unique_by_id[RecordT](records: Sequence[RecordT], *, field: str) -> dict[str, RecordT]:
@@ -629,7 +647,7 @@ def _validate_audit_references(
         "finding": {finding.id for finding in all_findings},
     }
     sequences = [reference.sequence for reference in payload.audit_references]
-    if sequences != sorted(sequences):
+    if any(left >= right for left, right in pairwise(sequences)):
         raise ValueError("audit references must be ordered by strictly increasing sequence")
 
     observed: Counter[_AuditKey] = Counter()
@@ -776,12 +794,65 @@ def _validate_audit_references(
         ):
             raise ValueError("audit provenance is recorded before its run started")
 
+    creation_sequences = {
+        (reference.event_type, reference.entity_id): reference.sequence
+        for reference in payload.audit_references
+        if reference.event_type != "research.claim.status_changed"
+    }
+    mission_creation_sequence = creation_sequences[("research.mission.created", mission_id)]
+    for reference in payload.audit_references:
+        if (
+            reference.event_type
+            not in {
+                "research.run.started",
+                "research.mission.created",
+            }
+            and reference.sequence <= mission_creation_sequence
+        ):
+            raise ValueError("content audit history precedes mission creation")
+
+    question_creation_sequences = {
+        question.id: creation_sequences[("research.question.created", question.id)]
+        for question in payload.questions
+    }
     claim_creation_sequences = {
+        claim.id: creation_sequences[("research.claim.created", claim.id)]
+        for claim in payload.claims
+    }
+    source_creation_sequences = {
+        source.snapshot_id: creation_sequences[("source.snapshot.imported", source.snapshot_id)]
+        for source in payload.sources
+    }
+    citation_creation_sequences = {
+        citation.citation_id: creation_sequences[("evidence.card.created", citation.citation_id)]
+        for citation in payload.citations
+    }
+    withdrawal_sequences = {
         reference.entity_id: reference.sequence
         for reference in payload.audit_references
-        if reference.event_type == "research.claim.created"
+        if reference.event_type == "evidence.card.withdrawn"
     }
+    latest_status_sequences = {
+        claim_id: references[-1].sequence
+        for claim_id, references in status_references.items()
+        if references
+    }
+    stances_at_latest_status: dict[str, set[str]] = {claim.id: set() for claim in payload.claims}
+    for citation in payload.citations:
+        status_sequence = latest_status_sequences.get(citation.claim_id)
+        if (
+            status_sequence is not None
+            and citation_creation_sequences[citation.citation_id] < status_sequence
+            and (
+                citation.citation_id not in withdrawal_sequences
+                or withdrawal_sequences[citation.citation_id] > status_sequence
+            )
+        ):
+            stances_at_latest_status[citation.claim_id].add(citation.stance)
+
     for claim in payload.claims:
+        if question_creation_sequences[claim.question_id] >= claim_creation_sequences[claim.id]:
+            raise ValueError("claim audit history precedes its research question")
         references = status_references[claim.id]
         if len(references) != claim.version - 1:
             raise ValueError("claim version does not match status-change audit history")
@@ -795,6 +866,42 @@ def _validate_audit_references(
                 raise ValueError(
                     "latest claim status audit provenance differs from the current status"
                 )
+            required_stances: set[str]
+            if claim.status == "provisionally_supported":
+                required_stances = {"supports"}
+            elif claim.status == "contested":
+                required_stances = {"supports", "opposes"}
+            elif claim.status == "unsupported":
+                required_stances = {"opposes"}
+            else:
+                required_stances = set()
+            if not required_stances.issubset(stances_at_latest_status[claim.id]):
+                raise ValueError("claim status audit precedes its required evidence")
+
+    for citation in payload.citations:
+        created = citation_creation_sequences[citation.citation_id]
+        if (
+            claim_creation_sequences[citation.claim_id] >= created
+            or source_creation_sequences[citation.snapshot_id] >= created
+        ):
+            raise ValueError("evidence audit history precedes its claim or source")
+        if (
+            citation.supersedes_citation_id is not None
+            and citation_creation_sequences[citation.supersedes_citation_id] >= created
+        ):
+            raise ValueError("citation supersession audit history points forward")
+        if citation.withdrawn and withdrawal_sequences[citation.citation_id] <= created:
+            raise ValueError("citation withdrawal audit history precedes its creation")
+
+    for finding in all_findings:
+        created = creation_sequences[("research.finding.created", finding.id)]
+        if finding.claim_id is not None and claim_creation_sequences[finding.claim_id] >= created:
+            raise ValueError("finding audit history precedes its claim")
+        if any(
+            citation_creation_sequences[citation_id] >= created
+            for citation_id in finding.citation_ids
+        ):
+            raise ValueError("finding audit history precedes its cited evidence")
 
     used_run_ids = {
         reference.run_id

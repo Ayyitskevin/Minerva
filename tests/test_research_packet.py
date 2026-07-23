@@ -92,16 +92,16 @@ def _payload() -> dict[str, Any]:
         _audit(3, "research.question.created", "research_question", "que_primary", _MISSION),
         _audit(4, "research.question.created", "research_question", "que_open", _MISSION),
         _audit(5, "research.claim.created", "claim", "clm_contested", _MISSION),
-        _audit(6, "research.claim.status_changed", "claim", "clm_contested", _MISSION),
-        _audit(7, "research.claim.created", "claim", "clm_open", _MISSION),
-        _audit(8, "source.snapshot.imported", "source_snapshot", "snp_packet", _MISSION),
+        _audit(6, "research.claim.created", "claim", "clm_open", _MISSION),
+        _audit(7, "source.snapshot.imported", "source_snapshot", "snp_packet", _MISSION),
     ]
     audits.extend(
-        _audit(9 + index, "evidence.card.created", "evidence_card", item["citation_id"], _MISSION)
+        _audit(8 + index, "evidence.card.created", "evidence_card", item["citation_id"], _MISSION)
         for index, item in enumerate(citations)
     )
     audits.extend(
         [
+            _audit(12, "research.claim.status_changed", "claim", "clm_contested", _MISSION),
             _audit(13, "research.finding.created", "finding", "fnd_material", _MISSION),
             _audit(14, "research.finding.created", "finding", "fnd_assumption", _MISSION),
             _audit(15, "research.finding.created", "finding", "fnd_unresolved", _MISSION),
@@ -368,8 +368,11 @@ def test_parser_rejects_schema_and_digest_mismatches() -> None:
         ("quote_length", "UTF-8 byte range"),
         ("snapshot_digest", "snapshot digests differ"),
         ("ledger_stance", "ledger and citation metadata differ"),
+        ("unknown_citation_claim", "unknown claim"),
+        ("unknown_citation_snapshot", "unknown snapshot"),
         ("unknown_finding_citation", "unknown citation"),
         ("cross_claim_finding", "different claim"),
+        ("negative_location", "greater than or equal to 0"),
     ],
 )
 def test_citation_and_finding_mutations_fail_closed(mutation: str, message: str) -> None:
@@ -380,11 +383,27 @@ def test_citation_and_finding_mutations_fail_closed(mutation: str, message: str)
         payload["citations"][0]["snapshot_sha256"] = "b" * 64
     elif mutation == "ledger_stance":
         payload["claims"][0]["evidence_ledger"][0]["stance"] = "context"
+    elif mutation == "unknown_citation_claim":
+        payload["citations"][0]["claim_id"] = "clm_missing"
+    elif mutation == "unknown_citation_snapshot":
+        payload["citations"][0]["snapshot_id"] = "snp_missing"
     elif mutation == "unknown_finding_citation":
         payload["findings"][0]["citation_ids"] = ["evd_missing"]
-    else:
+    elif mutation == "cross_claim_finding":
         payload["findings"][0]["claim_id"] = "clm_open"
+    else:
+        payload["citations"][0]["location"]["start_byte"] = -1
     _invalid(payload, message)
+
+
+def test_parser_fails_fast_for_wide_invalid_sequence() -> None:
+    document = json.loads(serialize_research_packet(build_research_packet(_payload())))
+    document["brief"]["questions"] = [None] * 100_000
+
+    with pytest.raises(ValidationError) as captured:
+        parse_research_packet(json.dumps(document, separators=(",", ":")))
+
+    assert captured.value.error_count() == 1
 
 
 @pytest.mark.parametrize(
@@ -428,6 +447,29 @@ def test_optional_assumption_and_unresolved_citations_are_preserved_and_validate
     cross_claim = copy.deepcopy(payload)
     cross_claim["unresolved_questions"][0]["citation_ids"] = ["evd_context"]
     _invalid(cross_claim, "different claim")
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("duplicate", "duplicate uncertainty"),
+        ("missing", "exactly cover"),
+        ("unknown", "unknown finding"),
+        ("mismatch", "differs from its finding"),
+    ],
+)
+def test_uncertainty_reference_mutations_fail_closed(mutation: str, message: str) -> None:
+    payload = _payload()
+    if mutation == "duplicate":
+        payload["uncertainties"].append(copy.deepcopy(payload["uncertainties"][0]))
+    elif mutation == "missing":
+        payload["uncertainties"].pop()
+    elif mutation == "unknown":
+        payload["uncertainties"][0]["finding_id"] = "fnd_missing"
+    else:
+        payload["uncertainties"][0]["text"] = "A forged uncertainty."
+
+    _invalid(payload, message)
 
 
 @pytest.mark.parametrize(
@@ -479,6 +521,131 @@ def test_audit_history_structure_fails_closed(mutation: str, message: str) -> No
                     "status_run_id": "run_unused",
                 }
             )
+    _invalid(payload, message)
+
+
+def _move_audit_before(
+    payload: dict[str, Any],
+    *,
+    target_event: str,
+    target_entity: str,
+    before_event: str,
+    before_entity: str,
+) -> None:
+    audits = payload["audit_references"]
+    target_index = next(
+        index
+        for index, reference in enumerate(audits)
+        if reference["event_type"] == target_event and reference["entity_id"] == target_entity
+    )
+    target = audits.pop(target_index)
+    before_index = next(
+        index
+        for index, reference in enumerate(audits)
+        if reference["event_type"] == before_event and reference["entity_id"] == before_entity
+    )
+    audits.insert(before_index, target)
+    for sequence, reference in enumerate(audits, start=1):
+        reference["sequence"] = sequence
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("mission", "precedes mission creation"),
+        ("question", "precedes its research question"),
+        ("evidence_source", "precedes its claim or source"),
+        ("evidence_claim", "precedes its claim or source"),
+        ("status", "precedes its required evidence"),
+        ("finding_evidence", "precedes its cited evidence"),
+        ("finding_claim", "precedes its claim"),
+        ("withdrawal", "withdrawal audit history precedes its creation"),
+        ("supersession", "points forward"),
+    ],
+)
+def test_audit_dependency_order_fails_closed(mutation: str, message: str) -> None:
+    payload = _payload()
+    if mutation == "mission":
+        _move_audit_before(
+            payload,
+            target_event="research.question.created",
+            target_entity="que_primary",
+            before_event="research.mission.created",
+            before_entity=_MISSION,
+        )
+    elif mutation == "question":
+        _move_audit_before(
+            payload,
+            target_event="research.claim.created",
+            target_entity="clm_contested",
+            before_event="research.question.created",
+            before_entity="que_primary",
+        )
+    elif mutation == "evidence_source":
+        _move_audit_before(
+            payload,
+            target_event="evidence.card.created",
+            target_entity="evd_support",
+            before_event="source.snapshot.imported",
+            before_entity="snp_packet",
+        )
+    elif mutation == "evidence_claim":
+        _move_audit_before(
+            payload,
+            target_event="evidence.card.created",
+            target_entity="evd_support",
+            before_event="research.claim.created",
+            before_entity="clm_contested",
+        )
+    elif mutation == "status":
+        _move_audit_before(
+            payload,
+            target_event="research.claim.status_changed",
+            target_entity="clm_contested",
+            before_event="evidence.card.created",
+            before_entity="evd_oppose",
+        )
+    elif mutation == "finding_evidence":
+        _move_audit_before(
+            payload,
+            target_event="research.finding.created",
+            target_entity="fnd_material",
+            before_event="evidence.card.created",
+            before_entity="evd_support",
+        )
+    elif mutation == "finding_claim":
+        _move_audit_before(
+            payload,
+            target_event="research.finding.created",
+            target_entity="fnd_material",
+            before_event="research.claim.created",
+            before_entity="clm_contested",
+        )
+    elif mutation == "withdrawal":
+        citation = payload["citations"][2]
+        citation.update(
+            {
+                "withdrawn": True,
+                "withdrawal_reason": "Synthetic retraction.",
+                "withdrawal_creator_id": _ACTOR,
+                "withdrawal_run_id": _RUN,
+                "withdrawn_at": _STATUS_AT,
+            }
+        )
+        payload["claims"][0]["evidence_ledger"][2]["withdrawn"] = True
+        payload["audit_references"].append(
+            _audit(16, "evidence.card.withdrawn", "evidence_card", "evd_context", _MISSION)
+        )
+        _move_audit_before(
+            payload,
+            target_event="evidence.card.withdrawn",
+            target_entity="evd_context",
+            before_event="evidence.card.created",
+            before_entity="evd_context",
+        )
+    else:
+        payload["citations"][0]["supersedes_citation_id"] = "evd_context"
+
     _invalid(payload, message)
 
 
@@ -600,3 +767,21 @@ def test_contract_models_are_strict_frozen_and_forbid_extra_fields() -> None:
     document = build_research_packet(_payload())
     with pytest.raises(ValidationError, match="frozen_instance"):
         document.brief.ownership.executes = True  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("system", "other"),
+        ("researches", False),
+        ("executes", True),
+        ("approves", True),
+        ("orchestrates", True),
+        ("publishes", True),
+    ],
+)
+def test_ownership_boundary_cannot_be_forged(field: str, value: object) -> None:
+    payload = _payload()
+    payload["ownership"][field] = value
+
+    _invalid(payload, "literal_error")

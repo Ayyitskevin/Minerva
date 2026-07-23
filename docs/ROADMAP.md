@@ -27,6 +27,21 @@
   and truthfully marks sibling exchange, a shared run envelope, orchestration,
   experiment execution, and approval authority unavailable.
 
+## Milestone 1.2: portable packet tooling
+
+- Installed `minerva packet verify` reads and verifies the canonical artifact directly
+  without SQLite, network access, provider credentials, or a second packet format.
+- `minerva packet inspect` returns bounded schema, digest, count, provenance/audit,
+  and ownership metadata without disclosing research contents or private paths/IDs.
+- Packet file intake rejects parent segments, symlinks, non-regular or changing files,
+  and over-limit input before JSON decoding; expected errors are stable and
+  non-reflective, with fail-fast sequence validation and bounded error classification.
+- Audit verification rejects dependency-order inversions and forward citation
+  supersession with linear-time dependency and supersession checks.
+- Installed-wheel smoke exercises both commands outside the source checkout.
+- Digest integrity remains explicitly distinct from authenticity, and Athena/Icarus
+  artifact exchange remains unimplemented.
+
 ## Milestone 2B: explicit evidence-constrained model assistance
 
 - Optional OpenAI and Anthropic extras with operator-supplied environment credentials

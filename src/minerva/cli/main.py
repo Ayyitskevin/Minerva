@@ -19,6 +19,11 @@ from minerva.core.operations import OperationsService
 from minerva.core.types import IdentityContext, local_identity
 from minerva.evidence.models import EvidenceStance
 from minerva.evidence.service import EvidenceService
+from minerva.integrations.research_packet_file import (
+    load_research_packet,
+    packet_inspection_report,
+    packet_verification_report,
+)
 from minerva.research.models import ClaimStatus, FindingStatus, StatementKind
 from minerva.research.service import ResearchService
 from minerva.sources.service import SourceService
@@ -208,6 +213,16 @@ def _cmd_brief_export(args: argparse.Namespace) -> Outcome:
             "files": [result.markdown_path.name, result.json_path.name],
         }
     )
+
+
+def _cmd_packet_verify(args: argparse.Namespace) -> Outcome:
+    document = load_research_packet(cast(Path, args.input))
+    return Outcome(packet_verification_report(document))
+
+
+def _cmd_packet_inspect(args: argparse.Namespace) -> Outcome:
+    document = load_research_packet(cast(Path, args.input))
+    return Outcome(packet_inspection_report(document))
 
 
 def _cmd_audit_list(args: argparse.Namespace) -> Outcome:
@@ -480,6 +495,24 @@ def build_parser() -> argparse.ArgumentParser:
     brief_export.add_argument("--mission", required=True)
     brief_export.add_argument("--output-dir", required=True, type=Path)
     _set_handler(brief_export, _cmd_brief_export)
+
+    packet_parser = commands.add_parser(
+        "packet",
+        help="verify or inspect a standalone research packet",
+    )
+    packet_commands = packet_parser.add_subparsers(dest="packet_command", required=True)
+    packet_verify = packet_commands.add_parser(
+        "verify",
+        help="verify one canonical research packet without a database",
+    )
+    packet_verify.add_argument("--input", required=True, type=Path)
+    _set_handler(packet_verify, _cmd_packet_verify)
+    packet_inspect = packet_commands.add_parser(
+        "inspect",
+        help="show bounded metadata for one verified research packet",
+    )
+    packet_inspect.add_argument("--input", required=True, type=Path)
+    _set_handler(packet_inspect, _cmd_packet_inspect)
 
     audit_parser = commands.add_parser("audit", help="inspect append-only audit events")
     audit_commands = audit_parser.add_subparsers(dest="audit_command", required=True)
