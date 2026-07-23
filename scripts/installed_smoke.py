@@ -336,6 +336,75 @@ if unexpected:
         if preview.get("export_digest") != demo.get("export_digest"):
             raise SmokeError("installed preview and demo export digests disagree")
 
+        packet_verify_output = _run_checked(
+            [
+                str(minerva_command),
+                "packet",
+                "verify",
+                "--input",
+                str(json_path),
+            ],
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        packet_verify = _json_object(packet_verify_output, label="installed packet verify")
+        if (
+            packet_verify.get("status") != "verified"
+            or packet_verify.get("schema_version") != "minerva.research-brief.v2"
+            or packet_verify.get("export_digest") != demo.get("export_digest")
+        ):
+            raise SmokeError("installed packet verification returned an invalid result")
+
+        packet_inspect_output = _run_checked(
+            [
+                str(minerva_command),
+                "packet",
+                "inspect",
+                "--input",
+                str(json_path),
+            ],
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        packet_inspect = _json_object(packet_inspect_output, label="installed packet inspect")
+        expected_counts = {
+            "missions": 1,
+            "questions": 1,
+            "claims": 2,
+            "citations": 4,
+            "active_citations": 4,
+            "withdrawn_citations": 0,
+            "evidence_stances": {
+                "supports": 2,
+                "opposes": 2,
+                "context": 0,
+                "inconclusive": 0,
+            },
+            "findings": 1,
+            "assumptions": 1,
+            "unresolved_questions": 1,
+            "uncertainties": 3,
+            "sources": 4,
+        }
+        ownership = packet_inspect.get("ownership")
+        integrity = packet_inspect.get("integrity")
+        if (
+            packet_inspect.get("status") != "verified"
+            or packet_inspect.get("export_digest") != demo.get("export_digest")
+            or packet_inspect.get("counts") != expected_counts
+            or not isinstance(ownership, dict)
+            or ownership.get("researches") is not True
+            or any(
+                ownership.get(capability) is not False
+                for capability in ("executes", "approves", "orchestrates", "publishes")
+            )
+            or not isinstance(integrity, dict)
+            or integrity.get("digest_verified") is not True
+            or integrity.get("authenticity") != "not_established"
+            or len(packet_inspect_output) >= 2_000
+        ):
+            raise SmokeError("installed packet inspection returned an invalid result")
+
         doctor = _json_object(
             _run_checked(
                 [

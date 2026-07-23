@@ -776,12 +776,47 @@ def _validate_audit_references(
         ):
             raise ValueError("audit provenance is recorded before its run started")
 
+    creation_sequences = {
+        (reference.event_type, reference.entity_id): reference.sequence
+        for reference in payload.audit_references
+        if reference.event_type != "research.claim.status_changed"
+    }
+    mission_creation_sequence = creation_sequences[("research.mission.created", mission_id)]
+    for reference in payload.audit_references:
+        if (
+            reference.event_type
+            not in {
+                "research.run.started",
+                "research.mission.created",
+            }
+            and reference.sequence <= mission_creation_sequence
+        ):
+            raise ValueError("content audit history precedes mission creation")
+
+    question_creation_sequences = {
+        question.id: creation_sequences[("research.question.created", question.id)]
+        for question in payload.questions
+    }
     claim_creation_sequences = {
+        claim.id: creation_sequences[("research.claim.created", claim.id)]
+        for claim in payload.claims
+    }
+    source_creation_sequences = {
+        source.snapshot_id: creation_sequences[("source.snapshot.imported", source.snapshot_id)]
+        for source in payload.sources
+    }
+    citation_creation_sequences = {
+        citation.citation_id: creation_sequences[("evidence.card.created", citation.citation_id)]
+        for citation in payload.citations
+    }
+    withdrawal_sequences = {
         reference.entity_id: reference.sequence
         for reference in payload.audit_references
-        if reference.event_type == "research.claim.created"
+        if reference.event_type == "evidence.card.withdrawn"
     }
     for claim in payload.claims:
+        if question_creation_sequences[claim.question_id] >= claim_creation_sequences[claim.id]:
+            raise ValueError("claim audit history precedes its research question")
         references = status_references[claim.id]
         if len(references) != claim.version - 1:
             raise ValueError("claim version does not match status-change audit history")
@@ -795,6 +830,53 @@ def _validate_audit_references(
                 raise ValueError(
                     "latest claim status audit provenance differs from the current status"
                 )
+            required_stances: set[str]
+            if claim.status == "provisionally_supported":
+                required_stances = {"supports"}
+            elif claim.status == "contested":
+                required_stances = {"supports", "opposes"}
+            elif claim.status == "unsupported":
+                required_stances = {"opposes"}
+            else:
+                required_stances = set()
+            for stance in required_stances:
+                existed_at_status_change = any(
+                    citation.claim_id == claim.id
+                    and citation.stance == stance
+                    and citation_creation_sequences[citation.citation_id] < latest.sequence
+                    and (
+                        citation.citation_id not in withdrawal_sequences
+                        or withdrawal_sequences[citation.citation_id] > latest.sequence
+                    )
+                    for citation in payload.citations
+                )
+                if not existed_at_status_change:
+                    raise ValueError("claim status audit precedes its required evidence")
+
+    for citation in payload.citations:
+        created = citation_creation_sequences[citation.citation_id]
+        if (
+            claim_creation_sequences[citation.claim_id] >= created
+            or source_creation_sequences[citation.snapshot_id] >= created
+        ):
+            raise ValueError("evidence audit history precedes its claim or source")
+        if (
+            citation.supersedes_citation_id is not None
+            and citation_creation_sequences[citation.supersedes_citation_id] >= created
+        ):
+            raise ValueError("citation supersession audit history points forward")
+        if citation.withdrawn and withdrawal_sequences[citation.citation_id] <= created:
+            raise ValueError("citation withdrawal audit history precedes its creation")
+
+    for finding in all_findings:
+        created = creation_sequences[("research.finding.created", finding.id)]
+        if finding.claim_id is not None and claim_creation_sequences[finding.claim_id] >= created:
+            raise ValueError("finding audit history precedes its claim")
+        if any(
+            citation_creation_sequences[citation_id] >= created
+            for citation_id in finding.citation_ids
+        ):
+            raise ValueError("finding audit history precedes its cited evidence")
 
     used_run_ids = {
         reference.run_id
