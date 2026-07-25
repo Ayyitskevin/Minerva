@@ -354,6 +354,13 @@ back an upgrade, stop the newer process and use the older binary to restore a pr
 backup into a new database path; verify that restored path before deliberately replacing
 any operator-owned file.
 
+`doctor` also reports remnants it will never remove: private staging copies left beside
+the database by an interrupted restore or initialization, and assistance invocations
+recorded as requested with no terminal outcome. Both are counts, they do not affect the
+exit status or readiness, and cleanup is yours to decide — Minerva does not delete files
+it cannot prove it created. Partial export or fulfillment output directories cannot be
+reported, because Minerva deliberately stores no export paths.
+
 A backup is a standalone Minerva SQLite artifact containing the research and audit state
 committed before its online copy. Protect and version it independently. It has no external
 signature or integrity anchor, so a determined same-OS-user coordinated rewrite of both

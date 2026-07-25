@@ -15,10 +15,11 @@ records what has actually been built, verified, and deviated from.
 
 ## Current phase
 
-Phase 0 (foundation stabilization) of the plan's roadmap. Slices 1-4 are
-complete and verified; slices 1-3 are merged to `main` via PR #10. No gated
-phase (D-1..D-11) has been entered; none may be entered until Kevin records
-the decision.
+Phase 0 (foundation stabilization) of the plan's roadmap is **complete**.
+Slices 1-5 are done and verified; slices 1-3 are merged to `main` via PR #10
+and slices 4-5 are open as PR #11. No gated phase (D-1..D-11) has been
+entered, and none may be until Kevin records the decision. **All ungated work
+in the plan is now finished.**
 
 ## Completed slices
 
@@ -268,6 +269,63 @@ verification per assembly, which the previous code would fail.
 **Rollback.** Pure code and docs; no migration. Each item reverts
 independently.
 
+### Slice 5 — operator remnant notices and error-path coverage (COMPLETE, all gates green)
+
+**User outcome.** The cleanup contracts ADR 0003 and ADR 0004 documented are now
+discoverable. `doctor` names crash residue an operator had no way to find, and
+never removes it.
+
+**Notices are a separate channel from checks (ADR 0006).** They never affect
+`DoctorReport.ok`, so a database with remnants still reports healthy and
+`/readyz` still returns 200 — residue is housekeeping, not unreadiness.
+
+- `staging_remnants` counts `.{name}.minerva-*.tmp` files beside the database.
+  Each is a full copy of a database, hidden as a dotfile. Runs on every
+  invocation, including when the database itself is missing, because residue
+  outlives what it was staged for.
+- `unfinished_assistance` counts invocations with a `requested` audit event and
+  no other event for that invocation — the case where a provider may have
+  processed and charged for a request Minerva never recorded an outcome for.
+  Runs under `--deep`, grouped over rows that pass already scans, so it needs
+  no index and no migration.
+
+Notice text carries a count and never a filename: the remnant name embeds the
+database filename, which the threat model keeps out of reported output.
+
+**What doctor honestly cannot do.** Partial export and fulfillment output
+directories are undiscoverable. `brief_exports` stores digests, not paths, and
+`request fulfill` records nothing, so Minerva cannot know where an interrupted
+write was going. ADR 0006 says so explicitly rather than shipping a check that
+silently finds nothing.
+
+**Coverage lift (F-TEST-1).** Error-injection tests for the three
+lowest-covered security-relevant modules, where the uncovered branches *were*
+the security contract:
+
+| Module | Before | After |
+| --- | --- | --- |
+| `core/operations.py` | 66% | 96% |
+| `sources/integrity.py` | 77% | 94% |
+| `integrations/safe_artifact_file.py` | 73% | 83% |
+
+New suites cover the no-follow reader's failure kinds (symlinked target and
+directory component, non-regular targets, metadata and bounded-read size
+refusal, changed content between the two reads, file replaced between reads,
+errno mapping, and non-reflective messages), every tampered snapshot field and
+malformed import-event detail, and the identity-checked backup compensation
+unlink.
+
+**Files changed.** `src/minerva/core/doctor.py`,
+`docs/adr/0006-operator-remnant-notices.md` (new), `tests/test_doctor.py`,
+`tests/test_safe_artifact_file.py` (new),
+`tests/test_integrity_error_paths.py` (new), `README.md`, `SECURITY.md`,
+`docs/DECISIONS.md`.
+
+**Migration status.** None.
+
+**Rollback.** Pure code, tests, and docs. `DoctorReport.notices` defaults to an
+empty tuple, so reverting is safe.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -385,33 +443,33 @@ None. Slice 1 required no human decision.
 
 ## Next task
 
-**Slice 5 — operator remnant diagnostics (ADR 0006) plus the coverage
-lift.** `doctor` gains a read-only enumeration of orphan
-`.{db}.minerva-*.tmp` staging files, partial output directories it can
-recognise, and unmatched assist `requested` audit events (F-OPS-1), so the
-cleanup contracts the docs already describe become actionable. It never
-deletes anything: ADR 0004's reasoning that Minerva must not remove what it
-cannot prove it created applies directly. Paired with error-injection tests
-for the uncovered branches in `safe_artifact_file.py`,
-`core/operations.py`, and `sources/integrity.py` (F-TEST-1), the
-lowest-covered security-relevant modules.
+**None that Opus may take unilaterally.** Every remaining item in Fable's plan
+is behind a decision gate, so the execution phase pauses here and reports.
 
-**After slice 5, every remaining plan item is gated.** Nothing further
-should be implemented until Kevin records a decision. The two with the most
-leverage are **D-1** (persist human-adopted agent inferences, which needs
-ADR 0007 because ADR 0003 currently promises candidates are never
-persisted) and **D-9** (finding retraction versus the permanent export
-block that withdrawing cited evidence currently causes). Smaller open
-gates: D-10 (REST evidence withdrawal and the manifest `.cli` taxonomy) and
-D-11 (restoring a pre-upgrade backup with an upgraded binary).
+Awaiting Kevin (highest leverage first):
 
-Still open from the ledger, ungated but unscheduled: F-OPS-5 (doctor
-mutates the journal-mode header of the file it inspects), F-OPS-6 (no
-directory fsync after publication), F-AI-4 (KeyboardInterrupt leaves no
-terminal assist audit event), F-PAR-3 (web mission list truncates at 100),
-F-SYN-1 (claim-scoped briefs omit mission-level findings), F-DUP-2
-(canonical-JSON helpers duplicated across the packet and request
-contracts), and F-REL-1/2 (versioning and commit-attribution conventions).
+- **D-1 — persist human-adopted agent inferences.** Needs ADR 0007, because
+  ADR 0003 currently promises candidates are never persisted. Today an operator
+  who accepts a model draft retypes it and the link to the audited assist run
+  is lost.
+- **D-9 — finding retraction versus the permanent export block.** Withdrawing
+  evidence cited by any finding permanently disables brief export and
+  claim-scoped fulfillment for that mission, because findings are append-only
+  and withdrawal is irreversible. Following the documented correction workflow
+  currently bricks the milestone's core deliverable.
+- **D-10** REST evidence withdrawal and the capability manifest's `.cli`
+  taxonomy. **D-11** restoring a pre-upgrade backup with an upgraded binary.
+- **D-2..D-8** the fleet gates: Athena authentication and transport, Icarus
+  artifacts, remote access, MCP timing, retrieval/OCR, signing, and licensing.
+
+Ungated but unscheduled ledger items, available if Kevin wants more hardening
+before any gate is decided: F-OPS-5 (doctor mutates the journal-mode header of
+the file it inspects), F-OPS-6 (no directory fsync after publication), F-AI-4
+(KeyboardInterrupt leaves no terminal assist audit event), F-PAR-3 (web mission
+list truncates at 100 with no indicator), F-SYN-1 (claim-scoped briefs omit
+mission-level findings that cite the target claim), F-DUP-2 (canonical-JSON
+helpers duplicated across the packet and request contracts), and F-REL-1/2
+(versioning and commit-attribution conventions).
 
 ## Rollback instructions (whole phase)
 

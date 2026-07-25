@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from conftest import Lab
+import minerva.assist.service as assist_service_module
+import minerva.core.doctor as doctor_module
+from conftest import Lab, fixed_clock
 from minerva.core.db import Database
 from minerva.core.doctor import DoctorCheck, DoctorReport, run_doctor
 from minerva.evidence.models import EvidenceStance
@@ -300,3 +302,107 @@ def test_all_migrated_entity_ids_require_full_lowercase_hex_suffix(lab: Lab) -> 
     assert all(
         "substr(id, 5) NOT GLOB '*[^0-9a-f]*'" in definition for definition in definitions.values()
     )
+
+
+def test_doctor_reports_staging_remnants_without_failing_readiness(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    """A crash remnant is operator housekeeping, not a reason to look unready.
+
+    ADR 0004 leaves these files in place deliberately, so doctor names them and
+    never removes them; `/readyz` maps checks only, so `ok` must stay true.
+    """
+
+    clean = run_doctor(database)
+    assert clean.ok
+    assert [(n.name, n.count) for n in clean.notices if n.name == "staging_remnants"] == [
+        ("staging_remnants", 0)
+    ]
+
+    orphan = database.path.parent / f".{database.path.name}.minerva-abc123.tmp"
+    orphan.write_bytes(b"staged database copy")
+
+    report = run_doctor(database)
+
+    assert report.ok is True
+    notice = next(item for item in report.notices if item.name == "staging_remnants")
+    assert notice.count == 1
+    assert orphan.exists(), "doctor must never remove a remnant it did not create"
+    assert database.path.name not in notice.detail
+    assert str(tmp_path) not in notice.detail
+
+
+def test_doctor_reports_assistance_invocations_with_no_terminal_outcome(
+    lab: Lab,
+) -> None:
+    """An unmatched requested event means the provider may have been billed.
+
+    The requested event commits before egress and the terminal event after, so
+    process death between them is invisible without this notice.
+    """
+
+    seed = lab.seed_claim()
+    matched = "inv_" + "a" * 32
+    unmatched = "inv_" + "b" * 32
+    with lab.database.transaction() as connection:
+        for invocation_id, event_types in (
+            (matched, ("assistance.invocation.requested", "assistance.invocation.succeeded")),
+            (unmatched, ("assistance.invocation.requested",)),
+        ):
+            for index, event_type in enumerate(event_types):
+                connection.execute(
+                    """
+                    INSERT INTO audit_events(
+                        id, event_type, entity_type, entity_id, mission_id,
+                        actor_id, run_id, occurred_at, details_json
+                    ) VALUES (?, ?, 'assistance_invocation', ?, ?, ?, ?, ?, '{}')
+                    """,
+                    (
+                        f"aud_{abs(hash((invocation_id, index))) % 10**31:032x}",
+                        event_type,
+                        invocation_id,
+                        seed.mission.id,
+                        lab.identity.actor_id,
+                        lab.identity.run_id,
+                        fixed_clock(),
+                    ),
+                )
+
+    report = run_doctor(lab.database, deep=True)
+
+    notice = next(item for item in report.notices if item.name == "unfinished_assistance")
+    assert notice.count == 1
+    assert unmatched not in notice.detail
+    assert report.ok is True
+
+
+def test_doctor_assistance_notice_tracks_the_recorded_event_name(lab: Lab) -> None:
+    """The notice is worthless if the assist service renames its requested event."""
+
+    seed = lab.seed_claim()
+    with lab.database.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO audit_events(
+                id, event_type, entity_type, entity_id, mission_id,
+                actor_id, run_id, occurred_at, details_json
+            ) VALUES (?, ?, 'assistance_invocation', ?, ?, ?, ?, ?, '{}')
+            """,
+            (
+                "aud_" + "c" * 32,
+                doctor_module._ASSISTANCE_REQUESTED_EVENT,
+                "inv_" + "c" * 32,
+                seed.mission.id,
+                lab.identity.actor_id,
+                lab.identity.run_id,
+                fixed_clock(),
+            ),
+        )
+
+    source = Path(assist_service_module.__file__).read_text(encoding="utf-8")
+    assert f'event_type="{doctor_module._ASSISTANCE_REQUESTED_EVENT}"' in source
+
+    report = run_doctor(lab.database, deep=True)
+    notice = next(item for item in report.notices if item.name == "unfinished_assistance")
+    assert notice.count == 1

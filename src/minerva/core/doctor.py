@@ -25,10 +25,28 @@ class DoctorCheck:
 
 
 @dataclass(frozen=True, slots=True)
+class DoctorNotice:
+    """An observation that needs an operator's attention but is not a failure.
+
+    Notices never affect `DoctorReport.ok`, so they cannot make a healthy
+    database look unready. Minerva reports remnants and never removes them:
+    ADR 0004's rule that it must not delete what it cannot prove it created
+    applies to crash residue too.
+    """
+
+    name: str
+    count: int
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
 class DoctorReport:
     ok: bool
     checks: tuple[DoctorCheck, ...]
+    notices: tuple[DoctorNotice, ...] = ()
 
+
+_ASSISTANCE_REQUESTED_EVENT = "assistance.invocation.requested"
 
 _REQUIRED_TRIGGERS = frozenset(
     {
@@ -66,10 +84,12 @@ _REQUIRED_TRIGGERS = frozenset(
 
 def run_doctor(database: Database, *, deep: bool = False) -> DoctorReport:
     checks: list[DoctorCheck] = []
+    notices: list[DoctorNotice] = [_staging_remnant_notice(database)]
     if not database.exists():
         return DoctorReport(
             False,
             (DoctorCheck("database", False, "Database file is missing or unsafe."),),
+            tuple(notices),
         )
 
     mode = os.stat(database.path, follow_symlinks=False).st_mode & 0o777
@@ -88,7 +108,7 @@ def run_doctor(database: Database, *, deep: bool = False) -> DoctorReport:
         version = database.schema_version()
     except MinervaError as error:
         checks.append(DoctorCheck("schema", False, error.public_message))
-        return DoctorReport(False, tuple(checks))
+        return DoctorReport(False, tuple(checks), tuple(notices))
     expected = latest_schema_version()
     checks.append(
         DoctorCheck(
@@ -101,7 +121,7 @@ def run_doctor(database: Database, *, deep: bool = False) -> DoctorReport:
     integrity_ok, integrity_message = database.integrity_check()
     checks.append(DoctorCheck("sqlite_integrity", integrity_ok, integrity_message))
     if not integrity_ok:
-        return DoctorReport(False, tuple(checks))
+        return DoctorReport(False, tuple(checks), tuple(notices))
 
     try:
         with database.read() as connection:
@@ -142,6 +162,7 @@ def run_doctor(database: Database, *, deep: bool = False) -> DoctorReport:
             )
             if deep:
                 checks.extend(_deep_checks(connection))
+                notices.append(_unfinished_assistance_notice(connection))
     except (sqlite3.Error, MinervaError) as error:
         message = (
             error.public_message
@@ -150,7 +171,7 @@ def run_doctor(database: Database, *, deep: bool = False) -> DoctorReport:
         )
         checks.append(DoctorCheck("deep_integrity", False, message))
 
-    return DoctorReport(all(item.ok for item in checks), tuple(checks))
+    return DoctorReport(all(item.ok for item in checks), tuple(checks), tuple(notices))
 
 
 def _deep_checks(connection: sqlite3.Connection) -> list[DoctorCheck]:
@@ -705,3 +726,70 @@ def _packaged_trigger_fingerprints() -> dict[str, str]:
 def _sql_fingerprint(sql: str) -> str:
     normalized = " ".join(sql.strip().rstrip(";").split())
     return sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _staging_remnant_notice(database: Database) -> DoctorNotice:
+    """Count private staging files left beside the database by an interrupted write.
+
+    Restore and fresh initialization stage into `.{name}.minerva-*.tmp` before
+    publishing. A crash between the staged commit and publication leaves one
+    behind, and each is a full copy of a database, so an operator needs to know
+    it is there. Names are never reported: they would disclose the database path.
+    """
+
+    try:
+        remnants = [
+            entry
+            for entry in database.path.parent.glob(f".{database.path.name}.minerva-*.tmp")
+            if entry.is_file() and not entry.is_symlink()
+        ]
+    except OSError:
+        return DoctorNotice(
+            "staging_remnants",
+            0,
+            "the database directory could not be inspected for staging remnants",
+        )
+    if not remnants:
+        return DoctorNotice("staging_remnants", 0, "no staging remnants beside the database")
+    return DoctorNotice(
+        "staging_remnants",
+        len(remnants),
+        "private staging copies remain beside the database; review and remove them yourself",
+    )
+
+
+def _unfinished_assistance_notice(connection: sqlite3.Connection) -> DoctorNotice:
+    """Count assistance invocations recorded as requested with no terminal event.
+
+    The requested event commits before egress and the terminal event after, so
+    process death between them leaves an unmatched pair. The provider may still
+    have processed and charged for that request; Minerva cannot know.
+    """
+
+    unfinished = int(
+        connection.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT entity_id
+                FROM audit_events
+                WHERE entity_type = 'assistance_invocation'
+                GROUP BY entity_id
+                HAVING SUM(CASE WHEN event_type = ? THEN 1 ELSE 0 END) > 0
+                   AND SUM(CASE WHEN event_type <> ? THEN 1 ELSE 0 END) = 0
+            )
+            """,
+            (_ASSISTANCE_REQUESTED_EVENT, _ASSISTANCE_REQUESTED_EVENT),
+        ).fetchone()[0]
+    )
+    if not unfinished:
+        return DoctorNotice(
+            "unfinished_assistance",
+            0,
+            "every recorded assistance invocation has a terminal outcome",
+        )
+    return DoctorNotice(
+        "unfinished_assistance",
+        unfinished,
+        "assistance invocations have no terminal outcome; the provider may still "
+        "have processed those requests",
+    )
