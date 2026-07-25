@@ -235,7 +235,15 @@ def _deep_checks(connection: sqlite3.Connection) -> list[DoctorCheck]:
     finding_snapshot_cache = new_snapshot_cache()
     try:
         for row in connection.execute(
-            "SELECT id, mission_id, claim_id, statement_kind FROM findings ORDER BY id"
+            """
+            SELECT id, mission_id, claim_id, statement_kind
+            FROM findings AS finding
+            WHERE NOT EXISTS (
+                SELECT 1 FROM finding_retractions AS retraction
+                WHERE retraction.finding_id = finding.id
+            )
+            ORDER BY id
+            """
         ):
             finding_count += 1
             kind = StatementKind(str(row["statement_kind"]))
@@ -255,7 +263,7 @@ def _deep_checks(connection: sqlite3.Connection) -> list[DoctorCheck]:
                     connection,
                     evidence_id=str(citation_row["evidence_id"]),
                     mission_id=str(row["mission_id"]),
-                    allow_withdrawn=False,
+                    allow_withdrawn=not kind.requires_citation,
                     snapshot_cache=finding_snapshot_cache,
                 )
                 if row["claim_id"] is not None and citation.claim_id != str(row["claim_id"]):

@@ -107,6 +107,12 @@ Repeat `evidence add` with an opposing source to make contradiction visible. Mat
 findings are created with `finding add` and require evidence IDs; assumptions and
 unresolved questions remain explicitly labeled.
 
+Corrections extend the record rather than rewriting it. `evidence withdraw` marks an
+observation as no longer standing while leaving it visible in the ledger, and
+`finding retract --finding FND_ID --reason "..."` records that a finding built on it is
+no longer asserted. A retracted finding leaves the brief but keeps its row, citations,
+and audit history, so a withdrawal no longer blocks the mission's export.
+
 ## Canonical research packet
 
 `research-brief.json` is the single canonical agent-facing artifact; Milestone 1.1

@@ -6,6 +6,7 @@
 - [ADR 0004: Audit restored databases before exclusive publication](adr/0004-staged-restore-audit-publication.md)
 - [ADR 0005: Add targeted indexes for claim-scoped request fulfillment](adr/0005-targeted-fulfillment-indexing.md)
 - [ADR 0006: Report operator remnants without removing them](adr/0006-operator-remnant-notices.md)
+- [ADR 0007: Retract findings instead of blocking export forever](adr/0007-finding-retraction.md)
 
 ## Milestone 1 implementation decisions
 
@@ -169,3 +170,20 @@
   design. `brief_exports` stores digests rather than paths and `request fulfill`
   records nothing, so Minerva says it cannot locate that residue instead of
   offering a check that silently finds none.
+
+## Finding retraction decisions (gate D-9)
+
+- Retraction is to a finding what withdrawal is to an evidence card: an
+  append-only record, never an edit or a delete. The finding, its citations, and
+  its audit history all remain; synthesis stops carrying it.
+- Minerva never auto-retracts a finding when cited evidence is withdrawn.
+  Whether a withdrawal invalidates a finding is a research judgement, so the
+  operator records it.
+- The withdrawn-citation refusal applies to material findings only, matching PRD
+  invariant 8. An assumption or unresolved question may keep an optional
+  citation to withdrawn evidence; the packet marks that citation withdrawn so
+  the state is visible rather than the document being refused.
+- `minerva.research-brief.v2` is unchanged. A retracted finding is absent from
+  the packet rather than flagged inside it, so the frozen fleet-facing contract,
+  its canonical bytes, and its golden fixtures all stay put. Surfacing
+  retraction history in a packet is a future v3 question, not this change.

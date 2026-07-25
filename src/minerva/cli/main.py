@@ -176,6 +176,15 @@ def _cmd_evidence_withdraw(args: argparse.Namespace) -> Outcome:
     return Outcome({"status": "withdrawn", "withdrawal_id": withdrawal_id})
 
 
+def _cmd_finding_retract(args: argparse.Namespace) -> Outcome:
+    retraction_id = ResearchService(_database(args)).retract_finding(
+        finding_id=cast(str, args.finding),
+        reason=cast(str, args.reason),
+        identity=_identity("cli:finding-retract"),
+    )
+    return Outcome({"status": "retracted", "retraction_id": retraction_id})
+
+
 def _cmd_finding_add(args: argparse.Namespace) -> Outcome:
     finding = ResearchService(_database(args)).add_finding(
         mission_id=cast(str, args.mission),
@@ -512,6 +521,12 @@ def build_parser() -> argparse.ArgumentParser:
     finding_add.add_argument("--uncertainty", default="")
     finding_add.add_argument("--evidence", action="append", default=[])
     _set_handler(finding_add, _cmd_finding_add)
+
+    finding_retract = finding_commands.add_parser("retract")
+    _add_database(finding_retract)
+    finding_retract.add_argument("--finding", required=True)
+    finding_retract.add_argument("--reason", required=True)
+    _set_handler(finding_retract, _cmd_finding_retract)
 
     brief_parser = commands.add_parser("brief", help="preview or export a research brief")
     brief_commands = brief_parser.add_subparsers(dest="brief_command", required=True)

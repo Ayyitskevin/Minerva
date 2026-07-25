@@ -7,7 +7,7 @@ import pytest
 
 from conftest import Lab, SequenceIds, fixed_clock
 from minerva.core.audit import AuditRecorder
-from minerva.core.errors import ConflictError, IntegrityError
+from minerva.core.errors import ConflictError, IntegrityError, NotFoundError
 from minerva.core.types import IdentityContext
 from minerva.evidence.models import EvidenceStance
 from minerva.research.models import CitationStatus, ClaimStatus, FindingStatus, StatementKind
@@ -449,3 +449,190 @@ def test_undecodable_text_is_a_domain_refusal_not_an_internal_error(lab: Lab) ->
         )
 
     assert caught.value.code == "title_invalid"
+
+
+def test_retracting_a_finding_restores_brief_export_after_an_honest_correction(
+    lab: Lab,
+) -> None:
+    """The documented correction workflow must not permanently disable export.
+
+    Withdrawing evidence is how Minerva records that an observation was wrong.
+    Before retraction existed, any material finding citing that evidence blocked
+    `brief export` for the whole mission forever, because findings are
+    append-only and withdrawal is irreversible.
+    """
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    finding = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="The proposition holds for the measured window.",
+        statement_kind=StatementKind.OBSERVED_FACT,
+        status=FindingStatus.SUPPORTED,
+        uncertainty="Bounded to the measured window.",
+        evidence_ids=(evidence.id,),
+        identity=lab.identity,
+    )
+    assert lab.synthesis.build_brief(seed.mission.id)
+
+    lab.evidence.withdraw_evidence(
+        evidence_id=evidence.id,
+        reason="The observation was measured incorrectly.",
+        identity=lab.identity,
+    )
+    with pytest.raises(IntegrityError) as blocked:
+        lab.synthesis.build_brief(seed.mission.id)
+    assert blocked.value.code == "citation_withdrawn"
+
+    retraction_id = lab.research.retract_finding(
+        finding_id=finding.id,
+        reason="The cited observation was withdrawn as mismeasured.",
+        identity=lab.identity,
+    )
+
+    brief = lab.synthesis.build_brief(seed.mission.id)
+    assert retraction_id.startswith("ret_")
+    assert [item["id"] for item in brief.payload["findings"]] == []
+    assert brief.payload["uncertainties"] == []
+
+
+def test_retraction_preserves_the_finding_and_its_history(lab: Lab) -> None:
+    """Retraction is a separate append-only record, never an edit or a delete."""
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    finding = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="A statement that will be retracted.",
+        statement_kind=StatementKind.OBSERVED_FACT,
+        status=FindingStatus.SUPPORTED,
+        uncertainty="",
+        evidence_ids=(evidence.id,),
+        identity=lab.identity,
+    )
+    lab.research.retract_finding(
+        finding_id=finding.id,
+        reason="Superseded by a corrected analysis.",
+        identity=lab.identity,
+    )
+
+    with lab.database.read() as connection:
+        stored = connection.execute(
+            "SELECT statement FROM findings WHERE id = ?", (finding.id,)
+        ).fetchone()
+        citations = connection.execute(
+            "SELECT COUNT(*) FROM finding_citations WHERE finding_id = ?", (finding.id,)
+        ).fetchone()[0]
+        reason = connection.execute(
+            "SELECT reason FROM finding_retractions WHERE finding_id = ?", (finding.id,)
+        ).fetchone()[0]
+        retracted_events = connection.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE event_type = 'research.finding.retracted'"
+        ).fetchone()[0]
+
+    assert stored["statement"] == "A statement that will be retracted."
+    assert citations == 1
+    assert reason == "Superseded by a corrected analysis."
+    assert retracted_events == 1
+
+
+def test_a_finding_cannot_be_retracted_twice(lab: Lab) -> None:
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    finding = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="A statement retracted once.",
+        statement_kind=StatementKind.OBSERVED_FACT,
+        status=FindingStatus.SUPPORTED,
+        uncertainty="",
+        evidence_ids=(evidence.id,),
+        identity=lab.identity,
+    )
+    lab.research.retract_finding(
+        finding_id=finding.id, reason="First retraction.", identity=lab.identity
+    )
+
+    with pytest.raises(ConflictError) as caught:
+        lab.research.retract_finding(
+            finding_id=finding.id, reason="Second retraction.", identity=lab.identity
+        )
+
+    assert caught.value.code == "finding_already_retracted"
+
+
+def test_retraction_records_are_append_only(lab: Lab) -> None:
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    finding = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="A retracted statement.",
+        statement_kind=StatementKind.OBSERVED_FACT,
+        status=FindingStatus.SUPPORTED,
+        uncertainty="",
+        evidence_ids=(evidence.id,),
+        identity=lab.identity,
+    )
+    lab.research.retract_finding(
+        finding_id=finding.id, reason="Retracted for test.", identity=lab.identity
+    )
+
+    for statement in (
+        "UPDATE finding_retractions SET reason = 'rewritten'",
+        "DELETE FROM finding_retractions",
+    ):
+        with (
+            pytest.raises(sqlite3.IntegrityError, match="append-only"),
+            lab.database.transaction() as connection,
+        ):
+            connection.execute(statement)
+
+
+def test_unknown_finding_cannot_be_retracted(lab: Lab) -> None:
+    with pytest.raises(NotFoundError) as caught:
+        lab.research.retract_finding(
+            finding_id="fnd_" + "f" * 32, reason="No such finding.", identity=lab.identity
+        )
+
+    assert caught.value.code == "finding_not_found"
+
+
+def test_withdrawn_optional_citation_does_not_block_a_non_material_statement(
+    lab: Lab,
+) -> None:
+    """Invariant 8 governs material findings; an assumption asserts no support.
+
+    Citing evidence from an assumption is a supported workflow, so a later
+    withdrawal of that evidence must not refuse the whole mission's export.
+    """
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="The instrument was calibrated before the run.",
+        statement_kind=StatementKind.ASSUMPTION,
+        status=FindingStatus.INCONCLUSIVE,
+        uncertainty="",
+        evidence_ids=(evidence.id,),
+        identity=lab.identity,
+    )
+    lab.evidence.withdraw_evidence(
+        evidence_id=evidence.id,
+        reason="The observation was measured incorrectly.",
+        identity=lab.identity,
+    )
+
+    brief = lab.synthesis.build_brief(seed.mission.id)
+
+    assumptions = brief.payload["assumptions"]
+    assert [item["statement_kind"] for item in assumptions] == ["assumption"]
+    assert assumptions[0]["citation_ids"] == [evidence.id]
+    citation = next(
+        item for item in brief.payload["citations"] if item["citation_id"] == evidence.id
+    )
+    assert citation["withdrawn"] is True

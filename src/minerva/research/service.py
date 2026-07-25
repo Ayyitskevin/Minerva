@@ -426,6 +426,66 @@ class ResearchService:
             created_at,
         )
 
+    def retract_finding(
+        self,
+        *,
+        finding_id: str,
+        reason: str,
+        identity: IdentityContext,
+    ) -> str:
+        """Record that a finding is no longer asserted, without editing it.
+
+        Findings are append-only, so retraction is a separate record exactly as
+        evidence withdrawal is. The finding, its citations, and its audit history
+        all remain; synthesis stops carrying it.
+        """
+
+        reason = validate_text(reason, field="reason", maximum=1_000)
+        retraction_id = self._id_factory("ret")
+        created_at = self._clock()
+        with self.database.transaction() as connection:
+            finding = connection.execute(
+                "SELECT mission_id FROM findings WHERE id = ?",
+                (finding_id,),
+            ).fetchone()
+            if finding is None:
+                raise NotFoundError("finding_not_found")
+            if connection.execute(
+                "SELECT 1 FROM finding_retractions WHERE finding_id = ?",
+                (finding_id,),
+            ).fetchone():
+                raise ConflictError(
+                    "finding_already_retracted", "The finding is already retracted."
+                )
+            mission_id = str(finding["mission_id"])
+            self._audit.ensure_run(connection, identity)
+            connection.execute(
+                """
+                INSERT INTO finding_retractions(
+                    id, mission_id, finding_id, reason, creator_id, run_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    retraction_id,
+                    mission_id,
+                    finding_id,
+                    reason,
+                    identity.actor_id,
+                    identity.run_id,
+                    created_at,
+                ),
+            )
+            self._audit.record(
+                connection,
+                identity=identity,
+                event_type="research.finding.retracted",
+                entity_type="finding",
+                entity_id=finding_id,
+                mission_id=mission_id,
+                details={"retraction_id": retraction_id},
+            )
+        return retraction_id
+
     def get_mission(
         self,
         mission_id: str,

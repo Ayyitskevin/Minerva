@@ -141,7 +141,9 @@ unresolved question under the same citation rules as human-authored material.
    confidence.
 5. A material finding cannot be created without at least one same-mission evidence
    citation. Assumptions and unresolved questions may remain uncited only because
-   their labels explicitly say they are not evidence-backed.
+   their labels explicitly say they are not evidence-backed. A finding is never
+   edited or deleted; retraction is a separate append-only record that removes it
+   from synthesis while preserving the finding, its citations, and its history.
 6. Domain mutations and their audit records share one SQLite transaction. Rejected
    mutations and failures that return control to Minerva leave neither domain state
    nor misleading success events. Ephemeral Milestone 2B assistance is not a domain
@@ -151,7 +153,10 @@ unresolved question under the same citation rules as human-authored material.
 7. Export ordering and canonical serialization are explicit. The export digest is
    SHA-256 over the canonical brief payload before the digest envelope is added.
 8. An export cannot include a material finding with a missing, withdrawn, detectably
-   inconsistent, or unresolvable citation. Opposing and inconclusive evidence remain
+   inconsistent, or unresolvable citation. This governs material findings only:
+   an assumption or unresolved question may keep an optional citation to withdrawn
+   evidence, which the packet marks as withdrawn. A retracted finding is not
+   exported at all. Opposing and inconclusive evidence remain
    visible. Minerva has no external signature or anchor for detecting a determined
    same-OS-user coordinated rewrite.
 9. Assistance preview performs no credential read or network operation. It discloses
