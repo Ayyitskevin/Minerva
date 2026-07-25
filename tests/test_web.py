@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from minerva.core.db import Database
 from minerva.core.types import local_identity
 from minerva.evidence.service import EvidenceService
+from minerva.research.service import ResearchService
 from minerva.synthesis.service import SynthesisService
 from minerva.web.app import create_app
 
@@ -195,6 +196,34 @@ def test_withdrawn_finding_provenance_is_explicit_in_web(
     assert claim_response.status_code == 200
     assert "Withdrawn by:" in claim_response.text
     assert identity.actor_id in claim_response.text
+
+
+def test_retracted_finding_is_marked_retracted_in_web(
+    web_client: TestClient,
+) -> None:
+    """The human review surface must show that a finding is no longer asserted."""
+
+    created = _create_review_data(web_client)
+    identity = local_identity(purpose="web retraction regression")
+    database = web_client.app.state.database
+    research = ResearchService(database)
+    with database.read() as connection:
+        finding_id = research.list_findings(created["mission"]["id"], connection=connection)[0].id
+    before = web_client.get(f"/missions/{created['mission']['id']}")
+    research.retract_finding(
+        finding_id=finding_id,
+        reason="Synthetic review withdrew this assertion.",
+        identity=identity,
+    )
+
+    response = web_client.get(f"/missions/{created['mission']['id']}")
+
+    assert before.status_code == 200
+    assert "RETRACTED" not in before.text
+    assert response.status_code == 200
+    assert "RETRACTED" in response.text
+    assert "no longer asserted" in response.text
+    assert "Synthetic review withdrew this assertion." in response.text
 
 
 def test_web_surface_is_review_only(web_client: TestClient) -> None:

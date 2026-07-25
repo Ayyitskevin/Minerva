@@ -187,3 +187,34 @@
   the packet rather than flagged inside it, so the frozen fleet-facing contract,
   its canonical bytes, and its golden fixtures all stay put. Surfacing
   retraction history in a packet is a future v3 question, not this change.
+
+## Retraction visibility and verification (plan 2, issues 1-2)
+
+- Leaving a finding out of the brief is not the same as marking it retracted.
+  D-9 shipped the database record and the synthesis exclusion but left every
+  listing surface rendering a retracted finding exactly like an asserted one,
+  which manufactures certainty by omission on the surface a human actually
+  reads. `Finding` and `FindingRead` now carry `retracted`,
+  `retraction_reason`, `retracted_at`, and `retracted_by`, mirroring the
+  withdrawal fields already on `LedgerEntry`, and the web review page renders a
+  RETRACTED badge with the reason.
+- Findings are read through one left join on the mission-composite key rather
+  than a follow-up query per row. `finding_retractions.finding_id` is UNIQUE, so
+  the join cannot multiply rows or disturb cursor pagination.
+- The set of append-only triggers doctor enforces is derived from the packaged
+  migrations, not hand-listed. Migration 0004's two retraction triggers were
+  missing from the hand-maintained set, so dropping them and deleting a
+  retraction row left `doctor --deep` reporting a healthy database while the
+  finding silently returned to synthesis. `_REQUIRED_TRIGGERS` remains as the
+  declared floor - it catches a migration resource missing from the
+  distribution, which a derived-only set would read as "nothing required" - and
+  a test pins the two sets equal.
+- Deep doctor reconciles every `finding_retractions` row against its
+  `research.finding.retracted` audit event, exactly as it already did for
+  evidence withdrawals. A deleted retraction now fails `material_audit_integrity`
+  because its audit event is left dangling.
+- Editing only a retraction's `reason` text is still not detectable by audit
+  reconciliation, because the audit event carries the retraction id rather than
+  the reason - the same shape as `evidence.card.withdrawn`. The defence there is
+  the append-only trigger, which doctor now requires and fingerprints, so the
+  edit cannot happen without first dropping a trigger that doctor reports.

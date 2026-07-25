@@ -66,7 +66,10 @@
   <ul class="card-list">
     {% for finding in findings %}
     <li class="card">
-      <p class="eyebrow">{{ finding.statement_kind.value }} · {{ finding.status.value }}</p>
+      <p class="eyebrow">{{ finding.statement_kind.value }} · {{ finding.status.value }}{% if finding.retracted %} · <strong>RETRACTED</strong>{% endif %}</p>
+      {% if finding.retracted %}
+      <p class="uncertainty"><strong>Retracted:</strong> this finding is no longer asserted and is excluded from research briefs. The recorded status describes what was asserted before retraction. Reason: {{ finding.retraction_reason }}</p>
+      {% endif %}
       {% if finding.citation_status.value == "withdrawn" %}
       <p class="uncertainty"><strong>Provenance invalidated:</strong> one or more cited evidence cards were withdrawn. The recorded status is not current support.</p>
       {% endif %}

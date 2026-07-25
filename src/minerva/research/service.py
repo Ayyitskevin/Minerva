@@ -718,10 +718,11 @@ class ResearchService:
         _require_mission(connection, mission_id)
         rows = list(
             connection.execute(
-                """
-                SELECT id, mission_id, claim_id, statement, statement_kind, status,
-                       uncertainty, creator_id, run_id, created_at
-                FROM findings WHERE mission_id = ? ORDER BY created_at, id
+                f"""
+                SELECT {_FINDING_READ_COLUMNS}
+                {_FINDING_READ_SOURCE}
+                WHERE finding.mission_id = ?
+                ORDER BY finding.created_at, finding.id
                 """,
                 (mission_id,),
             )
@@ -749,11 +750,11 @@ class ResearchService:
         if after is None:
             rows = list(
                 connection.execute(
-                    """
-                    SELECT id, mission_id, claim_id, statement, statement_kind, status,
-                           uncertainty, creator_id, run_id, created_at
-                    FROM findings WHERE mission_id = ?
-                    ORDER BY created_at ASC, id ASC LIMIT ?
+                    f"""
+                    SELECT {_FINDING_READ_COLUMNS}
+                    {_FINDING_READ_SOURCE}
+                    WHERE finding.mission_id = ?
+                    ORDER BY finding.created_at ASC, finding.id ASC LIMIT ?
                     """,
                     (mission_id, limit + 1),
                 )
@@ -762,13 +763,13 @@ class ResearchService:
             created_at, item_id = after
             rows = list(
                 connection.execute(
-                    """
-                    SELECT id, mission_id, claim_id, statement, statement_kind, status,
-                           uncertainty, creator_id, run_id, created_at
-                    FROM findings
-                    WHERE mission_id = ?
-                      AND (created_at > ? OR (created_at = ? AND id > ?))
-                    ORDER BY created_at ASC, id ASC LIMIT ?
+                    f"""
+                    SELECT {_FINDING_READ_COLUMNS}
+                    {_FINDING_READ_SOURCE}
+                    WHERE finding.mission_id = ?
+                      AND (finding.created_at > ?
+                           OR (finding.created_at = ? AND finding.id > ?))
+                    ORDER BY finding.created_at ASC, finding.id ASC LIMIT ?
                     """,
                     (mission_id, created_at, created_at, item_id, limit + 1),
                 )
@@ -804,6 +805,35 @@ def _question_from_row(row: sqlite3.Row) -> Question:
     )
 
 
+# Findings are read through one left join so a retracted finding can never be
+# presented as an asserted one. The join is on the mission-composite key and
+# `finding_retractions.finding_id` is UNIQUE, so it cannot multiply rows; every
+# column is aliased because both tables carry `id`, `mission_id`, `created_at`,
+# `creator_id`, and `run_id`.
+_FINDING_READ_COLUMNS = """
+                    finding.id AS id,
+                    finding.mission_id AS mission_id,
+                    finding.claim_id AS claim_id,
+                    finding.statement AS statement,
+                    finding.statement_kind AS statement_kind,
+                    finding.status AS status,
+                    finding.uncertainty AS uncertainty,
+                    finding.creator_id AS creator_id,
+                    finding.run_id AS run_id,
+                    finding.created_at AS created_at,
+                    retraction.reason AS retraction_reason,
+                    retraction.created_at AS retracted_at,
+                    retraction.creator_id AS retracted_by
+""".strip()
+
+_FINDING_READ_SOURCE = """
+                    FROM findings AS finding
+                    LEFT JOIN finding_retractions AS retraction
+                      ON retraction.finding_id = finding.id
+                     AND retraction.mission_id = finding.mission_id
+""".strip()
+
+
 def _findings_from_rows(
     connection: sqlite3.Connection,
     *,
@@ -828,6 +858,7 @@ def _findings_from_rows(
             claim_id=(str(row["claim_id"]) if row["claim_id"] is not None else None),
             evidence_ids=citation_ids,
         )
+        retracted_at = row["retracted_at"]
         findings.append(
             Finding(
                 id=str(row["id"]),
@@ -842,6 +873,14 @@ def _findings_from_rows(
                 creator_id=str(row["creator_id"]),
                 run_id=str(row["run_id"]),
                 created_at=str(row["created_at"]),
+                retracted=retracted_at is not None,
+                retraction_reason=(
+                    str(row["retraction_reason"]) if row["retraction_reason"] is not None else None
+                ),
+                retracted_at=(str(retracted_at) if retracted_at is not None else None),
+                retracted_by=(
+                    str(row["retracted_by"]) if row["retracted_by"] is not None else None
+                ),
             )
         )
     return tuple(findings)

@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from minerva.core.db import Database
 from minerva.core.types import local_identity
 from minerva.evidence.service import EvidenceService
+from minerva.research.service import ResearchService
 from minerva.web.app import create_app
 
 
@@ -451,6 +452,30 @@ def test_withdrawn_finding_provenance_is_explicit_in_api(client: TestClient) -> 
     assert ledger_response.status_code == 200
     withdrawn = next(item for item in ledger_response.json()["entries"] if item["withdrawn"])
     assert withdrawn["withdrawn_by"] == identity.actor_id
+
+
+def test_retracted_finding_is_marked_retracted_in_api(client: TestClient) -> None:
+    """A retracted finding must not be served as an asserted one."""
+
+    created = _create_vertical_slice(client)
+    identity = local_identity(purpose="api retraction regression")
+    finding_id = client.get(f"/api/v1/missions/{created['mission']['id']}/findings").json()[
+        "items"
+    ][0]["id"]
+    ResearchService(client.app.state.database).retract_finding(
+        finding_id=finding_id,
+        reason="Synthetic review withdrew this assertion.",
+        identity=identity,
+    )
+
+    response = client.get(f"/api/v1/missions/{created['mission']['id']}/findings")
+
+    assert response.status_code == 200
+    finding = response.json()["items"][0]
+    assert finding["retracted"] is True
+    assert finding["retraction_reason"] == "Synthetic review withdrew this assertion."
+    assert finding["retracted_by"] == identity.actor_id
+    assert finding["retracted_at"]
 
 
 def test_claim_etag_and_if_match_enforce_optimistic_concurrency(client: TestClient) -> None:

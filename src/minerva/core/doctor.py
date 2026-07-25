@@ -76,10 +76,25 @@ _REQUIRED_TRIGGERS = frozenset(
         "findings_no_delete",
         "finding_citations_no_update",
         "finding_citations_no_delete",
+        "finding_retractions_no_update",
+        "finding_retractions_no_delete",
         "exports_no_update",
         "exports_no_delete",
     }
 )
+"""Declared floor for the append-only triggers a database must carry.
+
+This set is *not* what the check enforces — `_packaged_trigger_fingerprints`
+derives that from the packaged migrations, so a new migration's triggers become
+required the moment it ships. The declared set is the cross-check in the other
+direction: it catches a migration resource missing from the distribution, which
+a derived-only set would silently accept as "nothing required".
+
+Both halves exist because migration 0004 shipped two retraction triggers that
+this hand-maintained set omitted, and doctor consequently reported a database
+healthy after those triggers were dropped and the retraction row deleted.
+`test_required_triggers_match_packaged_migrations` pins the two sets equal.
+"""
 
 
 def run_doctor(database: Database, *, deep: bool = False) -> DoctorReport:
@@ -144,10 +159,14 @@ def run_doctor(database: Database, *, deep: bool = False) -> DoctorReport:
                 )
             }
             expected_triggers = _packaged_trigger_fingerprints()
-            missing = _REQUIRED_TRIGGERS - set(trigger_sql)
+            # Enforce every trigger the packaged migrations define, not a
+            # hand-listed subset: a migration that adds a table must not be able
+            # to leave its append-only triggers unchecked.
+            required = frozenset(expected_triggers)
+            missing = required - set(trigger_sql)
             altered = {
                 name
-                for name in _REQUIRED_TRIGGERS - missing
+                for name in required - missing
                 if _sql_fingerprint(trigger_sql[name]) != expected_triggers.get(name)
             }
             triggers_ok = not missing and not altered
@@ -412,6 +431,7 @@ def _verify_material_audit_links(connection: sqlite3.Connection) -> int:
         "evidence.card.created": 0,
         "evidence.card.withdrawn": 0,
         "research.finding.created": 0,
+        "research.finding.retracted": 0,
         "synthesis.brief.exported": 0,
     }
     reconciled = 0
@@ -648,6 +668,28 @@ def _verify_material_audit_links(connection: sqlite3.Connection) -> int:
             },
         )
         expected_counts["research.finding.created"] += 1
+        reconciled += 1
+
+    # Retraction reconciles exactly as withdrawal does. Without it a deleted
+    # retraction row leaves its audit event dangling and unnoticed, and the
+    # finding silently returns to synthesis as an asserted statement.
+    for row in connection.execute(
+        """
+        SELECT id, mission_id, finding_id, creator_id, run_id
+        FROM finding_retractions ORDER BY id
+        """
+    ):
+        details = _one_event_details(
+            connection,
+            event_type="research.finding.retracted",
+            entity_type="finding",
+            entity_id=str(row["finding_id"]),
+            mission_id=str(row["mission_id"]),
+            actor_id=str(row["creator_id"]),
+            run_id=str(row["run_id"]),
+        )
+        _require_event_details(details, {"retraction_id": str(row["id"])})
+        expected_counts["research.finding.retracted"] += 1
         reconciled += 1
 
     for row in connection.execute(

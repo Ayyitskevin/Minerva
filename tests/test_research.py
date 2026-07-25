@@ -538,6 +538,95 @@ def test_retraction_preserves_the_finding_and_its_history(lab: Lab) -> None:
     assert retracted_events == 1
 
 
+def test_retracted_findings_are_distinguishable_on_every_read_surface(lab: Lab) -> None:
+    """A retracted finding must never read as an asserted one.
+
+    Synthesis drops retracted findings, but the listing surfaces keep showing
+    them, so a reviewer needs the retraction carried in the read model itself.
+    Without it a retracted statement is indistinguishable from a live one, which
+    is exactly the false certainty the doctrine forbids.
+    """
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    kept = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="A statement that stays asserted.",
+        statement_kind=StatementKind.OBSERVED_FACT,
+        status=FindingStatus.SUPPORTED,
+        uncertainty="",
+        evidence_ids=(evidence.id,),
+        identity=lab.identity,
+    )
+    retracted = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="A statement that is withdrawn from assertion.",
+        statement_kind=StatementKind.OBSERVED_FACT,
+        status=FindingStatus.SUPPORTED,
+        uncertainty="",
+        evidence_ids=(evidence.id,),
+        identity=lab.identity,
+    )
+    lab.research.retract_finding(
+        finding_id=retracted.id,
+        reason="Superseded by a corrected analysis.",
+        identity=lab.identity,
+    )
+
+    listed = {item.id: item for item in lab.research.list_findings(seed.mission.id)}
+    page, cursor = lab.research.page_findings(seed.mission.id, limit=10)
+    paged = {item.id: item for item in page}
+
+    assert len(listed) == 2, "the left join must not drop or duplicate findings"
+    assert len(paged) == 2
+    assert cursor is None
+
+    for surface in (listed, paged):
+        assert surface[retracted.id].retracted is True
+        assert surface[retracted.id].retraction_reason == "Superseded by a corrected analysis."
+        assert surface[retracted.id].retracted_at == fixed_clock()
+        assert surface[retracted.id].retracted_by == lab.identity.actor_id
+        assert surface[kept.id].retracted is False
+        assert surface[kept.id].retraction_reason is None
+        assert surface[kept.id].retracted_at is None
+        assert surface[kept.id].retracted_by is None
+
+
+def test_finding_pagination_still_advances_across_the_retraction_join(lab: Lab) -> None:
+    """The retraction join must not disturb cursor paging."""
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    created = [
+        lab.research.add_finding(
+            mission_id=seed.mission.id,
+            claim_id=seed.claim.id,
+            statement=f"Statement number {index}.",
+            statement_kind=StatementKind.OBSERVED_FACT,
+            status=FindingStatus.SUPPORTED,
+            uncertainty="",
+            evidence_ids=(evidence.id,),
+            identity=lab.identity,
+        )
+        for index in range(3)
+    ]
+    lab.research.retract_finding(
+        finding_id=created[1].id, reason="Retracted mid-page.", identity=lab.identity
+    )
+
+    seen: list[str] = []
+    cursor: tuple[str, str] | None = None
+    while True:
+        page, cursor = lab.research.page_findings(seed.mission.id, limit=1, after=cursor)
+        seen.extend(item.id for item in page)
+        if cursor is None:
+            break
+
+    assert seen == [item.id for item in created]
+
+
 def test_a_finding_cannot_be_retracted_twice(lab: Lab) -> None:
     seed = lab.seed_claim()
     evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)

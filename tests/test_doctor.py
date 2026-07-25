@@ -105,6 +105,77 @@ def test_doctor_detects_missing_append_only_trigger(lab: Lab) -> None:
     assert not checks["append_only_triggers"].ok
 
 
+def test_required_triggers_match_packaged_migrations(lab: Lab) -> None:
+    """Every packaged append-only trigger must be one doctor requires.
+
+    Migration 0004 shipped two retraction triggers that the hand-maintained set
+    omitted, so a tampered database reported healthy. The enforced set is derived
+    from the packaged migrations; this pins the declared set equal to it so the
+    two can never drift apart again silently.
+    """
+
+    declared = set(doctor_module._REQUIRED_TRIGGERS)
+    packaged = set(doctor_module._packaged_trigger_fingerprints())
+
+    assert packaged == declared, (
+        "packaged migrations define triggers doctor does not require, or vice versa: "
+        f"only packaged={sorted(packaged - declared)} only declared={sorted(declared - packaged)}"
+    )
+    assert {"finding_retractions_no_update", "finding_retractions_no_delete"} <= declared
+
+
+def test_doctor_detects_dropped_retraction_triggers(lab: Lab) -> None:
+    """Retraction triggers are enforced exactly like every other table's."""
+
+    with lab.database.transaction() as connection:
+        connection.execute("DROP TRIGGER finding_retractions_no_update")
+        connection.execute("DROP TRIGGER finding_retractions_no_delete")
+
+    report = run_doctor(lab.database)
+    checks = _checks_by_name(report)
+
+    assert not report.ok
+    assert not checks["append_only_triggers"].ok
+
+
+def test_deep_doctor_detects_a_deleted_retraction_after_trigger_drop(lab: Lab) -> None:
+    """Deleting a retraction must not silently resurrect the finding.
+
+    The retraction row is what removes a finding from synthesis. Deleting it
+    leaves the `research.finding.retracted` audit event dangling and puts the
+    finding back into every brief as an asserted statement, so audit
+    reconciliation has to account for retractions the way it does withdrawals.
+    """
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    finding = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="A statement later retracted, then tampered with.",
+        statement_kind=StatementKind.OBSERVED_FACT,
+        status=FindingStatus.SUPPORTED,
+        uncertainty="",
+        evidence_ids=(evidence.id,),
+        identity=lab.identity,
+    )
+    lab.research.retract_finding(
+        finding_id=finding.id, reason="Honest correction.", identity=lab.identity
+    )
+    healthy = run_doctor(lab.database, deep=True)
+
+    with lab.database.transaction() as connection:
+        connection.execute("DROP TRIGGER finding_retractions_no_delete")
+        connection.execute("DELETE FROM finding_retractions WHERE finding_id = ?", (finding.id,))
+
+    report = run_doctor(lab.database, deep=True)
+    checks = _checks_by_name(report)
+
+    assert healthy.ok, "a recorded retraction must leave the database healthy"
+    assert not report.ok
+    assert not checks["material_audit_integrity"].ok
+
+
 def test_deep_doctor_detects_snapshot_tamper_after_trigger_drop(lab: Lab) -> None:
     seed = lab.seed_claim()
     changed = b"X" + seed.content[1:]
