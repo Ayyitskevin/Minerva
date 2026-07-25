@@ -113,6 +113,13 @@ observation as no longer standing while leaving it visible in the ledger, and
 no longer asserted. A retracted finding leaves the brief but keeps its row, citations,
 and audit history, so a withdrawal no longer blocks the mission's export.
 
+Retraction is visible wherever a finding is read, not only in the brief it leaves.
+`mission show`, `GET /api/v1/missions/{id}/findings`, and the web review page each
+carry `retracted` with the recorded reason, timestamp, and actor, so a retracted
+statement is never presented as a live one. `doctor` verifies the retraction records
+themselves: their append-only triggers are required, and every retraction row is
+reconciled against its `research.finding.retracted` audit event.
+
 ## Canonical research packet
 
 `research-brief.json` is the single canonical agent-facing artifact; Milestone 1.1

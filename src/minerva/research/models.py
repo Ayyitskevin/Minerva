@@ -98,6 +98,14 @@ class Finding:
     creator_id: str
     run_id: str
     created_at: str
+    # Retraction mirrors evidence withdrawal on LedgerEntry. A retracted finding
+    # leaves synthesis but stays here: `status` records what was asserted at the
+    # time, so a reader who cannot see `retracted` would read a withdrawn
+    # assertion as a live one.
+    retracted: bool = False
+    retraction_reason: str | None = None
+    retracted_at: str | None = None
+    retracted_by: str | None = None
 
 
 def claim_status_evidence_valid(

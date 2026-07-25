@@ -144,6 +144,9 @@ unresolved question under the same citation rules as human-authored material.
    their labels explicitly say they are not evidence-backed. A finding is never
    edited or deleted; retraction is a separate append-only record that removes it
    from synthesis while preserving the finding, its citations, and its history.
+   Every surface that reads a finding reports whether it is retracted, with the
+   recorded reason, timestamp, and actor: a retracted statement is never presented
+   as an asserted one merely because it left the brief.
 6. Domain mutations and their audit records share one SQLite transaction. Rejected
    mutations and failures that return control to Minerva leave neither domain state
    nor misleading success events. Ephemeral Milestone 2B assistance is not a domain

@@ -1,23 +1,58 @@
 ---
 repository: Ayyitskevin/Minerva
 phase: OPUS_EXECUTION
-plan: docs/FABLE_MINERVA_GAME_PLAN.md
+plan: docs/FABLE_MINERVA_GAME_PLAN_2.md
 plan_status_read: READY_FOR_OPUS
-base_commit: b70fbdd (merge of PR #9)
+base_commit: 8bb2abc (merge of PR #14)
 branch: opus/minerva-vision-implementation
 ---
 
 # Opus execution state
 
-Durable checkpoint for the Opus implementation phase. Fable's plan
-(`docs/FABLE_MINERVA_GAME_PLAN.md`) is preserved unchanged; this file
+Durable checkpoint for the Opus implementation phase. Fable's plans
+(`docs/FABLE_MINERVA_GAME_PLAN.md`, superseded by
+`docs/FABLE_MINERVA_GAME_PLAN_2.md`) are preserved unchanged; this file
 records what has actually been built, verified, and deviated from.
 
 ## Current phase
 
-Phase 0 (foundation stabilization) is **complete** and merged (PR #10, #11).
-Slice 6 answers decision gate **D-9**, the first gate Kevin has recorded.
-No other gate has been entered; none may be until Kevin records it.
+**Plan 1 Phase 0 is complete and merged** (PRs #10, #11, #12). Slice 6
+answered decision gate **D-9**, the first gate Kevin recorded.
+
+**Plan 2 Phase 0C is in progress.** Plan 2 (base commit `b26268c`,
+merged as PRs #13/#14) re-verified every load-bearing claim below against
+the code and re-ran all eleven gates before trusting any of it: all
+claims held, all gates passed. It also found eleven defects that survived
+adversarial verification, two of them high, and both highs were
+consequences of D-9 landing in the database but not on the reading
+surfaces. Slice 7 closes exactly those two.
+
+No decision gate beyond D-9 has been entered; none may be until Kevin
+records it.
+
+## Corrections to earlier entries in this file
+
+Plan 2's verification sweep found this file substantively accurate — all
+twelve load-bearing claims below verified against the code — with the
+following drift, corrected here rather than silently edited in place:
+
+- **Line references moved.** The `INDEXED BY` hints recorded as
+  `synthesis/service.py:622, 645, 1206` are at 630, 653, 1216 on `main`,
+  shifted by slice 6's retraction clauses. The mission-wide provenance
+  lookup cited as `:735-746` is near 733-753; the source-preflight
+  `ORDER BY` cited as `:570` is at 578.
+- **Counts are historical snapshots.** "581 passing, 142 security-marked"
+  and the gate table's "551 passed" were true when written. `main` after
+  slice 7 collects **635 tests, 177 security-marked, 90.18% branch
+  coverage**.
+- **Two statements were loose, not wrong.** The index test's "no residual
+  scan or temp-b-tree sort" applies the no-scan assertion only to the
+  audit plan and the no-temp-b-tree assertion only to the findings plan;
+  and because the findings query forces its index with `INDEXED BY`, free
+  planner selection is genuinely asserted only for
+  `idx_audit_event_entity`. `PRAGMA recursive_triggers = ON` is set on
+  every connection that executes application SQL, but not on the
+  ancillary backup/restore page-copy connections, which issue no DML.
 
 ## Completed slices
 
@@ -376,6 +411,66 @@ index, two triggers; no existing table, column, trigger, or row changes.
 standard documented procedure. Retraction is additive, so a version-3 database
 differs only by the new table and one `schema_migrations` row.
 
+### Slice 7 — retraction visibility and verification (plan 2, issues 1-2, COMPLETE)
+
+**User outcome.** A retracted finding is now visibly retracted everywhere a
+human or agent reads it, and `doctor` can no longer be fooled about the
+retraction records themselves.
+
+**Both defects were reproduced first, then re-run against the fix.**
+
+| Finding | Before | After |
+| --- | --- | --- |
+| F2-RES-1 (high) | `list_findings` returns a retracted finding as `status=supported, citation=active` with no retraction field; REST and web render it identically to an asserted one | `retracted=True` with reason, timestamp, and actor on service, pagination, REST, and a RETRACTED badge on the web page |
+| F2-CORE-1 (high) | drop both 0004 triggers, `UPDATE` then `DELETE` the retraction row → `doctor --deep` returns `ok=True` on 11/11 checks while the finding silently returns to synthesis | same sequence fails **two** independent checks: `append_only_triggers` and `material_audit_integrity` |
+
+The F2-CORE-1 control matters: dropping a *registered* trigger
+(`findings_no_update`) was always caught, so the gap was specific to the
+unregistered migration-0004 triggers rather than a broken checker.
+
+**Fix.** `Finding` and `FindingRead` gained `retracted`,
+`retraction_reason`, `retracted_at`, `retracted_by`, mirroring the
+withdrawal fields on `LedgerEntry`. Findings are read through one left
+join on the mission-composite key — `finding_retractions.finding_id` is
+UNIQUE, so it cannot multiply rows or disturb cursor pagination. Doctor
+now derives its required-trigger set from the packaged migrations, so a
+future migration's triggers become required the moment it ships, and
+reconciles every retraction row against its `research.finding.retracted`
+audit event exactly as it already did for withdrawals.
+
+**Files changed.** `src/minerva/research/models.py`,
+`src/minerva/research/service.py`, `src/minerva/api/models.py`,
+`src/minerva/core/doctor.py`,
+`src/minerva/web/templates/mission_detail.html`,
+`tests/test_research.py`, `tests/test_doctor.py`, `tests/test_api.py`,
+`tests/test_web.py`, `README.md`, `docs/PRD.md`, `docs/DECISIONS.md`.
+
+**Migration status.** None. No schema change; `finding_retractions` was
+already correct — only its verification and its visibility were missing.
+
+**Security impact.** Closes an integrity-verification bypass (doctor
+reporting a tampered database healthy) and a false-certainty surface (a
+retracted statement reading as asserted). No contract weakened; the frozen
+`minerva.research-brief.v2` packet is untouched, and synthesis behaviour is
+unchanged.
+
+**Tests.** Six of the seven new tests were verified to fail on the pre-fix
+source by stashing only `src/minerva` and re-running. The seventh
+(`test_finding_pagination_still_advances_across_the_retraction_join`)
+passes both before and after by design: it guards against the new join
+*breaking* pagination, so it is a guard rather than a defect witness, and
+this is stated rather than counted as a failing-first regression.
+
+**Known residual, disclosed.** Editing only a retraction's `reason` text
+is not detectable by audit reconciliation, because the audit event carries
+the retraction id rather than the reason — the same shape as
+`evidence.card.withdrawn`. The defence is the append-only trigger, which
+doctor now requires and fingerprints, so the edit cannot happen without
+first dropping a trigger doctor reports.
+
+**Rollback.** Pure code, tests, and docs; no migration. The read-model
+fields default to the non-retracted values, so reverting is safe.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -493,17 +588,34 @@ None. Slice 1 required no human decision.
 
 ## Next task
 
-**None without another decision.** D-9 is delivered. Every remaining plan item
-is behind a gate Kevin has not recorded.
+**Ungated work remains available.** Unlike after slice 6, Opus is not
+blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
+traceable to a reproduced finding, and slice 7 completed issues 1-2. The
+next slice is **issue 3** — the `INDEXED BY` documentation correction
+(F1-IDX-AUDIT / F2-IDX-SCAN), a docs-only change that retires a security
+claim four documents make and the code does not honour: THREAT_MODEL.md:27,
+ARCHITECTURE.md:251-256, ADR 0005's consequences, ROADMAP.md:91-92, and the
+migration 0003 comment all say `idx_audit_event_entity` is pinned with
+`INDEXED BY`; no such hint exists, and dropping the index degrades
+silently. Recommended resolution: correct the prose, because the
+`EXPLAIN QUERY PLAN` test is the real pin and already exists.
 
-Still awaiting Kevin:
+Then issues 4-7 (doctor read-only inspection, publication fsync, backup
+schema honesty, mission-wide preflight text accounting), issues 8-10 (scope
+pinning, honest web pagination, test-suite honesty gaps), issue 11 (the low
+sweep), issue 12 (interrupt audit, helper consolidation, release tag,
+coverage ratchet).
+
+Still awaiting Kevin, and not to be started without a recorded decision:
 
 - **D-1 — persist human-adopted agent inferences.** The remaining
-  high-leverage gate. Needs an ADR amending ADR 0003, which currently promises
-  candidates are never persisted; today an operator who accepts a model draft
-  retypes it and the link to the audited assist run is lost.
-- **D-10** REST evidence withdrawal and the capability manifest `.cli` taxonomy.
-  **D-11** restoring a pre-upgrade backup with an upgraded binary.
+  high-leverage gate. Plan 2 specifies it with a day-one retraction table so
+  the D-9 lesson is applied rather than relearned, and notes that slice 7's
+  read-model work was a prerequisite in spirit: persisting a second record
+  type on an invisible-retraction read model would have repeated exactly the
+  defect slice 7 just fixed.
+- **D-10** REST evidence withdrawal and the capability manifest `.cli`
+  taxonomy. **D-11** restoring a pre-upgrade backup with an upgraded binary.
 - **D-2..D-8** the fleet gates: Athena authentication and transport, Icarus
   artifacts, remote access, MCP timing, retrieval/OCR, signing, licensing.
 
@@ -512,14 +624,6 @@ A natural follow-on to D-9 that Kevin may want to consider: whether a future
 way the ledger keeps withdrawn evidence visible. ADR 0007 records this as the
 closest rejected alternative; it needs a consumer before it is worth the
 contract change.
-
-Ungated but unscheduled ledger items remain available: F-OPS-5 (doctor mutates
-the journal-mode header of the file it inspects), F-OPS-6 (no directory fsync
-after publication), F-AI-4 (KeyboardInterrupt leaves no terminal assist audit
-event), F-PAR-3 (web mission list truncates at 100), F-SYN-1 (claim-scoped
-briefs omit mission-level findings that cite the target claim), F-DUP-2
-(canonical-JSON helpers duplicated across contracts), and F-REL-1/2 (versioning
-and commit-attribution conventions).
 
 ## Rollback instructions (whole phase)
 

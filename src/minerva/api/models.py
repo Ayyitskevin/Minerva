@@ -152,6 +152,10 @@ class FindingRead(StrictModel):
     evidence_ids: list[str]
     citation_status: CitationStatus
     created_at: str
+    retracted: bool
+    retraction_reason: str | None
+    retracted_at: str | None
+    retracted_by: str | None
 
 
 class MissionCollection(StrictModel):
@@ -314,4 +318,8 @@ def finding_read(value: Finding) -> FindingRead:
         citation_status=value.citation_status,
         evidence_ids=list(value.evidence_ids),
         created_at=value.created_at,
+        retracted=value.retracted,
+        retraction_reason=value.retraction_reason,
+        retracted_at=value.retracted_at,
+        retracted_by=value.retracted_by,
     )
