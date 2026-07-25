@@ -338,3 +338,68 @@ def test_citation_time_digest_survives_coordinated_snapshot_and_audit_rewrite(
 
     assert card.snapshot_sha256 == seed.snapshot.sha256
     assert caught.value.code == "citation_tampered"
+
+
+def test_withdrawn_evidence_can_be_superseded_by_a_correction(lab: Lab) -> None:
+    """The documented correction workflow must keep working.
+
+    Withdrawing a bad card and adding a replacement that references it is how
+    Minerva records a correction. Nothing may tighten supersession into
+    rejecting a withdrawn target without deciding that deliberately.
+    """
+
+    seed = lab.seed_claim()
+    original = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    lab.evidence.withdraw_evidence(
+        evidence_id=original.id,
+        reason="The observation was measured incorrectly.",
+        identity=lab.identity,
+    )
+
+    replacement = lab.cite(
+        seed,
+        "Evidence opposes the claim.",
+        EvidenceStance.OPPOSES,
+        supersedes_evidence_id=original.id,
+    )
+
+    assert replacement.supersedes_evidence_id == original.id
+    ledger = lab.evidence.ledger_for_claim(claim_id=seed.claim.id)
+    by_id = {entry.evidence.id: entry for entry in ledger}
+    assert by_id[original.id].withdrawn is True
+    assert by_id[replacement.id].withdrawn is False
+    assert by_id[replacement.id].evidence.supersedes_evidence_id == original.id
+
+
+def test_supersession_chains_and_branches_are_recorded_faithfully(lab: Lab) -> None:
+    """Supersession is a DAG, not a strict chain: both shapes must round-trip."""
+
+    seed = lab.seed_claim()
+    first = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    second = lab.cite(
+        seed,
+        "Evidence opposes the claim.",
+        EvidenceStance.OPPOSES,
+        supersedes_evidence_id=first.id,
+    )
+    third = lab.cite(
+        seed,
+        "Café context remains uncertain.",
+        EvidenceStance.CONTEXT,
+        supersedes_evidence_id=second.id,
+    )
+    branch = lab.cite(
+        seed,
+        "Evidence supports the claim.",
+        EvidenceStance.INCONCLUSIVE,
+        supersedes_evidence_id=first.id,
+    )
+
+    ledger = lab.evidence.ledger_for_claim(claim_id=seed.claim.id)
+    links = {entry.evidence.id: entry.evidence.supersedes_evidence_id for entry in ledger}
+    assert links == {
+        first.id: None,
+        second.id: first.id,
+        third.id: second.id,
+        branch.id: first.id,
+    }

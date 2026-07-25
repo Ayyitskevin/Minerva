@@ -11,7 +11,14 @@ from urllib.parse import parse_qsl, urlsplit
 from minerva.core.audit import AuditRecorder, AuditSink
 from minerva.core.db import Database
 from minerva.core.errors import IntegrityError, NotFoundError
-from minerva.core.types import Clock, IdentityContext, IdFactory, new_id, utc_now
+from minerva.core.types import (
+    Clock,
+    IdentityContext,
+    IdFactory,
+    new_id,
+    utc_now,
+    validate_page_request,
+)
 from minerva.sources.files import (
     SourceFileError,
     read_local_utf8,
@@ -271,7 +278,7 @@ class SourceService:
         after: tuple[str, str] | None = None,
         connection: sqlite3.Connection | None = None,
     ) -> tuple[tuple[SourceSnapshot, ...], tuple[str, str] | None]:
-        _validate_page_request(limit, after)
+        validate_page_request(limit, after)
         if connection is None:
             with self.database.read() as owned_connection:
                 return self.page_snapshots(
@@ -330,30 +337,6 @@ def _require_mission(connection: sqlite3.Connection, mission_id: str) -> None:
         is None
     ):
         raise NotFoundError("mission_not_found")
-
-
-def _validate_page_request(limit: int, after: tuple[str, str] | None) -> None:
-    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
-        raise IntegrityError(
-            "pagination_invalid",
-            "Collection page size must be between 1 and 200.",
-        )
-    if after is None:
-        return
-    if not isinstance(after, tuple) or len(after) != 2:
-        raise IntegrityError("pagination_invalid", "The pagination cursor is invalid.")
-    imported_at, snapshot_id = after
-    if (
-        not isinstance(imported_at, str)
-        or not isinstance(snapshot_id, str)
-        or not imported_at
-        or not snapshot_id
-        or len(imported_at) > 64
-        or len(snapshot_id) > 100
-        or "\x00" in imported_at
-        or "\x00" in snapshot_id
-    ):
-        raise IntegrityError("pagination_invalid", "The pagination cursor is invalid.")
 
 
 def _snapshot_row(connection: sqlite3.Connection, snapshot_id: str) -> sqlite3.Row:

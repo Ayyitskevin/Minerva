@@ -93,3 +93,29 @@ def validate_text(
             f"{field}_invalid", f"{field.replace('_', ' ').title()} must be one line."
         )
     return normalized
+
+
+def validate_page_request(limit: int, after: tuple[str, str] | None) -> None:
+    """Validate a bounded collection page request shared by every service."""
+
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+        raise IntegrityError(
+            "pagination_invalid",
+            "Collection page size must be between 1 and 200.",
+        )
+    if after is None:
+        return
+    if not isinstance(after, tuple) or len(after) != 2:
+        raise IntegrityError("pagination_invalid", "The pagination cursor is invalid.")
+    created_at, item_id = after
+    if (
+        not isinstance(created_at, str)
+        or not isinstance(item_id, str)
+        or not created_at
+        or not item_id
+        or len(created_at) > 64
+        or len(item_id) > 100
+        or "\x00" in created_at
+        or "\x00" in item_id
+    ):
+        raise IntegrityError("pagination_invalid", "The pagination cursor is invalid.")

@@ -5,6 +5,7 @@
 - [ADR 0003: Require explicit BYOK consent for bounded model assistance](adr/0003-explicit-byok-model-assistance.md)
 - [ADR 0004: Audit restored databases before exclusive publication](adr/0004-staged-restore-audit-publication.md)
 - [ADR 0005: Add targeted indexes for claim-scoped request fulfillment](adr/0005-targeted-fulfillment-indexing.md)
+- [ADR 0006: Report operator remnants without removing them](adr/0006-operator-remnant-notices.md)
 
 ## Milestone 1 implementation decisions
 
@@ -158,3 +159,13 @@
   `ProcessPoolExecutor`, `webbrowser`, `ctypes`, and the asyncio DNS and socket
   helpers. Tests deny non-loopback sockets suite-wide instead of relying on
   convention.
+
+- `doctor` reports remnants and never removes them. Notices are a separate
+  channel from checks, so they never affect `DoctorReport.ok`, `/readyz`, or the
+  `doctor` exit status: crash residue is housekeeping, not unreadiness. Notice
+  text carries a count and no filename, because a staging remnant's name embeds
+  the database filename.
+- Partial export and fulfillment output directories remain undiscoverable by
+  design. `brief_exports` stores digests rather than paths and `request fulfill`
+  records nothing, so Minerva says it cannot locate that residue instead of
+  offering a check that silently finds none.

@@ -7,8 +7,16 @@ import sqlite3
 from minerva.core.audit import AuditRecorder, AuditSink
 from minerva.core.db import Database
 from minerva.core.errors import ConflictError, IntegrityError, NotFoundError
-from minerva.core.types import Clock, IdentityContext, IdFactory, new_id, utc_now, validate_text
-from minerva.evidence.integrity import verify_evidence_reference
+from minerva.core.types import (
+    Clock,
+    IdentityContext,
+    IdFactory,
+    new_id,
+    utc_now,
+    validate_page_request,
+    validate_text,
+)
+from minerva.evidence.integrity import new_snapshot_cache, verify_evidence_reference
 from minerva.research.models import (
     CitationStatus,
     Claim,
@@ -18,6 +26,7 @@ from minerva.research.models import (
     Mission,
     Question,
     StatementKind,
+    claim_status_evidence_valid,
 )
 
 # The shared bound for a finding's citations. The REST contract mirrors it as a
@@ -338,12 +347,14 @@ class ResearchService:
                 ).fetchone()
                 if claim is None:
                     raise NotFoundError("claim_not_found")
+            snapshot_cache = new_snapshot_cache()
             for evidence_id in unique_evidence:
                 citation = verify_evidence_reference(
                     connection,
                     evidence_id=evidence_id,
                     mission_id=mission_id,
                     allow_withdrawn=False,
+                    snapshot_cache=snapshot_cache,
                 )
                 if claim_id is not None and citation.claim_id != claim_id:
                     raise IntegrityError(
@@ -465,7 +476,7 @@ class ResearchService:
         after: tuple[str, str] | None = None,
         connection: sqlite3.Connection | None = None,
     ) -> tuple[tuple[Mission, ...], tuple[str, str] | None]:
-        _validate_page_request(limit, after)
+        validate_page_request(limit, after)
         if connection is None:
             with self.database.read() as owned_connection:
                 return self.page_missions(
@@ -539,7 +550,7 @@ class ResearchService:
         after: tuple[str, str] | None = None,
         connection: sqlite3.Connection | None = None,
     ) -> tuple[tuple[Question, ...], tuple[str, str] | None]:
-        _validate_page_request(limit, after)
+        validate_page_request(limit, after)
         if connection is None:
             with self.database.read() as owned_connection:
                 return self.page_questions(
@@ -602,7 +613,7 @@ class ResearchService:
         after: tuple[str, str] | None = None,
         connection: sqlite3.Connection | None = None,
     ) -> tuple[tuple[Claim, ...], tuple[str, str] | None]:
-        _validate_page_request(limit, after)
+        validate_page_request(limit, after)
         if connection is None:
             with self.database.read() as owned_connection:
                 return self.page_claims(
@@ -665,7 +676,7 @@ class ResearchService:
         after: tuple[str, str] | None = None,
         connection: sqlite3.Connection | None = None,
     ) -> tuple[tuple[Finding, ...], tuple[str, str] | None]:
-        _validate_page_request(limit, after)
+        validate_page_request(limit, after)
         if connection is None:
             with self.database.read() as owned_connection:
                 return self.page_findings(
@@ -707,30 +718,6 @@ class ResearchService:
             _findings_from_rows(connection, mission_id=mission_id, rows=page_rows),
             next_position,
         )
-
-
-def _validate_page_request(limit: int, after: tuple[str, str] | None) -> None:
-    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
-        raise IntegrityError(
-            "pagination_invalid",
-            "Collection page size must be between 1 and 200.",
-        )
-    if after is None:
-        return
-    if not isinstance(after, tuple) or len(after) != 2:
-        raise IntegrityError("pagination_invalid", "The pagination cursor is invalid.")
-    created_at, item_id = after
-    if (
-        not isinstance(created_at, str)
-        or not isinstance(item_id, str)
-        or not created_at
-        or not item_id
-        or len(created_at) > 64
-        or len(item_id) > 100
-        or "\x00" in created_at
-        or "\x00" in item_id
-    ):
-        raise IntegrityError("pagination_invalid", "The pagination cursor is invalid.")
 
 
 def _slice_page(
@@ -866,21 +853,6 @@ def _active_evidence_stances(
     return {str(row["stance"]) for row in rows}
 
 
-def _claim_status_evidence_valid(
-    status: ClaimStatus,
-    *,
-    has_active_support: bool,
-    has_active_opposition: bool,
-) -> bool:
-    if status is ClaimStatus.PROVISIONALLY_SUPPORTED:
-        return has_active_support
-    if status is ClaimStatus.CONTESTED:
-        return has_active_support and has_active_opposition
-    if status is ClaimStatus.UNSUPPORTED:
-        return has_active_opposition
-    return True
-
-
 def _require_status_evidence(
     connection: sqlite3.Connection,
     *,
@@ -888,7 +860,7 @@ def _require_status_evidence(
     status: ClaimStatus,
 ) -> None:
     stances = _active_evidence_stances(connection, claim_id=claim_id)
-    if not _claim_status_evidence_valid(
+    if not claim_status_evidence_valid(
         status,
         has_active_support="supports" in stances,
         has_active_opposition="opposes" in stances,
@@ -909,12 +881,14 @@ def _finding_citation_status(
     if not evidence_ids:
         return CitationStatus.NOT_APPLICABLE
     withdrawn = False
+    snapshot_cache = new_snapshot_cache()
     for evidence_id in evidence_ids:
         citation = verify_evidence_reference(
             connection,
             evidence_id=evidence_id,
             mission_id=mission_id,
             allow_withdrawn=True,
+            snapshot_cache=snapshot_cache,
         )
         if claim_id is not None and citation.claim_id != claim_id:
             raise IntegrityError(
@@ -935,7 +909,7 @@ def _claim_from_row(row: sqlite3.Row) -> Claim:
         status_creator_id=str(row["status_creator_id"]),
         status_run_id=str(row["status_run_id"]),
         status_changed_at=str(row["status_changed_at"]),
-        status_evidence_valid=_claim_status_evidence_valid(
+        status_evidence_valid=claim_status_evidence_valid(
             ClaimStatus(str(row["status"])),
             has_active_support=bool(row["has_active_support"]),
             has_active_opposition=bool(row["has_active_opposition"]),

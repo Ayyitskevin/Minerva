@@ -1,4 +1,4 @@
-# Current threat model: Milestones 1, 1.3, and 2B
+# Current threat model: Milestones 1 through 1.4 and 2B
 
 ## Boundary and assets
 

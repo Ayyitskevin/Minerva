@@ -98,3 +98,26 @@ class Finding:
     creator_id: str
     run_id: str
     created_at: str
+
+
+def claim_status_evidence_valid(
+    status: ClaimStatus,
+    *,
+    has_active_support: bool,
+    has_active_opposition: bool,
+) -> bool:
+    """Whether a recorded status still matches the claim's active evidence.
+
+    This is presence-based, never count-based: a status is valid when the
+    stances it asserts are still present, not when enough of them are. The
+    packet verifier re-derives the same rule independently, so a change here
+    must be mirrored there or exports will refuse.
+    """
+
+    if status is ClaimStatus.PROVISIONALLY_SUPPORTED:
+        return has_active_support
+    if status is ClaimStatus.CONTESTED:
+        return has_active_support and has_active_opposition
+    if status is ClaimStatus.UNSUPPORTED:
+        return has_active_opposition
+    return True

@@ -88,6 +88,13 @@ prevents cumulative quote, metadata, provenance, and finding text from being ret
 to Python when the packet cannot fit. SQLite still inspects the stored values, so this
 is not an SQLite-memory limit.
 
+`minerva doctor` reports two operator remnants without ever removing them: private
+staging copies left beside the database by an interrupted restore or initialization,
+and assistance invocations recorded as requested with no terminal outcome. Both are
+counts with no filenames, and neither affects readiness or exit status. Partial export
+and fulfillment output directories cannot be reported because Minerva deliberately
+stores no export paths; that residue remains an operator responsibility.
+
 Fulfillment creates no Minerva identity/run, audit event, export row, or research
 mutation and has no network/provider dependency. Fixed `research-brief.json` and
 `research-result.json` files use exclusive owner-only no-follow writes; caught second-
