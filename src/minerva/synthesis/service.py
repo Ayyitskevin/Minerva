@@ -91,6 +91,10 @@ _SCOPED_PACKET_AUDIT_CTE = """
                       SELECT 1 FROM findings AS finding
                       WHERE finding.id = audit.entity_id
                         AND finding.claim_id = ?
+                        AND NOT EXISTS (
+                            SELECT 1 FROM finding_retractions AS retraction
+                            WHERE retraction.finding_id = finding.id
+                        )
                   )
               )
           )
@@ -711,8 +715,15 @@ def _packet_audit_references(
                 """
                 SELECT sequence, id, event_type, entity_type, entity_id, mission_id,
                        actor_id, run_id, occurred_at
-                FROM audit_events
+                FROM audit_events AS audit
                 WHERE mission_id = ? AND event_type IN (?, ?, ?, ?, ?, ?, ?, ?)
+                  AND NOT (
+                      audit.entity_type = 'finding'
+                      AND EXISTS (
+                          SELECT 1 FROM finding_retractions AS retraction
+                          WHERE retraction.finding_id = audit.entity_id
+                      )
+                  )
                 ORDER BY sequence
                 """,
                 (mission_id, *_PACKET_AUDIT_EVENT_TYPES),
@@ -1187,7 +1198,13 @@ def _assemble_brief(
             """
             SELECT id, claim_id, statement, statement_kind, status, uncertainty,
                    creator_id, run_id, created_at
-            FROM findings WHERE mission_id = ? ORDER BY created_at, id
+            FROM findings AS finding
+            WHERE mission_id = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM finding_retractions AS retraction
+                  WHERE retraction.finding_id = finding.id
+              )
+            ORDER BY created_at, id
             """,
             (mission_id,),
         )
@@ -1196,8 +1213,12 @@ def _assemble_brief(
             """
             SELECT id, claim_id, statement, statement_kind, status, uncertainty,
                    creator_id, run_id, created_at
-            FROM findings INDEXED BY idx_findings_claim
+            FROM findings AS finding INDEXED BY idx_findings_claim
             WHERE mission_id = ? AND claim_id = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM finding_retractions AS retraction
+                  WHERE retraction.finding_id = finding.id
+              )
             ORDER BY created_at, id
             """,
             (mission_id, claim_id),
@@ -1225,7 +1246,7 @@ def _assemble_brief(
             verified = verified_by_id.get(evidence_id)
             if verified is None:
                 raise IntegrityError("citation_tampered", "Stored citation integrity failed.")
-            if verified.withdrawn:
+            if verified.withdrawn and kind.requires_citation:
                 raise IntegrityError(
                     "citation_withdrawn", "Withdrawn evidence cannot support a finding."
                 )

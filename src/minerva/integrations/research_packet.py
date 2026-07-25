@@ -593,7 +593,7 @@ def _validate_findings(
             citation = citations.get(citation_id)
             if citation is None:
                 raise ValueError(f"finding references an unknown citation: {citation_id}")
-            if citation.withdrawn:
+            if citation.withdrawn and isinstance(finding, MaterialFindingRecord):
                 raise ValueError("withdrawn evidence cannot support a finding")
             if finding.claim_id is not None and citation.claim_id != finding.claim_id:
                 raise ValueError("a finding citation evaluates a different claim")

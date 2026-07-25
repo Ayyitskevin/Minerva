@@ -95,6 +95,19 @@
 - Canonical output is unchanged: every order-sensitive read orders by a unique key,
   and regression tests assert byte-identical fulfillment across added history.
 
+## Milestone 1.5: finding retraction (decision gate D-9)
+
+- Append-only `finding_retractions` (migration 0004) lets an operator record
+  that a finding is no longer asserted, so withdrawing cited evidence no longer
+  disables brief export and claim-scoped fulfillment for the mission forever.
+- `minerva finding retract` mirrors `evidence withdraw` as a CLI-only correction
+  verb; the finding, its citations, and its audit history are all retained.
+- The withdrawn-citation refusal is scoped to material findings, matching PRD
+  invariant 8, so an assumption or unresolved question may keep an optional
+  citation to withdrawn evidence with the citation marked withdrawn.
+- `minerva.research-brief.v2` is unchanged: a retracted finding is absent from
+  the packet rather than flagged inside it.
+
 ## Later milestones, not implemented now
 - Authenticated Athena mission/identity coordination adapter that may produce the
   existing request artifact only after a separately reviewed identity/authorization

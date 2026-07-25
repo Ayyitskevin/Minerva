@@ -15,11 +15,9 @@ records what has actually been built, verified, and deviated from.
 
 ## Current phase
 
-Phase 0 (foundation stabilization) of the plan's roadmap is **complete**.
-Slices 1-5 are done and verified; slices 1-3 are merged to `main` via PR #10
-and slices 4-5 are open as PR #11. No gated phase (D-1..D-11) has been
-entered, and none may be until Kevin records the decision. **All ungated work
-in the plan is now finished.**
+Phase 0 (foundation stabilization) is **complete** and merged (PR #10, #11).
+Slice 6 answers decision gate **D-9**, the first gate Kevin has recorded.
+No other gate has been entered; none may be until Kevin records it.
 
 ## Completed slices
 
@@ -326,6 +324,58 @@ unlink.
 **Rollback.** Pure code, tests, and docs. `DoctorReport.notices` defaults to an
 empty tuple, so reverting is safe.
 
+### Slice 6 — finding retraction (decision gate D-9 answered, COMPLETE)
+
+**Kevin decided D-9 by taking the recommendation: option (a), a labeled
+append-only retraction record.**
+
+**Reproduced first.** Following the documented correction workflow — record a
+finding, later withdraw the evidence it cites — refused `build_brief` with
+`citation_withdrawn` and left `doctor --deep` reporting a standing
+`finding_integrity` failure, with no recovery: findings, finding citations, and
+withdrawals are all append-only and nothing could express "no longer asserted".
+
+**Fix.** Migration 0004 adds `finding_retractions`, mirroring
+`evidence_withdrawals` exactly. `ResearchService.retract_finding` writes it plus
+a `research.finding.retracted` audit event in one transaction;
+`minerva finding retract` exposes it, CLI-only like `evidence withdraw`. A
+retracted finding leaves the mission-wide and claim-scoped assembly queries, its
+uncertainty entry, the packet's audit references, and the deep-doctor finding
+check — and is never deleted.
+
+**Second defect fixed with it (F-WDR-2).** The withdrawn-citation refusal ran
+before the statement-kind branch, so an assumption or unresolved question with an
+*optional* citation also blocked export. PRD invariant 8 governs material
+findings only, so the check is now gated on `kind.requires_citation` in the
+service, the packet verifier, and doctor. The citation stays in the packet marked
+`withdrawn: true`, so the state is visible rather than the document refused.
+
+**Verified end to end:** export refused after withdrawal; after retraction the
+brief exports again with the retracted finding and its uncertainty absent, the
+assumption retained, doctor healthy, and the database still holding both findings
+plus the retraction record.
+
+**`minerva.research-brief.v2` is unchanged.** A retracted finding is absent from
+the packet rather than flagged inside it, so no schema version, canonical byte
+layout, or golden fixture moves. Carrying retraction history in the packet is
+recorded in ADR 0007 as the closest rejected alternative and a future v3
+question — it would change the contract ADR 0002 froze, and no consumer needs it
+yet.
+
+**Files changed.** `src/minerva/core/migrations/0004_finding_retractions.sql`
+(new), `src/minerva/research/service.py`, `src/minerva/synthesis/service.py`,
+`src/minerva/core/doctor.py`, `src/minerva/integrations/research_packet.py`,
+`src/minerva/cli/main.py`, `scripts/verify_dist.py`,
+`docs/adr/0007-finding-retraction.md` (new), `tests/test_research.py`, and the
+PRD, ROADMAP, DECISIONS, and README.
+
+**Migration status.** Schema 3 → 4. Forward-only and additive: one table, one
+index, two triggers; no existing table, column, trigger, or row changes.
+
+**Rollback.** Restore a verified pre-upgrade backup with the prior binary, the
+standard documented procedure. Retraction is additive, so a version-3 database
+differs only by the new table and one `schema_migrations` row.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -443,33 +493,33 @@ None. Slice 1 required no human decision.
 
 ## Next task
 
-**None that Opus may take unilaterally.** Every remaining item in Fable's plan
-is behind a decision gate, so the execution phase pauses here and reports.
+**None without another decision.** D-9 is delivered. Every remaining plan item
+is behind a gate Kevin has not recorded.
 
-Awaiting Kevin (highest leverage first):
+Still awaiting Kevin:
 
-- **D-1 — persist human-adopted agent inferences.** Needs ADR 0007, because
-  ADR 0003 currently promises candidates are never persisted. Today an operator
-  who accepts a model draft retypes it and the link to the audited assist run
-  is lost.
-- **D-9 — finding retraction versus the permanent export block.** Withdrawing
-  evidence cited by any finding permanently disables brief export and
-  claim-scoped fulfillment for that mission, because findings are append-only
-  and withdrawal is irreversible. Following the documented correction workflow
-  currently bricks the milestone's core deliverable.
-- **D-10** REST evidence withdrawal and the capability manifest's `.cli`
-  taxonomy. **D-11** restoring a pre-upgrade backup with an upgraded binary.
+- **D-1 — persist human-adopted agent inferences.** The remaining
+  high-leverage gate. Needs an ADR amending ADR 0003, which currently promises
+  candidates are never persisted; today an operator who accepts a model draft
+  retypes it and the link to the audited assist run is lost.
+- **D-10** REST evidence withdrawal and the capability manifest `.cli` taxonomy.
+  **D-11** restoring a pre-upgrade backup with an upgraded binary.
 - **D-2..D-8** the fleet gates: Athena authentication and transport, Icarus
-  artifacts, remote access, MCP timing, retrieval/OCR, signing, and licensing.
+  artifacts, remote access, MCP timing, retrieval/OCR, signing, licensing.
 
-Ungated but unscheduled ledger items, available if Kevin wants more hardening
-before any gate is decided: F-OPS-5 (doctor mutates the journal-mode header of
-the file it inspects), F-OPS-6 (no directory fsync after publication), F-AI-4
-(KeyboardInterrupt leaves no terminal assist audit event), F-PAR-3 (web mission
-list truncates at 100 with no indicator), F-SYN-1 (claim-scoped briefs omit
-mission-level findings that cite the target claim), F-DUP-2 (canonical-JSON
-helpers duplicated across the packet and request contracts), and F-REL-1/2
-(versioning and commit-attribution conventions).
+A natural follow-on to D-9 that Kevin may want to consider: whether a future
+`minerva.research-brief.v3` should carry retracted findings under a flag, the
+way the ledger keeps withdrawn evidence visible. ADR 0007 records this as the
+closest rejected alternative; it needs a consumer before it is worth the
+contract change.
+
+Ungated but unscheduled ledger items remain available: F-OPS-5 (doctor mutates
+the journal-mode header of the file it inspects), F-OPS-6 (no directory fsync
+after publication), F-AI-4 (KeyboardInterrupt leaves no terminal assist audit
+event), F-PAR-3 (web mission list truncates at 100), F-SYN-1 (claim-scoped
+briefs omit mission-level findings that cite the target claim), F-DUP-2
+(canonical-JSON helpers duplicated across contracts), and F-REL-1/2 (versioning
+and commit-attribution conventions).
 
 ## Rollback instructions (whole phase)
 
