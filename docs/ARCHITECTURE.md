@@ -252,9 +252,15 @@ Migration 0003 supplies the indexes that access path needs: `idx_audit_event_ent
 `audit_events(event_type, entity_id)` serves both the snapshot import-event
 lookup and the run-started branch of the scoped audit CTE, and `idx_findings_claim` on
 `findings(mission_id, claim_id, created_at, id)` serves the claim-scoped finding and
-reference queries. Those queries pin the new index with `INDEXED BY`, so a budgeted read
-cannot silently regress to a scan and a missing index fails loudly. The cumulative guard
-is retained unchanged as defense in depth. See [ADR 0005](adr/0005-targeted-fulfillment-indexing.md).
+reference queries. The claim-scoped finding and reference queries name
+`idx_findings_claim` with `INDEXED BY`, so its absence fails loudly at statement
+preparation; `idx_audit_event_entity` is planner-selected and names no hint, so its
+absence degrades silently to a scan. Neither hint guarantees a *seek*: `INDEXED BY`
+only requires that the named index exist, and a query that lost its equality predicate
+would scan the named index without error. The plans themselves are pinned by
+`test_targeted_fulfillment_indexes_are_present_and_selected`, which asserts on
+`EXPLAIN QUERY PLAN` output. The cumulative guard is retained unchanged as defense in
+depth. See [ADR 0005](adr/0005-targeted-fulfillment-indexing.md).
 
 Synthesis work is bounded before rendering, and each rendered output is checked against
 its byte limit before exposure or export. File export uses fixed filenames beneath an

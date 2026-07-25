@@ -218,3 +218,29 @@
   the reason - the same shape as `evidence.card.withdrawn`. The defence there is
   the append-only trigger, which doctor now requires and fingerprints, so the
   edit cannot happen without first dropping a trigger that doctor reports.
+
+## Index-pinning claims corrected (plan 2, issue 3)
+
+- Four documents claimed `idx_audit_event_entity` was pinned with `INDEXED BY`
+  and that a missing index would fail loudly. Measured directly on a fresh
+  connection per statement, so no cached plan could mislead: the audit query
+  names no hint, and dropping the index turns it into `SCAN audit_events`
+  with no error at all. Only `idx_findings_claim` is hinted, and dropping it
+  does raise `no such index` at preparation. The prose in ARCHITECTURE.md,
+  ROADMAP.md, THREAT_MODEL.md, and ADR 0005's consequences now says which
+  index gets which guarantee.
+- `INDEXED BY` never forces a seek. With the index present but the equality
+  predicate removed, the plan becomes
+  `SCAN findings USING COVERING INDEX idx_findings_claim` plus a temp b-tree
+  sort, silently. ADR 0005 already stated this correctly in its decision
+  section; the summary documents contradicted it, and now do not.
+- `test_targeted_fulfillment_indexes_are_present_and_selected` is therefore the
+  only real control on index selection, and is named as such wherever the
+  guarantee is described.
+- **Migration 0003's header comment is left stale on purpose.** It repeats the
+  overstatement, but `schema_migrations.checksum` is `sha256` over the whole
+  migration file, comments included: editing it changes the digest (measured:
+  `4622fe79...` to `09d38ed6...`) and every database already at schema 3 or
+  higher would refuse to open with `migration_checksum_mismatch`. Correcting a
+  comment is not worth breaking every existing installation. ADR 0005 carries
+  the correction of record and says so explicitly.

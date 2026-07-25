@@ -116,12 +116,26 @@ adds no table, column, trigger, constraint, or default, and rewrites no data.
 - Schema version moves from 2 to 3. Existing databases require `minerva init` to
   upgrade, and an older binary refuses a version-3 database — the existing
   fail-closed behaviour, not a new one.
-- Both index names are now load-bearing. They are named by `INDEXED BY` hints in
-  `src/minerva/synthesis/service.py`, so they cannot be renamed or dropped
-  without changing those queries in the same commit. A database stopped at
-  schema 2 is refused with the typed `database_migration_required` before those
-  queries run, which is pinned by
+- `idx_findings_claim` is load-bearing in the strong sense: it is named by
+  `INDEXED BY` hints in `src/minerva/synthesis/service.py`, so dropping or
+  renaming it makes those statements fail to prepare
+  (`OperationalError: no such index`) rather than degrade. `idx_audit_event_entity`
+  is **not** — no `INDEXED BY` clause anywhere names it, so it is planner-selected
+  and dropping it silently turns the audit lookups into `SCAN audit_events` with
+  no error. Both behaviours were measured directly. Only
+  `test_targeted_fulfillment_indexes_are_present_and_selected` protects the audit
+  index, which is why that test is the real control for both.
+  A database stopped at schema 2 is refused with the typed
+  `database_migration_required` before those queries run, which is pinned by
   `test_pre_index_schema_fails_closed_before_pinned_queries_run`.
+- The header comment inside `0003_fulfillment_indexes.sql` overstates this, saying
+  that renaming or dropping *either* index makes the queries fail to prepare. That
+  is true only of `idx_findings_claim`. The comment cannot be corrected: the
+  migration file's bytes are hashed into `schema_migrations.checksum`, so editing
+  it — comments included — makes every database already at schema 3 or higher
+  refuse to open with `migration_checksum_mismatch`. This ADR is the correction of
+  record; the stale comment is left in place because the cost of fixing it is
+  breaking every existing installation.
 - The migration file's bytes are hashed into `schema_migrations.checksum`, so it
   must not be edited — including its comments — once it has shipped.
 - Index maintenance adds a small write cost to `audit_events` and `findings`

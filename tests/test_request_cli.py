@@ -1215,6 +1215,52 @@ def test_targeted_fulfillment_indexes_are_present_and_selected(lab: Lab) -> None
         assert "USE TEMP B-TREE FOR ORDER BY" not in findings_plan
 
 
+def test_index_protection_is_only_what_the_documents_now_claim(lab: Lab) -> None:
+    """Pin which index gets which guarantee, because the docs once overstated both.
+
+    Four documents claimed `idx_audit_event_entity` was pinned with `INDEXED BY`
+    and that a missing index fails loudly. Only `idx_findings_claim` is hinted.
+    Dropping the audit index degrades silently to a scan, which is precisely why
+    the plan assertions above are the real control rather than the hint. If a
+    future change adds a hint for the audit index, this test fails and the
+    documents must be updated with it.
+    """
+
+    audit_query = "SELECT entity_type FROM audit_events WHERE event_type = ? AND entity_id = ?"
+    findings_query = (
+        "SELECT id FROM findings INDEXED BY idx_findings_claim "
+        "WHERE mission_id = ? AND claim_id = ? ORDER BY created_at, id"
+    )
+
+    with lab.database.transaction() as connection:
+        connection.execute("DROP INDEX idx_audit_event_entity")
+
+    with lab.database.read() as connection:
+        degraded = " ".join(
+            str(row["detail"])
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN " + audit_query,
+                ("source.snapshot.imported", "snp_" + "0" * 32),
+            )
+        )
+    assert "SCAN audit_events" in degraded, (
+        "the audit index is planner-selected: dropping it must degrade, not raise"
+    )
+
+    with lab.database.transaction() as connection:
+        connection.execute(
+            "CREATE INDEX idx_audit_event_entity ON audit_events(event_type, entity_id)"
+        )
+        connection.execute("DROP INDEX idx_findings_claim")
+
+    with lab.database.read() as connection, pytest.raises(sqlite3.OperationalError) as caught:
+        connection.execute(
+            "EXPLAIN QUERY PLAN " + findings_query,
+            ("mis_" + "0" * 32, "clm_" + "0" * 32),
+        )
+    assert "no such index" in str(caught.value)
+
+
 def test_fulfilled_brief_bytes_are_unchanged_by_unrelated_history(
     lab: Lab,
     tmp_path: Path,
