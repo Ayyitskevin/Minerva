@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from minerva.core.errors import IntegrityError
 from minerva.integrations.research_packet import (
+    EXPORT_DIGEST_MISMATCH_MESSAGE,
     MAX_RESEARCH_PACKET_BYTES,
     EvidenceStance,
     ResearchPacketDocument,
@@ -166,8 +167,13 @@ def _raise_validation_failure(error: ValidationError) -> Never:
             "packet_schema_unsupported",
             "The research packet schema version is unsupported.",
         )
+    # Anchored to the root envelope validator and matched exactly: packet
+    # identifiers are free-form text that a hostile packet can set to this
+    # sentence, and a substring test would let it choose its own error code.
     if any(
-        "packet export digest does not match the canonical brief" in detail["msg"]
+        detail["type"] == "value_error"
+        and tuple(detail["loc"]) == ()
+        and detail["msg"] == f"Value error, {EXPORT_DIGEST_MISMATCH_MESSAGE}"
         for detail in details
     ):
         _fail(

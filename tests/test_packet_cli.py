@@ -385,3 +385,25 @@ def test_packet_command_rejects_excessive_json_shape_before_model_validation(
     target.write_text(json.dumps(value, separators=(",", ":")), encoding="utf-8")
 
     _failure(capsys, "verify", target, "packet_too_complex")
+
+
+@pytest.mark.security
+def test_packet_identifiers_cannot_spoof_the_digest_mismatch_classification(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A hostile packet must not choose its own rejection code.
+
+    Packet identifiers are free-form text and are embedded in semantic
+    validation messages, so classifying the envelope digest failure by substring
+    let a crafted identifier be reported as a transport-looking digest mismatch
+    instead of a semantic failure.
+    """
+
+    sentinel = "packet export digest does not match the canonical brief"
+    spoofed = _write_document(
+        tmp_path,
+        lambda document: document["brief"]["claims"][0].__setitem__("question_id", sentinel),
+    )
+
+    _failure(capsys, "verify", spoofed, "packet_invalid")

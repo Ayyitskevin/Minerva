@@ -236,9 +236,11 @@ files and never overwrites an existing target:
 
 Across that snapshot, fulfillment caps cumulative SQLite virtual-machine work. Exhaustion
 fails closed as the stable `brief_work_limit` domain refusal (CLI exit `3`) before either
-artifact is written. This is an instruction-work bound, not a wall-clock timeout; under
-the current schema, scan-heavy unrelated finding or audit history can false-refuse a
-valid request. Retrying against the same unchanged database is not a remedy.
+artifact is written. This is an instruction-work bound, not a wall-clock timeout, and
+retrying against the same unchanged database is not a remedy. Migration 0003 adds targeted
+audit and claim-scoped finding indexes, so fulfillment work no longer grows with unrelated
+missions' history; the bound itself is unchanged and still refuses genuinely oversized
+requests.
 
 Before full mission/question/claim, source, citation, finding, audit, or run text—or
 snapshot content—is returned to Python, claim-scoped preflight asks SQLite for

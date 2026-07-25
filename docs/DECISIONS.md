@@ -4,6 +4,7 @@
 - [ADR 0002: Keep sibling systems behind artifact/protocol seams](adr/0002-system-boundaries.md)
 - [ADR 0003: Require explicit BYOK consent for bounded model assistance](adr/0003-explicit-byok-model-assistance.md)
 - [ADR 0004: Audit restored databases before exclusive publication](adr/0004-staged-restore-audit-publication.md)
+- [ADR 0005: Add targeted indexes for claim-scoped request fulfillment](adr/0005-targeted-fulfillment-indexing.md)
 
 ## Milestone 1 implementation decisions
 
@@ -71,8 +72,9 @@
   call the mutating/audited brief-export path.
 - Fulfillment bounds cumulative SQLite virtual-machine work with a connection-local
   progress handler and maps only its own exhaustion interrupt to the existing
-  `brief_work_limit` refusal. This schema-free hardening accepts possible false refusal
-  on scan-heavy databases; targeted indexes are deferred to a human-reviewed migration.
+  `brief_work_limit` refusal. This schema-free hardening accepted possible false refusal
+  on scan-heavy databases; migration 0003 has since supplied the targeted indexes
+  (ADR 0005) while retaining the budget.
 - Before full database text or snapshot content is returned to Python, claim-scoped
   synthesis preflights NUL-safe storage-byte lengths at every emitted string's exact
   packet multiplicity. UTF-8 is exact and UTF-16 uses a conservative two-to-one
@@ -101,3 +103,58 @@
 - Requested and terminal audit metadata bracket the external call but cannot be
   transactionally atomic with it. Timeouts have unknown provider outcomes and are not
   retried automatically.
+
+## Milestone 1.4 implementation decisions
+
+- Migration 0003 adds only two indexes: `idx_audit_event_entity` on
+  `audit_events(event_type, entity_id)` and `idx_findings_claim` on
+  `findings(mission_id, claim_id, created_at, id)`. Fulfillment cost becomes
+  independent of unrelated audit history; the cumulative work budget, its
+  `brief_work_limit` refusal, and the storage-byte preflight are unchanged.
+- The claim-scoped `INDEXED BY` hints are repointed to `idx_findings_claim` in the
+  same change, because SQLite ignores a better index while a hint names another.
+  The hints stay so the chosen index is explicit at the call site and a missing
+  migration fails at prepare time; they do not by themselves prevent a scan, so
+  the plan is pinned by an `EXPLAIN QUERY PLAN` assertion in the tests.
+- Determinism is unaffected: every order-sensitive read on the export and
+  fulfillment paths orders by a unique key or key suffix, so no plan change can
+  reorder canonical output.
+- `connect()` never creates a database and never removes one. It opens a `mode=rw`
+  URI built with `Path.as_uri()`, so a path containing `?` or `#` cannot address a
+  different file, and a missing database is reported as `database_missing` (503)
+  rather than being created and then rejected as `database_unready` (422).
+- Fresh `initialize()` stages, migrates, audits, and publishes with an exclusive
+  hard link, matching ADR 0004's restore pattern. Losing that race repeats
+  initialization against the published database so concurrent init stays
+  idempotent instead of destroying the winner's data.
+
+## Wave-A hardening decisions
+
+- `PRAGMA recursive_triggers = ON` is set per connection. Without it,
+  `INSERT OR REPLACE` resolves a primary-key conflict with a delete that skips
+  the BEFORE DELETE triggers, which was demonstrated to rewrite a recorded
+  migration checksum in place.
+- Backup applies the destination-sidecar refusal restore already had, so an
+  unusable backup is refused at backup time rather than discovered at recovery.
+- Restore no longer collapses migration-state failures into `backup_invalid`. An
+  intact backup at another schema version reports the real code, because calling
+  a good backup corrupt at recovery time is the worst possible moment for a
+  false claim.
+- The OpenAI adapter checks terminal status before refusal content. A refusal
+  item on a failed or still-running response is an unknown outcome, not an
+  observed refusal, and must not be audited as one.
+- `ANTHROPIC_AUTH_TOKEN` fails closed. The pinned SDK ignores it when an
+  explicit key is supplied; the supported range is `>=0.117,<1`, so this is
+  version-independence rather than a fix for a live bypass.
+- The security middleware allows only `http` (checked) and `lifespan`
+  (delegated). A websocket handshake ignores CSP and the same-origin rules the
+  middleware depends on, so it is closed rather than forwarded.
+- Packet digest-mismatch classification is anchored to the root envelope
+  validator and matched exactly. Identifiers are free-form text, so a substring
+  test let a crafted packet choose its own rejection code.
+- Text validation rejects strings that cannot encode as UTF-8, and the finding
+  citation bound lives in the service rather than only the REST adapter.
+- The static security gate additionally bans `os.posix_spawn`, `multiprocessing`,
+  `ProcessPoolExecutor`, `webbrowser`, `ctypes`, and the asyncio DNS and socket
+  helpers. Tests deny non-loopback sockets suite-wide instead of relying on
+  convention.

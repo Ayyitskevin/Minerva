@@ -32,7 +32,15 @@ from minerva.core.errors import MinervaError
 
 _BASE_URL = "https://api.anthropic.com"
 _SAFE_RESPONSE_ID = re.compile(r"[\x21-\x7e]{1,200}\Z")
-_UNSUPPORTED_SDK_ENVIRONMENT = frozenset({"ANTHROPIC_CUSTOM_HEADERS"})
+_UNSUPPORTED_SDK_ENVIRONMENT = frozenset(
+    {
+        # The pinned SDK ignores an ambient auth token once an explicit key is
+        # supplied, but the supported range is `>=0.117,<1`; failing closed keeps
+        # a second unpreviewed credential out of the request in any version.
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_CUSTOM_HEADERS",
+    }
+)
 
 
 class AnthropicProvider:

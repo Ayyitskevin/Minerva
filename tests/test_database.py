@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import stat
+import threading
 from collections.abc import Mapping
 from contextlib import closing
 from pathlib import Path
@@ -13,7 +14,7 @@ import minerva.core.db as db_module
 from conftest import SequenceIds, fixed_clock
 from minerva.core.audit import AuditRecorder, list_audit_events
 from minerva.core.db import Database, Migration, latest_schema_version
-from minerva.core.errors import ConflictError, IntegrityError, NotFoundError
+from minerva.core.errors import ConflictError, IntegrityError, MinervaError, NotFoundError
 from minerva.core.operations import OperationsService
 from minerva.core.types import ActorKind, IdentityContext
 from minerva.research.service import ResearchService
@@ -861,3 +862,232 @@ def test_database_publication_race_preserves_substituted_symlink_victim(
     assert target.resolve() == victim
     assert victim.read_bytes() == victim_bytes
     assert list(tmp_path.glob(f".{target.name}.minerva-*.tmp*")) == []
+
+
+def test_pre_index_schema_fails_closed_before_pinned_queries_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A database missing migration 0003 is refused with a typed error.
+
+    Claim-scoped synthesis pins `idx_findings_claim` with INDEXED BY, so a
+    database stopped at schema 2 would raise a raw sqlite3 "no such index"
+    error if it ever reached those queries. The migration-state check must
+    reject it first.
+    """
+
+    migrations = db_module._migration_files()
+    assert len(migrations) >= 3
+    path = tmp_path / "pre-index.db"
+    database = Database(path)
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:2])
+    assert database.initialize() == 2
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations)
+
+    with pytest.raises(IntegrityError) as caught, database.read():
+        pass
+
+    assert caught.value.code == "database_migration_required"
+
+
+def test_concurrent_initialization_preserves_the_published_database(tmp_path: Path) -> None:
+    """Racing initializers must not destroy the database one of them published.
+
+    Before staged publication, every loser's failure cleanup unlinked the
+    winner's committed database by pathname, so the directory ended empty while
+    one caller had already reported success.
+    """
+
+    path = tmp_path / "research.db"
+    workers = 6
+    barrier = threading.Barrier(workers)
+    versions: list[int] = []
+    failures: list[str] = []
+    lock = threading.Lock()
+
+    def initialize() -> None:
+        barrier.wait(timeout=30)
+        try:
+            version = Database(path).initialize()
+        except MinervaError as error:  # pragma: no cover - recorded, then asserted away
+            with lock:
+                failures.append(error.code)
+            return
+        with lock:
+            versions.append(version)
+
+    threads = [threading.Thread(target=initialize) for _ in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert failures == []
+    assert versions == [latest_schema_version()] * workers
+    assert path.is_file()
+    assert sorted(item.name for item in tmp_path.iterdir()) == ["research.db"]
+    with Database(path).read() as connection:
+        recorded = connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
+    assert recorded == latest_schema_version()
+
+
+def test_failed_open_preserves_operator_owned_sidecars(tmp_path: Path) -> None:
+    """A failed open must not remove SQLite sidecars Minerva did not create."""
+
+    path = tmp_path / "research.db"
+    for suffix in ("-wal", "-shm", "-journal"):
+        Path(f"{path}{suffix}").write_bytes(b"operator owned")
+
+    with pytest.raises(MinervaError) as caught:
+        Database(path).connect()
+
+    assert caught.value.code == "database_missing"
+    assert sorted(item.name for item in tmp_path.iterdir()) == [
+        "research.db-journal",
+        "research.db-shm",
+        "research.db-wal",
+    ]
+    for suffix in ("-wal", "-shm", "-journal"):
+        assert Path(f"{path}{suffix}").read_bytes() == b"operator owned"
+
+
+def test_failed_open_preserves_a_dangling_operator_symlink(tmp_path: Path) -> None:
+    """A rejected symlink path must be left for the operator to inspect."""
+
+    path = tmp_path / "research.db"
+    path.symlink_to(tmp_path / "absent.db")
+
+    with pytest.raises(IntegrityError) as caught:
+        Database(path).connect()
+
+    assert caught.value.code == "database_symlink"
+    assert path.is_symlink()
+
+
+def test_connect_never_creates_a_database(tmp_path: Path) -> None:
+    """Opening a missing database reports it plainly and writes nothing."""
+
+    path = tmp_path / "research.db"
+
+    with pytest.raises(MinervaError) as caught:
+        Database(path).connect()
+
+    assert caught.value.code == "database_missing"
+    assert caught.value.http_status == 503
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_database_paths_with_uri_metacharacters_open_the_intended_file(tmp_path: Path) -> None:
+    """Percent-encoding keeps `?` and `#` from truncating the connection URI."""
+
+    for name in ("plain.db", "with space.db", "with?query.db", "with#fragment.db"):
+        path = tmp_path / name
+        assert Database(path).initialize() == latest_schema_version()
+        assert path.is_file()
+        with Database(path).read() as connection:
+            assert (
+                connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
+                == latest_schema_version()
+            )
+    assert sorted(item.name for item in tmp_path.iterdir()) == [
+        "plain.db",
+        "with space.db",
+        "with#fragment.db",
+        "with?query.db",
+    ]
+
+
+def test_insert_or_replace_cannot_bypass_append_only_triggers(database: Database) -> None:
+    """Conflict resolution must not delete an append-only row without firing triggers.
+
+    `INSERT OR REPLACE` resolves a primary-key conflict with a delete. Without
+    `PRAGMA recursive_triggers`, that delete skips the BEFORE DELETE triggers, so
+    a recorded migration checksum could be rewritten in place.
+    """
+
+    with database.read() as connection:
+        assert connection.execute("PRAGMA recursive_triggers").fetchone()[0] == 1
+        original = connection.execute(
+            "SELECT checksum FROM schema_migrations WHERE version = 1"
+        ).fetchone()[0]
+
+    with (
+        pytest.raises(sqlite3.IntegrityError, match="append-only"),
+        database.transaction() as (connection),
+    ):
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO schema_migrations(version, name, checksum)
+            VALUES (1, '0001_research_core.sql', ?)
+            """,
+            ("0" * 64,),
+        )
+
+    with database.read() as connection:
+        assert (
+            connection.execute(
+                "SELECT checksum FROM schema_migrations WHERE version = 1"
+            ).fetchone()[0]
+            == original
+        )
+
+
+def test_backup_refuses_to_publish_beside_an_existing_sidecar(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    """Backup applies the destination-sidecar refusal that restore already had."""
+
+    target = tmp_path / "backup.db"
+    sidecar = Path(f"{target}-wal")
+    sidecar.write_bytes(b"operator owned")
+
+    with pytest.raises(ConflictError) as caught:
+        database.backup_to(target)
+
+    assert caught.value.code == "backup_destination_sidecar_exists"
+    assert not target.exists()
+    assert sidecar.read_bytes() == b"operator owned"
+
+
+@pytest.mark.parametrize(
+    ("installed_migrations", "expected_code"),
+    [
+        ("newer", "database_migration_required"),
+        ("older", "database_too_new"),
+    ],
+)
+def test_restore_preserves_migration_state_codes_for_intact_backups(
+    database: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    installed_migrations: str,
+    expected_code: str,
+) -> None:
+    """An intact backup at another schema version must not be called corrupt.
+
+    Reporting `backup_invalid` here would tell an operator their backup failed
+    integrity validation at the moment they most need to trust it.
+    """
+
+    migrations = db_module._migration_files()
+    assert len(migrations) >= 2
+    backup = tmp_path / "backup.db"
+    database.backup_to(backup)
+
+    if installed_migrations == "newer":
+        future = Migration(
+            version=len(migrations) + 1,
+            name="0099_future.sql",
+            sql="CREATE TABLE future_state(value TEXT);",
+            checksum="b" * 64,
+        )
+        monkeypatch.setattr(db_module, "_migration_files", lambda: (*migrations, future))
+    else:
+        monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:-1])
+
+    with pytest.raises(IntegrityError) as caught:
+        Database.restore_from(backup, tmp_path / "restored.db")
+
+    assert caught.value.code == expected_code
+    assert not (tmp_path / "restored.db").exists()

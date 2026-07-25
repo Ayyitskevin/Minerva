@@ -79,6 +79,15 @@ def validate_text(
         )
     if "\x00" in normalized:
         raise IntegrityError(f"{field}_invalid", f"{field.replace('_', ' ').title()} is invalid.")
+    try:
+        # Undecodable argv bytes arrive as surrogates and would otherwise reach
+        # SQLite, where the encode failure is an internal error rather than a
+        # domain refusal.
+        normalized.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as error:
+        raise IntegrityError(
+            f"{field}_invalid", f"{field.replace('_', ' ').title()} is invalid."
+        ) from error
     if not allow_newlines and ("\n" in normalized or "\r" in normalized):
         raise IntegrityError(
             f"{field}_invalid", f"{field.replace('_', ' ').title()} must be one line."
