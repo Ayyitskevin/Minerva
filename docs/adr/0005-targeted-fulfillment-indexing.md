@@ -27,6 +27,12 @@ requested claim:
   `INDEXED BY idx_findings_mission`, whose key is `(mission_id, created_at, id)`.
   Every finding in the mission was visited with `claim_id` applied as a residual
   filter.
+- The same defect exists outside fulfillment. Mission-wide brief export resolves
+  run provenance with one
+  `WHERE event_type = 'research.run.started' AND entity_type = ? AND entity_id = ?`
+  query per distinct run (`synthesis/service.py:735-746`), each a full table scan.
+  That path has no cumulative budget, so it degraded silently rather than
+  refusing.
 
 Measured on this repository's own fulfillment path, cost grew linearly with
 unrelated audit history at roughly 12 virtual-machine steps per audit row for a
@@ -81,10 +87,26 @@ adds no table, column, trigger, constraint, or default, and rewrites no data.
   the real path with a single cited snapshot: 2,837 virtual-machine steps with
   no unrelated rows and 2,839 with 20,000 unrelated rows, against 242,806 for the
   same request when the audit index is absent.
+- The pre-migration refusal threshold was proportional to cited snapshots.
+  Independent replay of the full claim-scoped query sequence at 150,000 audit
+  rows measured `6.5 * S + 6` virtual-machine steps per global audit row, where
+  `S` is the number of distinct cited snapshots, giving refusal at roughly
+  639,000 rows for one snapshot, 112,000 for ten, and 59,000 for twenty. After
+  the migration the same replay measured an identical total at every audit-table
+  size from 20,000 to 150,000 rows.
+- Mission-wide brief export benefits from the same index without a code change:
+  its per-run provenance lookup drops from a full scan (450,029 steps at 150,000
+  audit rows) to a point lookup (34). That path is unbudgeted, so this was a
+  silent slowdown rather than a refusal, and it also affects brief preview, the
+  REST brief-preview endpoint, and the web brief pages.
 - The work guard remains meaningful. It still refuses genuinely oversized work,
   including same-mission history that the claim-scoped audit CTE must examine
   row by row; the existing budget-exhaustion security test continues to pass
-  unchanged.
+  unchanged. Measured, the post-migration budget is now reached at roughly
+  118,000 *mission-scoped* audit events, because the CTE's `relevant_events`
+  branch legitimately filters by `mission_id` and its `LIMIT` caps matched rows
+  rather than scanned rows. That is in-scope history for the requested claim, so
+  bounding it is the guard doing its job rather than a residual defect.
 - Canonical output is unaffected. Every order-sensitive query on the export and
   fulfillment paths orders by a unique key or key suffix (`sequence`, `id`, or a
   primary key), so no plan change can reorder rows. The golden packet and

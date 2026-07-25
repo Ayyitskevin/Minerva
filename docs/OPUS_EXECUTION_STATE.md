@@ -74,6 +74,19 @@ idx_audit_event_entity`, and the claim-scoped finding queries from
 `SEARCH findings USING INDEX idx_findings_mission (mission_id=?)` (visiting
 every mission finding) to a two-column equality seek on the new index.
 
+An independent verification agent replayed the whole claim-scoped query
+sequence at 150,000 audit rows and measured the pre-migration slope as
+`6.5 * S + 6` steps per global audit row (`S` = distinct cited
+snapshots): refusal at ~639,000 rows for one snapshot, ~112,000 for ten,
+~59,000 for twenty. Post-migration the total was identical at every table
+size from 20,000 to 150,000 rows. It also found a scan site neither the
+plan nor I had listed: mission-wide brief export's per-run provenance
+lookup (`synthesis/service.py:735-746`). I verified it directly —
+450,029 steps to 34 — and it is fixed by the same index with no code
+change, so `brief export`, `brief preview`, the REST preview endpoint,
+and the web brief pages all benefit. That path is unbudgeted, so the
+defect was a silent slowdown rather than a refusal.
+
 **Acceptance tests (all passing, and all verified to fail without the
 change).**
 
@@ -201,9 +214,13 @@ generated before migration 0003 and are asserted after it.
 Same-mission audit history still consumes budget: the scoped packet audit
 CTE's `relevant_events` branch legitimately filters by `mission_id` and
 examines those rows individually, so `idx_audit_event_entity` does not
-apply to it. This is correct behaviour — that history is in scope for the
-claim — and the existing budget-exhaustion security test still exercises
-it. `SECURITY.md` and `docs/THREAT_MODEL.md` state this explicitly.
+apply to it. Measured, the budget is now reached at roughly 118,000
+mission-scoped audit events, and the branch's `LIMIT` caps matched rows
+rather than scanned rows, so a large mission with few claim-relevant
+events still pays for the pass. This is correct behaviour — that history
+is in scope for the requested claim — and the existing budget-exhaustion
+security test still exercises it. `SECURITY.md` and
+`docs/THREAT_MODEL.md` state this explicitly.
 
 Observation for a later slice, not a defect: the claim-scoped source
 preflight query (`synthesis/service.py:570`) orders by
