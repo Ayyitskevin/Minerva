@@ -11,7 +11,7 @@ from minerva.core.errors import ConflictError, IntegrityError
 from minerva.core.types import IdentityContext
 from minerva.evidence.models import EvidenceStance
 from minerva.research.models import CitationStatus, ClaimStatus, FindingStatus, StatementKind
-from minerva.research.service import ResearchService
+from minerva.research.service import MAX_FINDING_CITATIONS, ResearchService
 
 
 class FailingAuditSink:
@@ -408,3 +408,44 @@ def test_findings_and_citation_links_are_append_only(lab: Lab) -> None:
             "DELETE FROM finding_citations WHERE finding_id = ?",
             (finding.id,),
         )
+
+
+def test_finding_citation_limit_is_enforced_by_the_service(lab: Lab) -> None:
+    """The citation bound belongs to the service, not only the REST adapter.
+
+    A CLI operator could otherwise create findings whose citations exceed the
+    synthesis reference limit, permanently blocking the mission's brief export
+    because findings are append-only.
+    """
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    too_many = tuple(f"{evidence.id[:-4]}{index:04x}" for index in range(MAX_FINDING_CITATIONS + 1))
+    assert len(set(too_many)) == MAX_FINDING_CITATIONS + 1
+
+    with pytest.raises(IntegrityError) as caught:
+        lab.research.add_finding(
+            mission_id=seed.mission.id,
+            claim_id=seed.claim.id,
+            statement="A finding citing more evidence than the service permits.",
+            statement_kind=StatementKind.OBSERVED_FACT,
+            status=FindingStatus.SUPPORTED,
+            uncertainty="",
+            evidence_ids=too_many,
+            identity=lab.identity,
+        )
+
+    assert caught.value.code == "finding_citation_limit"
+
+
+def test_undecodable_text_is_a_domain_refusal_not_an_internal_error(lab: Lab) -> None:
+    """Surrogate-escaped argv bytes must fail validation, not SQLite binding."""
+
+    with pytest.raises(IntegrityError) as caught:
+        lab.research.create_mission(
+            title="Undecodable \udcff title",
+            objective="A mission whose title never decoded as UTF-8.",
+            identity=lab.identity,
+        )
+
+    assert caught.value.code == "title_invalid"

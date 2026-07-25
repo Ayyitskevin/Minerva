@@ -20,6 +20,8 @@ RESEARCH_PACKET_SCHEMA_VERSION: Literal["minerva.research-brief.v2"] = "minerva.
 CITATION_SCHEME = "utf8-byte-offset-v1"
 SOURCE_DIGEST_ALGORITHM = "sha256"
 EXPORT_DIGEST_ALGORITHM = "sha256-canonical-json-v1"
+# Shared with the file adapter, which classifies this exact envelope failure.
+EXPORT_DIGEST_MISMATCH_MESSAGE = "packet export digest does not match the canonical brief"
 MAX_RESEARCH_PACKET_BYTES = 20_971_520
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
@@ -300,7 +302,7 @@ class ResearchPacketDocument(_StrictFrozenModel):
         if self.schema_version != self.brief.schema_version:
             raise ValueError("packet and brief schema versions differ")
         if self.export_digest != research_payload_digest(self.brief):
-            raise ValueError("packet export digest does not match the canonical brief")
+            raise ValueError(EXPORT_DIGEST_MISMATCH_MESSAGE)
         return self
 
 

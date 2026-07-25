@@ -703,6 +703,7 @@ def test_provider_invalid_structured_payload_is_safely_rejected(
         ("openai", "OPENAI_CUSTOM_HEADERS"),
         ("openai", "OPENAI_ORG_ID"),
         ("openai", "OPENAI_PROJECT_ID"),
+        ("anthropic", "ANTHROPIC_AUTH_TOKEN"),
         ("anthropic", "ANTHROPIC_CUSTOM_HEADERS"),
     ],
 )
@@ -768,3 +769,33 @@ def test_provider_factory_is_explicit_and_reports_missing_optional_extra(
     with pytest.raises(MinervaError) as missing:
         candidate_provider(ModelProvider.OPENAI)
     assert missing.value.code == "provider_sdk_missing"
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("status", ["failed", "cancelled", "in_progress", "queued"])
+def test_openai_non_terminal_response_with_refusal_is_not_recorded_as_refused(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+) -> None:
+    """A refusal item on a non-terminal response is an unknown outcome.
+
+    Auditing it as `refused` would record a definitive provider decision that
+    Minerva never observed.
+    """
+
+    import minerva.integrations.ai.openai as module
+
+    _clear_ambient_sdk_environment(monkeypatch, module)
+    response = SimpleNamespace(
+        status=status,
+        model="gpt-returned-model",
+        id="resp_test_123",
+        usage=None,
+        output=[SimpleNamespace(content=[SimpleNamespace(type="refusal")])],
+    )
+    _install_fake_client(monkeypatch, module, "OpenAI", "responses", response)
+
+    with pytest.raises(MinervaError) as raised:
+        OpenAIProvider().generate(_request(), ProviderCredential("synthetic-key-value"))
+
+    assert raised.value.code == "provider_response_invalid"

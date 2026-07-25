@@ -995,3 +995,99 @@ def test_database_paths_with_uri_metacharacters_open_the_intended_file(tmp_path:
         "with#fragment.db",
         "with?query.db",
     ]
+
+
+def test_insert_or_replace_cannot_bypass_append_only_triggers(database: Database) -> None:
+    """Conflict resolution must not delete an append-only row without firing triggers.
+
+    `INSERT OR REPLACE` resolves a primary-key conflict with a delete. Without
+    `PRAGMA recursive_triggers`, that delete skips the BEFORE DELETE triggers, so
+    a recorded migration checksum could be rewritten in place.
+    """
+
+    with database.read() as connection:
+        assert connection.execute("PRAGMA recursive_triggers").fetchone()[0] == 1
+        original = connection.execute(
+            "SELECT checksum FROM schema_migrations WHERE version = 1"
+        ).fetchone()[0]
+
+    with (
+        pytest.raises(sqlite3.IntegrityError, match="append-only"),
+        database.transaction() as (connection),
+    ):
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO schema_migrations(version, name, checksum)
+            VALUES (1, '0001_research_core.sql', ?)
+            """,
+            ("0" * 64,),
+        )
+
+    with database.read() as connection:
+        assert (
+            connection.execute(
+                "SELECT checksum FROM schema_migrations WHERE version = 1"
+            ).fetchone()[0]
+            == original
+        )
+
+
+def test_backup_refuses_to_publish_beside_an_existing_sidecar(
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    """Backup applies the destination-sidecar refusal that restore already had."""
+
+    target = tmp_path / "backup.db"
+    sidecar = Path(f"{target}-wal")
+    sidecar.write_bytes(b"operator owned")
+
+    with pytest.raises(ConflictError) as caught:
+        database.backup_to(target)
+
+    assert caught.value.code == "backup_destination_sidecar_exists"
+    assert not target.exists()
+    assert sidecar.read_bytes() == b"operator owned"
+
+
+@pytest.mark.parametrize(
+    ("installed_migrations", "expected_code"),
+    [
+        ("newer", "database_migration_required"),
+        ("older", "database_too_new"),
+    ],
+)
+def test_restore_preserves_migration_state_codes_for_intact_backups(
+    database: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    installed_migrations: str,
+    expected_code: str,
+) -> None:
+    """An intact backup at another schema version must not be called corrupt.
+
+    Reporting `backup_invalid` here would tell an operator their backup failed
+    integrity validation at the moment they most need to trust it.
+    """
+
+    migrations = db_module._migration_files()
+    assert len(migrations) >= 2
+    backup = tmp_path / "backup.db"
+    database.backup_to(backup)
+
+    if installed_migrations == "newer":
+        future = Migration(
+            version=len(migrations) + 1,
+            name="0099_future.sql",
+            sql="CREATE TABLE future_state(value TEXT);",
+            checksum="b" * 64,
+        )
+        monkeypatch.setattr(db_module, "_migration_files", lambda: (*migrations, future))
+    else:
+        monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:-1])
+
+    with pytest.raises(IntegrityError) as caught:
+        Database.restore_from(backup, tmp_path / "restored.db")
+
+    assert caught.value.code == expected_code
+    assert not (tmp_path / "restored.db").exists()

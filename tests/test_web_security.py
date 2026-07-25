@@ -471,3 +471,60 @@ def test_request_body_limit_requires_a_nonnegative_exact_integer(
     app = FastAPI()
     with pytest.raises(ValueError, match="non-negative integer"):
         LocalSecurityMiddleware(app, max_request_body_bytes=invalid_limit)  # type: ignore[arg-type]
+
+
+@pytest.mark.security
+def test_websocket_scopes_are_refused_without_reaching_the_application() -> None:
+    """Host, Origin, and body checks are HTTP-only, so no other scope may pass.
+
+    A browser WebSocket handshake ignores CSP and the same-origin rules the
+    middleware relies on, so forwarding one unchecked would reopen the exact
+    cross-origin path the middleware exists to close.
+    """
+
+    reached: list[str] = []
+
+    async def sentinel(scope: Scope, receive: Receive, send: Send) -> None:
+        reached.append(str(scope["type"]))
+
+    middleware = LocalSecurityMiddleware(sentinel, max_request_body_bytes=1024)
+    sent: list[Message] = []
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    async def receive() -> Message:  # pragma: no cover - never awaited
+        raise AssertionError("websocket scope must not read from the client")
+
+    asyncio.run(
+        middleware(
+            {"type": "websocket", "path": "/", "headers": []},
+            receive,
+            send,
+        )
+    )
+
+    assert reached == []
+    assert sent == [{"type": "websocket.close", "code": 1008}]
+
+
+@pytest.mark.security
+def test_lifespan_scopes_still_reach_the_application() -> None:
+    """The scope allowlist must not break application startup and shutdown."""
+
+    reached: list[str] = []
+
+    async def sentinel(scope: Scope, receive: Receive, send: Send) -> None:
+        reached.append(str(scope["type"]))
+
+    middleware = LocalSecurityMiddleware(sentinel, max_request_body_bytes=1024)
+
+    async def send(_message: Message) -> None:  # pragma: no cover - unused
+        raise AssertionError("lifespan handling is delegated to the application")
+
+    async def receive() -> Message:  # pragma: no cover - unused
+        raise AssertionError("lifespan handling is delegated to the application")
+
+    asyncio.run(middleware({"type": "lifespan"}, receive, send))
+
+    assert reached == ["lifespan"]

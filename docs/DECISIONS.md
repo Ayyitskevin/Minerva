@@ -127,3 +127,34 @@
   hard link, matching ADR 0004's restore pattern. Losing that race repeats
   initialization against the published database so concurrent init stays
   idempotent instead of destroying the winner's data.
+
+## Wave-A hardening decisions
+
+- `PRAGMA recursive_triggers = ON` is set per connection. Without it,
+  `INSERT OR REPLACE` resolves a primary-key conflict with a delete that skips
+  the BEFORE DELETE triggers, which was demonstrated to rewrite a recorded
+  migration checksum in place.
+- Backup applies the destination-sidecar refusal restore already had, so an
+  unusable backup is refused at backup time rather than discovered at recovery.
+- Restore no longer collapses migration-state failures into `backup_invalid`. An
+  intact backup at another schema version reports the real code, because calling
+  a good backup corrupt at recovery time is the worst possible moment for a
+  false claim.
+- The OpenAI adapter checks terminal status before refusal content. A refusal
+  item on a failed or still-running response is an unknown outcome, not an
+  observed refusal, and must not be audited as one.
+- `ANTHROPIC_AUTH_TOKEN` fails closed. The pinned SDK ignores it when an
+  explicit key is supplied; the supported range is `>=0.117,<1`, so this is
+  version-independence rather than a fix for a live bypass.
+- The security middleware allows only `http` (checked) and `lifespan`
+  (delegated). A websocket handshake ignores CSP and the same-origin rules the
+  middleware depends on, so it is closed rather than forwarded.
+- Packet digest-mismatch classification is anchored to the root envelope
+  validator and matched exactly. Identifiers are free-form text, so a substring
+  test let a crafted packet choose its own rejection code.
+- Text validation rejects strings that cannot encode as UTF-8, and the finding
+  citation bound lives in the service rather than only the REST adapter.
+- The static security gate additionally bans `os.posix_spawn`, `multiprocessing`,
+  `ProcessPoolExecutor`, `webbrowser`, `ctypes`, and the asyncio DNS and socket
+  helpers. Tests deny non-loopback sockets suite-wide instead of relying on
+  convention.

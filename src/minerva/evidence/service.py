@@ -46,7 +46,15 @@ class EvidenceService:
             raise IntegrityError("citation_offsets_invalid", "Citation offsets are invalid.")
         if not isinstance(stance, EvidenceStance):
             raise IntegrityError("evidence_stance_invalid", "Evidence stance is invalid.")
-        if not quote or "\x00" in quote or len(quote.encode("utf-8")) > 100_000:
+        try:
+            # Surrogates from undecodable argv bytes must fail as a domain
+            # refusal here, not as an encode error deeper in the write path.
+            quote_bytes = quote.encode("utf-8", errors="strict")
+        except UnicodeEncodeError as error:
+            raise IntegrityError(
+                "evidence_quote_invalid", "Evidence quote is not valid UTF-8."
+            ) from error
+        if not quote or "\x00" in quote or len(quote_bytes) > 100_000:
             raise IntegrityError("evidence_quote_invalid", "Evidence quote is empty or too large.")
 
         evidence_id = self._id_factory("evd")

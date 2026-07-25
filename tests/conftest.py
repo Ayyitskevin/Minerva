@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -132,3 +133,37 @@ def lab(database: Database) -> Lab:
         evidence=EvidenceService(database, clock=fixed_clock, id_factory=ids),
         synthesis=SynthesisService(database, clock=fixed_clock, id_factory=ids),
     )
+
+
+@pytest.fixture(autouse=True)
+def deny_outbound_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail any test that opens a non-loopback socket.
+
+    Provider tests must use fakes. That rule was previously upheld by
+    convention plus a few local patches, so a test that forgot to inject a fake
+    could reach a real provider from a developer machine holding credentials.
+    """
+
+    real_connect = socket.socket.connect
+    real_create_connection = socket.create_connection
+
+    def _is_loopback(address: object) -> bool:
+        if not isinstance(address, tuple) or not address:
+            return False
+        host = address[0]
+        if not isinstance(host, str):
+            return False
+        return host in {"127.0.0.1", "::1", "localhost", ""}
+
+    def guarded_connect(self: socket.socket, address: object) -> object:
+        if not _is_loopback(address):
+            raise AssertionError("outbound network access is not permitted in tests")
+        return real_connect(self, address)  # type: ignore[arg-type]
+
+    def guarded_create_connection(address: object, *args: object, **kwargs: object) -> object:
+        if not _is_loopback(address):
+            raise AssertionError("outbound network access is not permitted in tests")
+        return real_create_connection(address, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket, "create_connection", guarded_create_connection)

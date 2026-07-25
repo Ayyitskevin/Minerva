@@ -61,6 +61,19 @@ def _scan(source: str, *, allowed_imports: tuple[str, ...] = ()) -> set[str]:
             "dial = loop.create_connection\ndial(lambda: None, 'example.invalid', 443)",
             "MIN001",
         ),
+        ("import os\nos.posix_spawn('/bin/true', ['true'], {})", "MIN002"),
+        ("import os\nos.posix_spawnp('true', ['true'], {})", "MIN002"),
+        ("import multiprocessing", "MIN002"),
+        ("import multiprocessing\nmultiprocessing.Process(target=print).start()", "MIN002"),
+        (
+            "from concurrent.futures import ProcessPoolExecutor\nProcessPoolExecutor()",
+            "MIN002",
+        ),
+        ("import webbrowser", "MIN001"),
+        ("import webbrowser\nwebbrowser.open('http://example.invalid')", "MIN001"),
+        ("import ctypes", "MIN005"),
+        ("loop.getaddrinfo('example.invalid', 443)", "MIN001"),
+        ("loop.sock_connect(sock, address)", "MIN001"),
     ],
 )
 def test_static_policy_rejects_direct_and_aliased_bypasses(

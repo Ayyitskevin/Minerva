@@ -257,12 +257,12 @@ def _require_standalone_staged_initialize(staged: Path) -> None:
             )
 
 
-def _reject_restore_destination_sidecars(target: Path) -> None:
+def _reject_destination_sidecars(target: Path, *, code: str) -> None:
     for suffix in ("-wal", "-shm", "-journal"):
         sidecar = Path(f"{target}{suffix}")
         if sidecar.exists() or sidecar.is_symlink():
             raise ConflictError(
-                "restore_destination_sidecar_exists",
+                code,
                 "Refusing to publish beside an existing SQLite sidecar.",
             )
 
@@ -318,6 +318,10 @@ class Database:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
             connection.execute("PRAGMA trusted_schema = OFF")
+            # Without this, INSERT OR REPLACE resolves a primary-key conflict by
+            # deleting the existing row without firing the BEFORE DELETE triggers
+            # that make audit, snapshot, evidence, and migration rows append-only.
+            connection.execute("PRAGMA recursive_triggers = ON")
             journal_mode = str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0])
             if journal_mode.lower() != "wal":
                 raise IntegrityError("database_wal_unavailable", "SQLite WAL mode is unavailable.")
@@ -536,6 +540,7 @@ class Database:
                     "backup_invalid",
                     "The backup failed post-copy validation.",
                 )
+            _reject_destination_sidecars(target, code="backup_destination_sidecar_exists")
             _publish_private_database(staged, target, conflict_code="backup_exists")
         finally:
             source.close()
@@ -568,8 +573,7 @@ class Database:
             try:
                 result = str(source.execute("PRAGMA integrity_check").fetchone()[0])
                 foreign_keys = list(source.execute("PRAGMA foreign_key_check"))
-                _validate_migration_state(source, require_latest=True)
-            except (sqlite3.Error, IntegrityError) as error:
+            except sqlite3.Error as error:
                 raise IntegrityError(
                     "backup_invalid",
                     "The backup failed integrity validation.",
@@ -579,6 +583,10 @@ class Database:
                     "backup_invalid",
                     "The backup failed integrity validation.",
                 )
+            # Deliberately unwrapped: a backup taken before a schema upgrade is
+            # intact, not corrupt, and the operator needs that distinction at
+            # recovery time. Only genuine corruption reports backup_invalid.
+            _validate_migration_state(source, require_latest=True)
 
             staged = _create_private_database_file(target)
             try:
@@ -607,7 +615,7 @@ class Database:
                     "The restored database failed integrity validation.",
                 )
             _require_standalone_backup(backup)
-            _reject_restore_destination_sidecars(target)
+            _reject_destination_sidecars(target, code="restore_destination_sidecar_exists")
             _require_standalone_staged_restore(staged.path)
             _publish_private_database(staged, target, conflict_code="database_exists")
             return cls(target)

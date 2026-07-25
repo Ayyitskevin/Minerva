@@ -313,8 +313,16 @@ class LocalSecurityMiddleware:
         self._allowed_hosts = frozenset(_PRODUCTION_HOSTS | normalized_test_hosts)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        scope_type = scope["type"]
+        if scope_type == "lifespan":
             await self._app(scope, receive, send)
+            return
+        if scope_type != "http":
+            # Only HTTP carries the Host, Origin, and body checks below. A
+            # websocket handshake ignores CSP and same-origin rules, so anything
+            # that is not HTTP is refused rather than forwarded unchecked.
+            if scope_type == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
             return
 
         host_values = _header_values(scope, b"host")

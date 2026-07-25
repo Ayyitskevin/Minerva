@@ -124,6 +124,15 @@ class OpenAIProvider:
                 (),
                 normalized_usage,
             )
+        # Terminal status is checked before refusal content: a failed or still
+        # running response that happens to carry a refusal item is an unknown
+        # outcome, not an observed refusal, and must not be audited as one.
+        if getattr(response, "status", None) != "completed":
+            raise MinervaError(
+                "provider_response_invalid",
+                "OpenAI returned an invalid terminal response.",
+                http_status=502,
+            )
         if _has_refusal(getattr(response, "output", ())):
             return ProviderResponse(
                 ProviderOutcome.REFUSED,
@@ -131,12 +140,6 @@ class OpenAIProvider:
                 response_id,
                 (),
                 normalized_usage,
-            )
-        if getattr(response, "status", None) != "completed":
-            raise MinervaError(
-                "provider_response_invalid",
-                "OpenAI returned an invalid terminal response.",
-                http_status=502,
             )
         try:
             bundle = CandidateDraftBundle.model_validate_json(_response_text(response))

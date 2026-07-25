@@ -20,6 +20,10 @@ from minerva.research.models import (
     StatementKind,
 )
 
+# The shared bound for a finding's citations. The REST contract mirrors it as a
+# transport-level constraint; this is the one the CLI and services enforce.
+MAX_FINDING_CITATIONS = 100
+
 
 class ResearchService:
     def __init__(
@@ -308,13 +312,20 @@ class ResearchService:
             raise IntegrityError("finding_status_invalid", "Finding status is invalid.")
         statement = validate_text(statement, field="finding", maximum=4_000)
         uncertainty = uncertainty.strip()
-        if len(uncertainty) > 2_000 or "\x00" in uncertainty:
+        if len(uncertainty) > 2_000:
             raise IntegrityError("uncertainty_invalid", "Uncertainty exceeds its size limit.")
+        if "\x00" in uncertainty:
+            raise IntegrityError("uncertainty_invalid", "Uncertainty is invalid.")
         unique_evidence = tuple(dict.fromkeys(evidence_ids))
         if statement_kind.requires_citation and not unique_evidence:
             raise IntegrityError(
                 "finding_citation_required",
                 "This statement class requires at least one citation.",
+            )
+        if len(unique_evidence) > MAX_FINDING_CITATIONS:
+            raise IntegrityError(
+                "finding_citation_limit",
+                "A finding exceeds its citation limit.",
             )
         finding_id = self._id_factory("fnd")
         created_at = self._clock()

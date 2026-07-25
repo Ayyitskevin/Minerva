@@ -46,7 +46,11 @@ MODEL_MODULES = {
     "transformers",
 }
 PLUGIN_MODULES = {"entrypoints", "pluggy", "stevedore"}
-PROCESS_MODULES = {"commands", "subprocess"}
+PROCESS_MODULES = {"commands", "multiprocessing", "subprocess"}
+# ctypes loads native code and webbrowser launches an external process against
+# an arbitrary URL; neither has a legitimate use in Minerva runtime code.
+NATIVE_LOADER_MODULES = {"ctypes"}
+EXTERNAL_LAUNCHER_MODULES = {"webbrowser"}
 
 NETWORK_CALLS = {
     "asyncio.open_connection",
@@ -63,8 +67,18 @@ NETWORK_CALLS = {
     "httpx.stream",
     "socket.create_connection",
     "urllib.request.urlopen",
+    "webbrowser.get",
+    "webbrowser.open",
+    "webbrowser.open_new",
+    "webbrowser.open_new_tab",
 }
-NETWORK_METHODS = {"create_connection", "create_datagram_endpoint"}
+NETWORK_METHODS = {
+    "create_connection",
+    "create_datagram_endpoint",
+    "getaddrinfo",
+    "sock_connect",
+    "sock_sendall",
+}
 HTTPX_CLIENT_METHODS = {
     "delete",
     "get",
@@ -97,6 +111,8 @@ PROCESS_CALLS = {
     "os.spawnve",
     "os.spawnvp",
     "os.spawnvpe",
+    "os.posix_spawn",
+    "os.posix_spawnp",
     "os.startfile",
     "os.system",
     "posix.system",
@@ -108,6 +124,9 @@ PROCESS_CALLS = {
     "subprocess.getoutput",
     "subprocess.getstatusoutput",
     "subprocess.run",
+    "concurrent.futures.ProcessPoolExecutor",
+    "multiprocessing.Pool",
+    "multiprocessing.Process",
 }
 DYNAMIC_LOADING_CALLS = {
     "__import__",
@@ -191,7 +210,9 @@ class PolicyVisitor(ast.NodeVisitor):
     def _check_import(self, node: ast.AST, qualified_name: str) -> None:
         policies = (
             (NETWORK_MODULES, "MIN001", "network client import"),
+            (EXTERNAL_LAUNCHER_MODULES, "MIN001", "external launcher import"),
             (PROCESS_MODULES, "MIN002", "process execution import"),
+            (NATIVE_LOADER_MODULES, "MIN005", "native library loader import"),
             (MODEL_MODULES, "MIN004", "model provider/runtime import"),
             (PLUGIN_MODULES, "MIN005", "plugin framework import"),
             (DYNAMIC_LOADING_IMPORTS, "MIN005", "dynamic loading import"),

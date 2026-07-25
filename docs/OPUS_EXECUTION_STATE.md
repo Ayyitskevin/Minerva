@@ -176,6 +176,47 @@ otherwise open a file named `with`.
 created by the staged path are ordinary Minerva databases indistinguishable from
 ones created in place.
 
+### Slice 3 — wave-A hardening (COMPLETE, all gates green)
+
+Ten verified findings, each a small independent patch. No migration, no
+decision gate.
+
+| ID | Fix | Evidence it mattered |
+| --- | --- | --- |
+| F-DB-2 | `PRAGMA recursive_triggers = ON` per connection | `INSERT OR REPLACE` was demonstrated to rewrite a recorded migration checksum in place, skipping the BEFORE DELETE trigger |
+| F-OPS-2 | Restore stops collapsing migration-state failures into `backup_invalid` | Five distinct codes were masked; an intact pre-upgrade backup was reported as failing integrity validation |
+| F-OPS-3 | Backup gains restore's destination-sidecar refusal | An unusable backup was only discovered at recovery time |
+| F-AI-2 | `ANTHROPIC_AUTH_TOKEN` fails closed | Version-independence across `>=0.117,<1`; **not** a live bypass — the pinned SDK ignores it when an explicit key is passed |
+| F-AI-3 | OpenAI checks terminal status before refusal content | A failed response carrying a refusal item was audited as an observed refusal |
+| F-SEC-1 | Packet digest-mismatch classification anchored to the root validator and matched exactly | A crafted `question_id` containing the sentence made a semantic failure report as `packet_digest_mismatch` |
+| F-SEC-2 | Middleware allows only `http` and `lifespan`; websockets are closed | Non-HTTP scopes bypassed Host, Origin, and body checks |
+| F-VAL-1 | `validate_text` and the evidence quote reject non-encodable UTF-8 | Surrogate argv bytes surfaced as `internal_error` exit 1 instead of a domain refusal |
+| F-VAL-2 | Finding citation bound moved into the service | The bound existed only in the REST adapter, so the CLI could self-inflict a permanent export refusal |
+| F-GATE-1/2 | Static gate bans `posix_spawn`, `multiprocessing`, `ProcessPoolExecutor`, `webbrowser`, `ctypes`, asyncio DNS/socket helpers; tests deny non-loopback sockets suite-wide | All six primitives passed the gate unflagged; fakes-only was upheld by convention |
+
+**Files changed.** `src/minerva/core/db.py`, `src/minerva/core/types.py`,
+`src/minerva/evidence/service.py`, `src/minerva/research/service.py`,
+`src/minerva/integrations/research_packet.py`,
+`src/minerva/integrations/research_packet_file.py`,
+`src/minerva/integrations/ai/anthropic.py`,
+`src/minerva/integrations/ai/openai.py`, `src/minerva/web/security.py`,
+`scripts/static_security_check.py`, six test modules, `tests/conftest.py`,
+`docs/DECISIONS.md`, `docs/THREAT_MODEL.md`.
+
+**Migration status.** None.
+
+**Security impact.** Closes an append-only bypass, a websocket boundary gap,
+an error-classification spoof, and three enforcement gaps. The static-gate
+change is review-gated. `_UNSUPPORTED_SDK_ENVIRONMENT` additions are
+defence-in-depth, and the commit says so rather than overstating them.
+
+**Tests.** 581 passing, 142 security-marked. The gate additions were verified
+by running the real gate script against probe files for every newly banned
+primitive, and the packet spoof test was verified to fail under the previous
+substring classification.
+
+**Rollback.** Pure code changes, no migration; each fix reverts independently.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -293,20 +334,19 @@ None. Slice 1 required no human decision.
 
 ## Next task
 
-**Slice 3 — remaining wave-A hardening.** Ten smaller verified findings,
-none of which needs a decision gate: `recursive_triggers` (F-DB-2),
-restore masking migration-state errors (F-OPS-2), backup destination
-sidecar refusal (F-OPS-3), `ANTHROPIC_AUTH_TOKEN` fail-closed (F-AI-2),
-OpenAI refusal-before-terminal-status ordering (F-AI-3), packet
-error-code spoofing (F-SEC-1), websocket scope bypass (F-SEC-2), UTF-8
-encodability in `validate_text` (F-VAL-1), the finding citation bound
-(F-VAL-2), and the static-gate ban list plus a suite-wide network denial
-(F-GATE-1/2). The static-gate change is review-gated and must be flagged
-for Kevin.
+**Slice 4 — wave-B quality.** Shared snapshot-verification caches
+(F-PERF-1 and F-FUL-4, the same fix pattern), consolidating the duplicated
+`_claim_status_evidence_valid` and `_validate_page_request` helpers
+(F-DUP-1), supersession regression tests (F-TEST-2), the non-recursive
+`web/static` package-data glob (F-PKG-1), the dead `HealthRead` and
+`ReadinessRead` DTOs (F-PAR-4), milestone-numbering drift in doc titles
+(F-DOC-1), and the proxy identity-header denylist (F-PAR-5).
 
-Then slice 4 (wave B quality plus F-FUL-4/F-PERF-1) and slice 5 (doctor
-remnants, ADR 0006). Stop after the wave-B slice unless a decision gate
-(D-1..D-11) has been recorded.
+Then slice 5 (doctor remnant enumeration, ADR 0006) and the coverage lift
+for the error branches in `safe_artifact_file.py`, `core/operations.py`,
+and `sources/integrity.py` (F-TEST-1). Stop after slice 5 unless a
+decision gate (D-1..D-11) has been recorded — everything remaining in the
+plan is gated.
 
 ## Rollback instructions (whole phase)
 
