@@ -5,7 +5,7 @@
 Minerva is a local-first, provenance-first research laboratory for humans and AI
 agents. It records evidence and uncertainty; it does not manufacture certainty.
 
-Milestone 1.1 supports an offline research vertical slice: create a mission, question,
+Milestone 1 supports an offline research vertical slice: create a mission, question,
 and falsifiable claim; snapshot local UTF-8 source material; attach exact supporting,
 opposing, contextual, or inconclusive evidence; inspect its ledger; record labeled
 findings; and export a deterministic Markdown brief plus a canonical, machine-verifiable
@@ -31,8 +31,8 @@ adopt it as evidence, a finding, or research state.
 
 Minerva is alpha software for one trusted OS user. The web server binds to
 `127.0.0.1`; loopback is not authentication. Do not expose it remotely. Source data
-remains local during every Milestone 1.1 workflow, URL metadata is never fetched, and
-the offline demo performs no network operation. Milestone 1.1 has no model, shell,
+remains local during every Milestone 1 workflow, URL metadata is never fetched, and
+the offline demo performs no network operation. Milestone 1 has no model, shell,
 notebook, plugin, sibling-repository exchange, orchestration, experiment execution,
 approval, external publishing, or messaging surface. Local brief export is not
 publication.
@@ -110,7 +110,7 @@ unresolved questions remain explicitly labeled.
 ## Canonical research packet
 
 `research-brief.json` is the single canonical agent-facing artifact; Milestone 1.1
-upgrades that existing fixed filename in place to the strict
+upgraded that existing fixed filename in place to the strict
 `minerva.research-brief.v2` contract rather than adding a parallel packet format. It
 preserves the mission and questions, proposition-only claims, every evidence stance,
 exact citation locations and quotes, source digests, findings, assumptions, unresolved

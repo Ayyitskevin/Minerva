@@ -86,9 +86,13 @@ _FORBIDDEN_IDENTITY_HEADERS: Final = frozenset(
         "proxy-authorization",
         "x-actor",
         "x-actor-id",
+        "x-auth-request-email",
+        "x-auth-request-user",
         "x-authenticated-user",
+        "x-forwarded-user",
         "x-minerva-actor",
         "x-minerva-actor-id",
+        "x-remote-user",
         "x-user",
         "x-user-id",
     }

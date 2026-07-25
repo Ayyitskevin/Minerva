@@ -7,8 +7,16 @@ import sqlite3
 from minerva.core.audit import AuditRecorder, AuditSink
 from minerva.core.db import Database
 from minerva.core.errors import ConflictError, IntegrityError, NotFoundError
-from minerva.core.types import Clock, IdentityContext, IdFactory, new_id, utc_now, validate_text
-from minerva.evidence.integrity import verify_evidence_reference
+from minerva.core.types import (
+    Clock,
+    IdentityContext,
+    IdFactory,
+    new_id,
+    utc_now,
+    validate_page_request,
+    validate_text,
+)
+from minerva.evidence.integrity import new_snapshot_cache, verify_evidence_reference
 from minerva.evidence.models import EvidenceCard, EvidenceStance, LedgerEntry
 from minerva.sources.integrity import verify_snapshot_integrity
 
@@ -242,7 +250,7 @@ class EvidenceService:
         after: tuple[str, str] | None = None,
         connection: sqlite3.Connection | None = None,
     ) -> tuple[tuple[LedgerEntry, ...], tuple[str, str] | None]:
-        _validate_page_request(limit, after)
+        validate_page_request(limit, after)
         if connection is None:
             with self.database.read() as owned_connection:
                 return self.page_ledger_for_claim(
@@ -304,30 +312,6 @@ def _claim_mission(connection: sqlite3.Connection, claim_id: str) -> str:
     return str(claim["mission_id"])
 
 
-def _validate_page_request(limit: int, after: tuple[str, str] | None) -> None:
-    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
-        raise IntegrityError(
-            "pagination_invalid",
-            "Collection page size must be between 1 and 200.",
-        )
-    if after is None:
-        return
-    if not isinstance(after, tuple) or len(after) != 2:
-        raise IntegrityError("pagination_invalid", "The pagination cursor is invalid.")
-    created_at, evidence_id = after
-    if (
-        not isinstance(created_at, str)
-        or not isinstance(evidence_id, str)
-        or not created_at
-        or not evidence_id
-        or len(created_at) > 64
-        or len(evidence_id) > 100
-        or "\x00" in created_at
-        or "\x00" in evidence_id
-    ):
-        raise IntegrityError("pagination_invalid", "The pagination cursor is invalid.")
-
-
 def _ledger_entries_from_rows(
     connection: sqlite3.Connection,
     *,
@@ -335,12 +319,14 @@ def _ledger_entries_from_rows(
     rows: list[sqlite3.Row],
 ) -> tuple[LedgerEntry, ...]:
     ledger: list[LedgerEntry] = []
+    snapshot_cache = new_snapshot_cache()
     for row in rows:
         verified = verify_evidence_reference(
             connection,
             evidence_id=str(row["id"]),
             mission_id=mission_id,
             allow_withdrawn=True,
+            snapshot_cache=snapshot_cache,
         )
         card = EvidenceCard(
             id=str(row["id"]),

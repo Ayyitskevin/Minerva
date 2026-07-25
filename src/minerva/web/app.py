@@ -16,7 +16,7 @@ from starlette.templating import Jinja2Templates
 
 from minerva import __version__
 from minerva.api.errors import install_exception_handlers
-from minerva.api.models import ReadyCheckRead
+from minerva.api.models import HealthRead, ReadinessRead, ReadyCheckRead
 from minerva.api.routes import MAX_REQUEST_BODY_BYTES, create_api_router
 from minerva.core.db import Database
 from minerva.core.doctor import run_doctor
@@ -72,7 +72,7 @@ def create_app(db_path: str | Path, testing: bool = False) -> FastAPI:
 
     @app.get("/healthz", include_in_schema=False)
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return HealthRead(status="ok").model_dump(mode="json")
 
     @app.get("/readyz", include_in_schema=False)
     def readiness() -> JSONResponse:
@@ -97,10 +97,12 @@ def create_app(db_path: str | Path, testing: bool = False) -> FastAPI:
                 ).model_dump(mode="json")
             ]
         return JSONResponse(
-            {
-                "status": "ready" if ready else "not_ready",
-                "checks": checks,
-            },
+            ReadinessRead.model_validate(
+                {
+                    "status": "ready" if ready else "not_ready",
+                    "checks": checks,
+                }
+            ).model_dump(mode="json"),
             status_code=200 if ready else 503,
         )
 

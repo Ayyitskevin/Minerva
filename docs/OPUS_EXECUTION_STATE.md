@@ -15,9 +15,10 @@ records what has actually been built, verified, and deviated from.
 
 ## Current phase
 
-Phase 0 (foundation stabilization) of the plan's roadmap. Slice 1 is
-complete and verified. No gated phase (D-1..D-11) has been entered; none
-may be entered until Kevin records the decision.
+Phase 0 (foundation stabilization) of the plan's roadmap. Slices 1-4 are
+complete and verified; slices 1-3 are merged to `main` via PR #10. No gated
+phase (D-1..D-11) has been entered; none may be entered until Kevin records
+the decision.
 
 ## Completed slices
 
@@ -217,6 +218,56 @@ substring classification.
 
 **Rollback.** Pure code changes, no migration; each fix reverts independently.
 
+### Slice 4 — wave-B quality (COMPLETE, all gates green)
+
+Behaviour-preserving cleanup. No migration, no contract change, no decision
+gate.
+
+- **F-PERF-1 / F-FUL-4 — one snapshot verification per assembly.** Snapshot
+  verification re-reads the blob, recomputes SHA-256, and re-checks the import
+  audit event. Five call sites did that once per *citation*: the claim ledger,
+  `add_finding`, finding reads, and both doctor loops each built a fresh cache,
+  and synthesis verified every snapshot twice (sources loop, then citation
+  batch, with separate caches). `verify_evidence_reference(s)` now accept a
+  shared `snapshot_cache`, and `_assemble_brief` seeds it from the sources loop.
+- **F-DUP-1 — four duplicate validators collapsed to two.**
+  `_claim_status_evidence_valid` was byte-identical in the research and
+  synthesis services; `_validate_page_request` existed three times (research,
+  evidence, **and sources** — the third copy was not in the ledger). They now
+  live once each in `research/models.py` and `core/types.py`. The packet
+  verifier's independent copy of the stance rule stays independent by design,
+  and the shared docstring says so.
+- **F-TEST-2 — supersession workflows pinned.** Superseding a *withdrawn* card
+  (the documented correction workflow) and both chain and branch shapes now
+  have tests; previously nothing would have failed if a change forbade them.
+- **F-PKG-1** `web/static/**/*` mirrors the templates pattern so a nested asset
+  cannot be silently dropped from the wheel.
+- **F-PAR-4** `/healthz` and `/readyz` build their responses through
+  `HealthRead` and `ReadinessRead` instead of hand-assembling JSON beside two
+  unused DTOs.
+- **F-PAR-5** the identity-header denylist gained `x-remote-user`,
+  `x-forwarded-user`, and `x-auth-request-user`/`-email`, so a misconfigured
+  identity-injecting proxy fails loudly rather than silently.
+- **F-DOC-1** milestone numbering normalized across the PRD, threat-model, and
+  README titles.
+
+**One test was updated, and it got stronger.**
+`test_synthesis_batches_citation_verification_and_caches_shared_snapshots`
+patched only `evidence.integrity`'s `verify_snapshot_integrity`, so the
+sources-loop verification was invisible to it: the real count was two while
+the test asserted one. It now patches both call sites and asserts exactly one
+verification per assembly, which the previous code would fail.
+
+**Files changed.** `src/minerva/evidence/integrity.py`,
+`src/minerva/evidence/service.py`, `src/minerva/research/service.py`,
+`src/minerva/research/models.py`, `src/minerva/sources/service.py`,
+`src/minerva/synthesis/service.py`, `src/minerva/core/types.py`,
+`src/minerva/core/doctor.py`, `src/minerva/api/routes.py`,
+`src/minerva/web/app.py`, `pyproject.toml`, four test modules, three docs.
+
+**Rollback.** Pure code and docs; no migration. Each item reverts
+independently.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -334,19 +385,33 @@ None. Slice 1 required no human decision.
 
 ## Next task
 
-**Slice 4 — wave-B quality.** Shared snapshot-verification caches
-(F-PERF-1 and F-FUL-4, the same fix pattern), consolidating the duplicated
-`_claim_status_evidence_valid` and `_validate_page_request` helpers
-(F-DUP-1), supersession regression tests (F-TEST-2), the non-recursive
-`web/static` package-data glob (F-PKG-1), the dead `HealthRead` and
-`ReadinessRead` DTOs (F-PAR-4), milestone-numbering drift in doc titles
-(F-DOC-1), and the proxy identity-header denylist (F-PAR-5).
+**Slice 5 — operator remnant diagnostics (ADR 0006) plus the coverage
+lift.** `doctor` gains a read-only enumeration of orphan
+`.{db}.minerva-*.tmp` staging files, partial output directories it can
+recognise, and unmatched assist `requested` audit events (F-OPS-1), so the
+cleanup contracts the docs already describe become actionable. It never
+deletes anything: ADR 0004's reasoning that Minerva must not remove what it
+cannot prove it created applies directly. Paired with error-injection tests
+for the uncovered branches in `safe_artifact_file.py`,
+`core/operations.py`, and `sources/integrity.py` (F-TEST-1), the
+lowest-covered security-relevant modules.
 
-Then slice 5 (doctor remnant enumeration, ADR 0006) and the coverage lift
-for the error branches in `safe_artifact_file.py`, `core/operations.py`,
-and `sources/integrity.py` (F-TEST-1). Stop after slice 5 unless a
-decision gate (D-1..D-11) has been recorded — everything remaining in the
-plan is gated.
+**After slice 5, every remaining plan item is gated.** Nothing further
+should be implemented until Kevin records a decision. The two with the most
+leverage are **D-1** (persist human-adopted agent inferences, which needs
+ADR 0007 because ADR 0003 currently promises candidates are never
+persisted) and **D-9** (finding retraction versus the permanent export
+block that withdrawing cited evidence currently causes). Smaller open
+gates: D-10 (REST evidence withdrawal and the manifest `.cli` taxonomy) and
+D-11 (restoring a pre-upgrade backup with an upgraded binary).
+
+Still open from the ledger, ungated but unscheduled: F-OPS-5 (doctor
+mutates the journal-mode header of the file it inspects), F-OPS-6 (no
+directory fsync after publication), F-AI-4 (KeyboardInterrupt leaves no
+terminal assist audit event), F-PAR-3 (web mission list truncates at 100),
+F-SYN-1 (claim-scoped briefs omit mission-level findings), F-DUP-2
+(canonical-JSON helpers duplicated across the packet and request
+contracts), and F-REL-1/2 (versioning and commit-attribution conventions).
 
 ## Rollback instructions (whole phase)
 

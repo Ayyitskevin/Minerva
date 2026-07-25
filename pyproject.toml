@@ -66,6 +66,7 @@ minerva = [
   "web/templates/*.html",
   "web/templates/**/*.html",
   "web/static/*",
+  "web/static/**/*",
 ]
 
 [tool.pytest.ini_options]

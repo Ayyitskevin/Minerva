@@ -12,7 +12,7 @@ from importlib import resources
 
 from minerva.core.db import Database, latest_schema_version
 from minerva.core.errors import IntegrityError, MinervaError
-from minerva.evidence.integrity import verify_evidence_reference
+from minerva.evidence.integrity import new_snapshot_cache, verify_evidence_reference
 from minerva.research.models import StatementKind
 from minerva.sources.integrity import verify_snapshot_integrity
 
@@ -183,6 +183,7 @@ def _deep_checks(connection: sqlite3.Connection) -> list[DoctorCheck]:
         )
 
     evidence_count = 0
+    evidence_snapshot_cache = new_snapshot_cache()
     try:
         for row in connection.execute("SELECT id, mission_id FROM evidence_cards ORDER BY id"):
             evidence_count += 1
@@ -191,6 +192,7 @@ def _deep_checks(connection: sqlite3.Connection) -> list[DoctorCheck]:
                 evidence_id=str(row["id"]),
                 mission_id=str(row["mission_id"]),
                 allow_withdrawn=True,
+                snapshot_cache=evidence_snapshot_cache,
             )
         checks.append(
             DoctorCheck(
@@ -209,6 +211,7 @@ def _deep_checks(connection: sqlite3.Connection) -> list[DoctorCheck]:
         )
 
     finding_count = 0
+    finding_snapshot_cache = new_snapshot_cache()
     try:
         for row in connection.execute(
             "SELECT id, mission_id, claim_id, statement_kind FROM findings ORDER BY id"
@@ -232,6 +235,7 @@ def _deep_checks(connection: sqlite3.Connection) -> list[DoctorCheck]:
                     evidence_id=str(citation_row["evidence_id"]),
                     mission_id=str(row["mission_id"]),
                     allow_withdrawn=False,
+                    snapshot_cache=finding_snapshot_cache,
                 )
                 if row["claim_id"] is not None and citation.claim_id != str(row["claim_id"]):
                     raise IntegrityError(

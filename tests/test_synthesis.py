@@ -761,6 +761,7 @@ def test_synthesis_batches_citation_verification_and_caches_shared_snapshots(
         evidence_ids: Sequence[str],
         mission_id: str,
         allow_withdrawn: bool,
+        snapshot_cache: object | None = None,
     ) -> object:
         evidence_batch = tuple(evidence_ids)
         verified_batches.append(evidence_batch)
@@ -769,6 +770,7 @@ def test_synthesis_batches_citation_verification_and_caches_shared_snapshots(
             evidence_ids=evidence_batch,
             mission_id=mission_id,
             allow_withdrawn=allow_withdrawn,
+            snapshot_cache=snapshot_cache,
         )
 
     def count_snapshot_verification(connection: sqlite3.Connection, row: sqlite3.Row) -> bytes:
@@ -776,8 +778,16 @@ def test_synthesis_batches_citation_verification_and_caches_shared_snapshots(
         return original_verify_snapshot(connection, row)
 
     monkeypatch.setattr(synthesis_module, "verify_evidence_references", count_verification)
+    # Both call sites are counted: assembly verifies snapshots while building the
+    # sources section, and the citation batch reuses that cache. A snapshot cited
+    # by several cards must still be verified exactly once per assembly.
     monkeypatch.setattr(
         evidence_integrity_module,
+        "verify_snapshot_integrity",
+        count_snapshot_verification,
+    )
+    monkeypatch.setattr(
+        synthesis_module,
         "verify_snapshot_integrity",
         count_snapshot_verification,
     )

@@ -16,14 +16,18 @@ from minerva.core.audit import AuditRecorder, AuditSink
 from minerva.core.db import Database
 from minerva.core.errors import ConflictError, IntegrityError, NotFoundError
 from minerva.core.types import Clock, IdentityContext, IdFactory, new_id, utc_now
-from minerva.evidence.integrity import verify_evidence_references
+from minerva.evidence.integrity import new_snapshot_cache, verify_evidence_references
 from minerva.integrations.research_packet import (
     CITATION_SCHEME,
     RESEARCH_PACKET_SCHEMA_VERSION,
     build_research_packet,
     serialize_research_packet,
 )
-from minerva.research.models import ClaimStatus, StatementKind
+from minerva.research.models import (
+    ClaimStatus,
+    StatementKind,
+    claim_status_evidence_valid,
+)
 from minerva.sources.integrity import verify_snapshot_integrity
 from minerva.synthesis.models import BriefArtifacts, ExportResult
 
@@ -695,21 +699,6 @@ def _preflight_claim_synthesis(
     return materialized_text_storage_bytes // storage_bytes_per_output_byte
 
 
-def _claim_status_evidence_valid(
-    status: ClaimStatus,
-    *,
-    has_active_support: bool,
-    has_active_opposition: bool,
-) -> bool:
-    if status is ClaimStatus.PROVISIONALLY_SUPPORTED:
-        return has_active_support
-    if status is ClaimStatus.CONTESTED:
-        return has_active_support and has_active_opposition
-    if status is ClaimStatus.UNSUPPORTED:
-        return has_active_opposition
-    return True
-
-
 def _packet_audit_references(
     connection: sqlite3.Connection,
     *,
@@ -963,8 +952,11 @@ def _assemble_brief(
             (claim_id, mission_id, mission_id),
         )
     sources: list[dict[str, Any]] = []
+    # Reused by the citation batch below so each snapshot is read, hashed, and
+    # audit-checked once per assembly instead of once per citing card.
+    snapshot_cache = new_snapshot_cache()
     for row in source_rows:
-        verify_snapshot_integrity(connection, row)
+        snapshot_cache[str(row["id"])] = (row, verify_snapshot_integrity(connection, row))
         sources.append(
             {
                 "snapshot_id": str(row["id"]),
@@ -1023,6 +1015,7 @@ def _assemble_brief(
         evidence_ids=tuple(str(row["id"]) for row in evidence_rows),
         mission_id=mission_id,
         allow_withdrawn=True,
+        snapshot_cache=snapshot_cache,
     )
     supersedes: dict[str, str | None] = {}
     citation_provenance: dict[str, dict[str, str | None]] = {}
@@ -1149,7 +1142,7 @@ def _assemble_brief(
             item["stance"] == "opposes" and not item["withdrawn"] for item in claim_citations
         )
         status = ClaimStatus(str(row["status"]))
-        status_evidence_valid = _claim_status_evidence_valid(
+        status_evidence_valid = claim_status_evidence_valid(
             status,
             has_active_support=active_support,
             has_active_opposition=active_opposition,

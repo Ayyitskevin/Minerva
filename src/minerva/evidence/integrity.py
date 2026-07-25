@@ -28,19 +28,34 @@ class VerifiedCitation:
     withdrawn_at: str | None
 
 
+type SnapshotCache = dict[str, tuple[sqlite3.Row, bytes]]
+
+
+def new_snapshot_cache() -> SnapshotCache:
+    """Share one verification cache across citations that cite the same snapshot.
+
+    Verification re-reads the snapshot blob, recomputes its SHA-256, and
+    re-checks its import audit event. Without a shared cache a ledger page or a
+    multi-citation finding repeats all of that once per citation.
+    """
+
+    return {}
+
+
 def verify_evidence_reference(
     connection: sqlite3.Connection,
     *,
     evidence_id: str,
     mission_id: str,
     allow_withdrawn: bool,
+    snapshot_cache: SnapshotCache | None = None,
 ) -> VerifiedCitation:
     return _verify_evidence_reference(
         connection,
         evidence_id=evidence_id,
         mission_id=mission_id,
         allow_withdrawn=allow_withdrawn,
-        snapshot_cache={},
+        snapshot_cache=new_snapshot_cache() if snapshot_cache is None else snapshot_cache,
     )
 
 
@@ -50,15 +65,16 @@ def verify_evidence_references(
     evidence_ids: Sequence[str],
     mission_id: str,
     allow_withdrawn: bool,
+    snapshot_cache: SnapshotCache | None = None,
 ) -> list[VerifiedCitation]:
-    snapshot_cache: dict[str, tuple[sqlite3.Row, bytes]] = {}
+    shared = new_snapshot_cache() if snapshot_cache is None else snapshot_cache
     return [
         _verify_evidence_reference(
             connection,
             evidence_id=evidence_id,
             mission_id=mission_id,
             allow_withdrawn=allow_withdrawn,
-            snapshot_cache=snapshot_cache,
+            snapshot_cache=shared,
         )
         for evidence_id in evidence_ids
     ]
