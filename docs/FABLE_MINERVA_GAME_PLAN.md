@@ -1,7 +1,7 @@
 ---
 repository: Ayyitskevin/Minerva
 phase: FABLE_PLANNING
-status: PLANNING_IN_PROGRESS
+status: READY_FOR_OPUS
 base_commit: 4977f5aa40cc83a300d009cf3d8e4649cf68ae1d
 ---
 
@@ -9,9 +9,11 @@ base_commit: 4977f5aa40cc83a300d009cf3d8e4649cf68ae1d
 
 This document is the complete Fable 5 planning deliverable for the two-stage
 Fable → Opus assignment. It records a full repository review at
-`base_commit` (`4977f5a`, the merge of PR #7, tip of `main`), a findings
-ledger, a refined product vision, and an implementation-ready roadmap.
-Opus 5 executes from this file; all handoff state is durable here.
+`base_commit` (`4977f5a`, the merge of PR #7 — the reviewed source
+tree; the only later merge, PR #8, added this document itself), a
+findings ledger, a refined product vision, and an implementation-ready
+roadmap. Opus 5 executes from this file; all handoff state is durable
+here.
 
 Reading order for Opus: sections 1–4 (what exists and what is wrong),
 section 26 (what to build first), sections 16–21 (how to build it),
@@ -38,16 +40,33 @@ not manufacture certainty* — is enforced in schema (no `true` claim state,
 no confidence-from-counts anywhere), in triggers (append-only on every
 research table), and in tests.
 
-The review found **no blocker-severity defect**. The dominant risks are
-not bugs but structural pressures on the next stage of the vision:
+The review found **no blocker-severity defect**. Eleven parallel deep
+reviews with adversarial re-verification confirmed **one high finding**
+(a data-loss race in `Database.connect()/initialize()` failure cleanup,
+ledger F-DB-1 — the exact pattern class ADR 0004 eliminated for
+restore, still present on the fresh-database path), **seven medium
+findings** (permanent brief-export block after withdrawing cited
+evidence; over-strict withdrawn-citation refusal for non-material
+statements; restore masking migration-state errors as corruption; two
+quantified full-table audit scans in the fulfillment budget; a missing
+`ANTHROPIC_AUTH_TOKEN` fail-closed guard; static-gate ban-list gaps),
+and a body of low findings — every one with exact file/symbol evidence
+in section 27. The dominant risks beyond those defects are structural
+pressures on the next stage of the vision:
 
-1. **Availability debt in fulfillment.** The M1.3 work-budget guard is
-   honest but the schema lacks the indexes its claim-scoped queries need
-   (`findings(claim_id)`, `finding_citations(evidence_id)`,
-   `audit_events(entity_id)`), so valid sparse requests on scan-heavy
-   databases can false-refuse with `brief_work_limit`. The docs already
-   defer this to "a separately human-reviewed indexing migration." That
-   migration is the single highest-value, lowest-risk next change.
+1. **Availability debt in fulfillment — now quantified.** The M1.3
+   work-budget guard is honest, but two query families full-scan the
+   *global* `audit_events` table (the per-snapshot import-event lookup
+   in `sources/integrity.py:42–53`, executed twice per cited snapshot,
+   and the `research.run.started` branch of the scoped audit CTE,
+   executed twice per fulfillment), and the claim-scoped finding
+   queries scan every mission finding. Measured on a schema replica:
+   ~3 VM steps per scanned row, so a valid request citing ~20 snapshots
+   false-refuses with `brief_work_limit` once total audit history
+   reaches roughly 60–70k rows — an ordinary long-lived multi-mission
+   database. The docs already defer this to "a separately human-reviewed
+   indexing migration." That migration is the single highest-value,
+   lowest-risk next change.
 2. **The fleet seams exist but have no identity.** `research-request.v1`,
    `research-brief.v2`, `research-result.v1`, and the capabilities
    manifest are exactly the right artifact seams for Athena and Icarus,
@@ -64,11 +83,13 @@ not bugs but structural pressures on the next stage of the vision:
    ADR 0003 currently promises candidates are never persisted.
 
 The recommended first Opus slice (section 26) is deliberately narrow:
-fix the small verified defects from the findings ledger (section 27) and
-ship the fulfillment indexing migration (0003) with invariant-level
-regression tests. It touches no trust boundary, requires no new human
-decision, and directly reduces the one documented availability defect in
-the fleet-facing contract.
+ship the fulfillment indexing migration (0003) and fix the verified
+correctness/security defects from the findings ledger (wave A in
+section 27), each with an invariant-level regression test. It adds no
+new trust surface and requires no new human decision; the two items
+that touch guarded code (`db.py` cleanup identity, the static-gate ban
+list) are exactly the changes AGENTS.md routes through Kevin's PR
+review, which this workflow already provides.
 
 ## 2. Current-state architecture
 
@@ -193,47 +214,80 @@ These were checked in code and tests, not assumed from docs:
 ## 4. Verified weaknesses and risks
 
 Summarized here; each maps to ledger entries in section 27 with exact
-file/symbol evidence. No blocker-severity findings were confirmed.
+file/symbol evidence and an adversarial-verification verdict. No
+blocker-severity findings were confirmed; one high and seven medium
+findings were.
 
-1. **Fulfillment false-refusal debt (planned, highest value).** The
-   claim-scoped fulfillment path executes queries whose access paths are
-   unindexed under migrations 0001–0002 (findings by claim,
-   finding-citations by evidence, audit events by entity). On databases
-   with large unrelated history, the cumulative VM-instruction budget
-   trips and a *valid* request is refused with `brief_work_limit`. This
-   is documented, deliberate, and deferred — and it is the main
-   availability defect in the one artifact contract the future fleet
-   depends on. (Ledger F-FUL-1.)
-2. **Restore/backup/fulfillment crash windows are honest but
+1. **Fresh-database failure cleanup can destroy state Minerva did not
+   create (confirmed high, F-DB-1).** `Database.connect()` and
+   `initialize()` delete the base path plus `-wal/-shm/-journal` by
+   pathname on failure with no dev/inode identity check
+   (`_remove_database_artifacts`, `core/db.py:244–267, 429–435`). Two
+   Minerva processes racing on a fresh path can end with the loser
+   unlinking the winner's just-committed database; a mutation command
+   racing the first `minerva init` does the same; a dangling operator
+   symlink or stale sidecars beside a nonexistent database also get
+   unlinked. The codebase already owns the correct pattern
+   (identity-checked `_PrivateDatabaseFile.cleanup`, ADR 0004) — it is
+   simply not applied to this path.
+2. **Fulfillment false-refusal debt — quantified (F-FUL-1..3).** Two
+   query families full-scan the *global* `audit_events` table inside
+   the VM budget (per-snapshot import-event lookup, twice per cited
+   snapshot; the `run.started` CTE branch, twice per fulfillment), and
+   claim-scoped finding queries scan all mission findings. Measured:
+   ~3 VM steps/row ⇒ a valid ~20-snapshot request false-refuses at
+   roughly 60–70k total audit rows. Documented, deliberate, deferred —
+   and the main availability defect in the artifact contract the
+   future fleet depends on.
+3. **Withdrawal can permanently brick mission export (confirmed
+   medium, F-WDR-1/2).** Following the documented correction workflow
+   (record a finding, later withdraw evidence it cites) makes `brief
+   preview/export` and claim-scoped fulfillment refuse forever —
+   findings are append-only, withdrawal is irreversible, and no
+   retraction record exists; deep doctor then reports a permanent
+   `finding_integrity` failure for honest use. The refusal also
+   applies to *optional* citations on explicitly non-evidentiary
+   assumptions/unresolved questions, stricter than PRD invariant 8.
+   Needs a product decision (D-9), not a patch.
+4. **Smaller confirmed mediums:** restore masks migration-state errors
+   as "failed integrity validation" (F-OPS-2); the Anthropic adapter's
+   fail-closed env list omits `ANTHROPIC_AUTH_TOKEN` (F-AI-2); the
+   static security gate misses several process/egress primitives —
+   `os.posix_spawn`, `multiprocessing`, `ProcessPoolExecutor`,
+   `webbrowser`, `ctypes` loaders, `loop.getaddrinfo`/`sock_connect` —
+   all confirmed by probe (F-GATE-1).
+5. **Restore/backup/fulfillment crash windows are honest but
    operator-hostile.** Partial staging files, partial output
    directories, and unmatched assist `requested` audit events are all
    documented as operator-cleanup cases; nothing in `doctor` or the CLI
-   helps an operator find or classify them. (Ledger F-OPS-1.)
-3. **Assist candidates are ephemeral to a fault.** The operator cannot
+   helps an operator find or classify them, and orphan staging files
+   are full copies of sensitive research data hidden as dotfiles.
+   (Ledger F-OPS-1.)
+6. **Assist candidates are ephemeral to a fault.** The operator cannot
    keep an accepted candidate without manually retyping it as a finding,
    which loses the machine-readable link between the model run recorded
    in audit and the human-authored finding derived from it. Evolving
    this touches ADR 0003's "never persisted" promise and is therefore a
    Kevin decision, not a background improvement. (Ledger F-AI-1.)
-4. **Single-claim assist scope.** The bounded context covers one claim
+7. **Single-claim assist scope.** The bounded context covers one claim
    and its active ledger only; there is no cross-claim or
    mission-level assistance. This is by design for M2B; the plan keeps
    it that way until agent-inference persistence is decided.
-5. **Coverage soft spots.** `safe_artifact_file.py` (73%),
+8. **Coverage soft spots.** `safe_artifact_file.py` (73%),
    `core/operations.py` (66%), and `sources/integrity.py` (77%) have
    the lowest branch coverage in the tree; the uncovered branches are
    mostly error paths in exactly the code where error paths are the
    security contract. (Ledger F-TEST-1.)
-6. **Web/API surface lags the domain model.** The HTML surface shows
+9. **Web/API surface lags the domain model.** The HTML surface shows
    missions/claims/briefs but not findings, withdrawals, supersession
-   chains, or audit; the API cannot withdraw evidence or record claim
-   status reasons the CLI can. None of this violates a contract (CLI is
-   the reference surface), but parity drift is accumulating. (Ledger
-   F-PAR-1.)
-7. **Fleet-vision gap, not defect:** no authentication design, no run
-   lineage for external agents, no import-before-evidence workflow for
-   external artifacts. These are the roadmap, entered through decision
-   gates in section 24.
+   chains, or audit; the API cannot withdraw evidence (escalated as
+   D-10); the web mission list silently truncates at 100. None of this
+   violates a contract (CLI is the reference surface), but parity
+   drift is accumulating. (Ledger F-PAR-1..3.)
+10. **Fleet-vision gap, not defect:** no authentication design, no run
+    lineage for external agents, no import-before-evidence workflow for
+    external artifacts. These are the roadmap, entered through decision
+    gates in section 24.
 
 ## 5. Refined Minerva vision
 
@@ -603,29 +657,41 @@ Forward-only, checksum-recorded, one concern per migration, every one
 preceded by a verified standalone backup in operator docs.
 
 1. **0003_fulfillment_indexes.sql** (slice 1): `CREATE INDEX` only.
-   Candidate set (final set must be justified by `EXPLAIN QUERY PLAN`
-   diffs in the PR, not copied blindly):
-   - `idx_findings_claim` ON findings(claim_id, created_at, id) WHERE claim_id IS NOT NULL
-   - `idx_finding_citations_evidence` ON finding_citations(evidence_id, finding_id)
-   - `idx_audit_entity` ON audit_events(entity_id, sequence)
-   - possibly `idx_withdrawals_mission` ON evidence_withdrawals(mission_id, evidence_id)
-   Implementation notes from code reading: claim-scoped finding queries
-   currently filter `mission_id = ? AND claim_id = ?` through forced
-   `INDEXED BY idx_findings_mission` hints (synthesis/service.py:622,
-   645–646), so unrelated same-mission findings are scanned; migration
-   0003 must update those `INDEXED BY` pins to the new index in the same
-   PR (SQLite errors on a missing named index, which usefully pins the
-   plan). The scoped audit CTE (synthesis/service.py:50–115) scans
-   mission audit history via `idx_audit_mission` with per-row EXISTS PK
-   probes, and its `research.run.started` branch joins on
-   `audit_events.entity_id`, which has no index at all — candidates:
-   `audit_events(mission_id, event_type, sequence)` and
-   `audit_events(entity_type, entity_id, sequence)`.
+   Verified candidate set (the review reproduced each scan with
+   `EXPLAIN QUERY PLAN` on a schema replica and measured ~3 VM
+   steps/row; the PR must still include its own EXPLAIN diffs):
+   - `idx_audit_event_entity` ON audit_events(event_type, entity_id,
+     sequence) — converts BOTH confirmed global scans to point
+     lookups: the per-snapshot import-event check
+     (`sources/integrity.py:42–53`, `WHERE event_type = ? AND
+     entity_id = ?`, runs twice per cited snapshot, ledger F-FUL-1)
+     and the `research.run.started` branch of the scoped audit CTE
+     (`synthesis/service.py:104–112`, filters
+     `event_type='research.run.started'` joining on `entity_id`, runs
+     twice per fulfillment, ledger F-FUL-2).
+   - `idx_findings_claim` ON findings(claim_id, created_at, id) —
+     serves the three claim-scoped finding/reference queries that
+     currently scan every mission finding through forced `INDEXED BY
+     idx_findings_mission` hints (`synthesis/service.py:622, 645–646,
+     1202–1211`, ledger F-FUL-3); those `INDEXED BY` pins must be
+     updated to the new index in the same PR (SQLite errors on a
+     missing named index, which usefully pins the plan).
+   Not needed (checked and rejected): `finding_citations(evidence_id)`
+   — reverse lookups go through the PK; `evidence_withdrawals` — the
+   UNIQUE(evidence_id) index already serves the EXISTS probes.
+   Companion code-only changes in the same slice (no migration
+   needed): share one snapshot-verification cache across the sources
+   loop and citation batch inside `_assemble_brief`
+   (`synthesis/service.py:967` vs `:1021`, ledger F-FUL-4 — halves
+   hashing and audit probes per fulfillment), and reuse the
+   materialized scoped-event set between preflight and assembly so
+   the audit CTE runs once.
    Proof obligations: (a) canonical brief/packet bytes identical
    before/after on the golden corpus; (b) a fulfillment scenario that
    false-refuses under 0002 succeeds under 0003 within the same budget
-   (regression test constructs scan-heavy unrelated history); (c) the
-   work guard still trips on genuinely oversized requests.
+   (regression test constructs scan-heavy unrelated audit history,
+   which the review showed dominates); (c) the work guard still trips
+   on genuinely oversized requests.
 2. **0004_agent_inferences.sql** (post D-1/ADR 0007): two append-only
    STRICT tables + triggers, prefix `inf_`; no changes to existing
    tables.
@@ -768,18 +834,32 @@ Ordered; 1–8 constitute Phase 0 (slice 1 = issues 1–6, see section 26).
    succeeds under 0003 with the unchanged budget.
 3. Determinism proof: golden corpus byte-equality across the 0003
    upgrade (brief export, packet verify, request fulfill outputs).
-4. Ledger fix_now items (see section 27 final dispositions) with one
-   invariant regression each.
+4. Ledger **wave A** fixes (section 27: F-DB-1 connect/init cleanup
+   identity, F-OPS-2 restore error masking, F-OPS-3 backup sidecar
+   refusal, F-AI-2 ANTHROPIC_AUTH_TOKEN, F-AI-3 OpenAI refusal
+   ordering, F-GATE-1 static ban-list gaps, F-GATE-2 suite-wide
+   network denial, F-SEC-1 packet error-code spoof, F-SEC-2 websocket
+   scope bypass, F-VAL-1 UTF-8 encodability, F-VAL-2 finding citation
+   bound, F-DB-2 recursive_triggers) with one invariant regression
+   each. F-DB-1 and F-GATE-1 touch review-gated surfaces: flag them
+   explicitly in the PR description for Kevin.
 5. Docs: README/SECURITY/ARCHITECTURE note redeeming the "separately
-   human-reviewed indexing migration" deferral; ADR 0005.
+   human-reviewed indexing migration" deferral; ADR 0005; brief ADR
+   0004 amendment note extending identity-checked cleanup doctrine to
+   connect/initialize (with F-DB-1's fix).
 6. Coverage lift for `safe_artifact_file.py`, `core/operations.py`,
    `sources/integrity.py` error branches (target: every security-
    relevant branch exercised; do not chase the number, chase the
    branches).
-7. `doctor` remnant enumeration (ADR 0006): staging files, partial
-   output directories, unmatched assist `requested` events — read-only,
-   bounded, path-safe output.
-8. Demo/docs polish pass from ledger `low` items worth keeping.
+7. `doctor` remnant enumeration (ADR 0006): orphan `.{db}.minerva-*.tmp`
+   staging files, partial output directories, unmatched assist
+   `requested` events — read-only, bounded, path-safe output.
+8. Ledger **wave B** quality fixes (section 27: batch snapshot
+   verification F-PERF-1, duplicated-helper consolidation F-DUP-1,
+   supersession regression tests F-TEST-2, uncertainty error text
+   F-VAL-3, package-data glob F-PKG-1, dead DTOs F-PAR-4, doc
+   milestone-numbering F-DOC-1, identity-header denylist F-PAR-5) plus
+   demo/docs polish.
 9. (D-1) ADR 0007 draft for Kevin: persisted agent inferences.
 10. (D-1) Migration 0004 + `assist adopt` service + CLI with
     adversarial adoption tests.
@@ -943,6 +1023,38 @@ can be a one-word reply.
   doing it earlier duplicates that design.*
 - **D-8 — License.** Explicitly deferred in DECISIONS.md as a human
   legal decision; remains open; nothing in this plan requires it.
+- **D-9 — Finding retraction vs. permanent export block (ledger
+  F-WDR-1/2).** Today, withdrawing evidence cited by any finding
+  permanently blocks mission brief export and claim-scoped
+  fulfillment, and deep doctor reports a standing integrity failure —
+  after an *honest, documented* correction workflow. Options: (a) add
+  a labeled, append-only finding-retraction/supersession record
+  (analogous to evidence withdrawal) so exports can represent the
+  finding as historically retracted — needs an ADR + migration and a
+  v2-packet-validator decision; (b) declare permanent refusal
+  intended doctrine and document it loudly. *Recommendation: (a); the
+  current behavior punishes the exact correction discipline the
+  doctrine demands. Also decide the narrower sub-question: should the
+  refusal apply to optional citations on non-material statements at
+  all (F-WDR-2)?*
+- **D-10 — REST evidence-withdrawal endpoint and manifest taxonomy
+  (ledger F-PAR-1/2).** The API can create evidence but not withdraw
+  it, and the capability manifest's `.cli` suffix convention is
+  inconsistent (`brief.export.markdown_json`). Either add the
+  withdrawal endpoint + fix the taxonomy in a deliberate manifest
+  revision, or record CLI-only withdrawal as an intentional boundary
+  in DECISIONS.md. *Recommendation: defer the endpoint until D-2
+  (first real protocol consumer), but record the boundary and fix the
+  manifest label taxonomy now.*
+- **D-11 — Restoring pre-upgrade backups with an upgraded binary
+  (ledger F-OPS-4).** `restore_from` requires latest schema, so after
+  an upgrade plus data loss, the only recovery is an unaudited manual
+  copy + `minerva init`, which records the wrong provenance event.
+  Options: allow restore to migrate the staged copy inside the audited
+  staging pipeline (ADR 0004 review clause applies), or document the
+  copy-then-init procedure and its provenance tradeoff.
+  *Recommendation: allow staged migration during restore — the
+  staging + deep-doctor pipeline already supports it safely.*
 
 ## 25. Explicitly rejected ideas
 
@@ -985,18 +1097,26 @@ durable unless Kevin reopens them):
 ## 26. Recommended first Opus implementation slice
 
 **Slice 1 = Phase 0 issues 1–6: fulfillment indexing migration 0003 +
-ledger fix_now items + their regression tests + ADR 0005 + doc
-updates.**
+ledger wave A fixes + their regression tests + ADR 0005 (and the ADR
+0004 amendment note for F-DB-1) + doc updates.**
 
 - **User outcome:** valid research requests on realistic databases stop
-  false-refusing with `brief_work_limit`; every small verified defect
-  from this review is fixed with a pinned regression; docs stop
-  promising an indexing migration "later."
-- **Scope:** exactly issues 1–6 in section 19; nothing else.
-- **Files expected to change:** section 20 Phase 0 list.
+  false-refusing with `brief_work_limit` (the confirmed ~60–70k-audit-
+  row cliff moves out of ordinary reach); the confirmed high data-loss
+  race and every wave A defect is fixed with a pinned regression; docs
+  stop promising an indexing migration "later."
+- **Scope:** exactly issues 1–6 in section 19; nothing else. Wave A =
+  F-DB-1, F-DB-2, F-OPS-2, F-OPS-3, F-AI-2, F-AI-3, F-GATE-1,
+  F-GATE-2, F-SEC-1, F-SEC-2, F-VAL-1, F-VAL-2, plus the slice-1 plan
+  items F-FUL-3/F-FUL-4 folded into the migration work and F-TEST-1
+  as issue 6.
+- **Files expected to change:** section 20 Phase 0 list, plus the
+  wave A files named in section 27.
 - **Data-model impact:** additive indexes only (migration 0003).
-- **Security impact:** none to trust boundaries; migration merge
-  requires Kevin's PR review per AGENTS.md; work guard retained and
+- **Security impact:** two review-gated surfaces change — `db.py`
+  connect/init cleanup identity (F-DB-1) and the static-gate ban list
+  (F-GATE-1); both must be called out in the PR description for
+  Kevin's review per AGENTS.md. Work guard retained and
   regression-proven to still trip on oversized requests.
 - **Migration impact:** schema version 2 → 3; standard documented
   backup-first upgrade; old binaries refuse the newer schema (existing
@@ -1006,9 +1126,10 @@ updates.**
   list green.
 - **Rollback strategy:** pre-upgrade backup + prior binary (documented,
   unchanged); the slice's PR is revertible as a unit before merge.
-- **Explicitly deferred:** doctor remnants (issue 7 — next slice),
-  everything gated on D-1..D-8, any index not justified by an
-  EXPLAIN-plan diff, any packet/schema change whatsoever.
+- **Explicitly deferred:** doctor remnants and wave B (issues 7–8 —
+  next slice), everything gated on D-1..D-11, any index not justified
+  by an EXPLAIN-plan diff, any packet/schema change whatsoever
+  (including the F-WDR-2 validator question, which waits for D-9).
 
 Second slice (no new decision needed): issues 7–8 (doctor remnant
 enumeration under ADR 0006 + polish). Third and later slices: strictly
@@ -1017,7 +1138,390 @@ after slice 2 and reports.
 
 ## 27. Fable findings ledger
 
-<!-- LEDGER_PENDING: filled from the completed review workflow before commit -->
+Method: eleven parallel deep-review agents covered the mandated areas;
+every blocker/high/medium candidate was independently re-verified by an
+adversarial agent instructed to refute it against the code. Verdicts:
+**CONFIRMED** (verifier reproduced the behavior at the cited location)
+or **—** (low/info findings, reviewed by Fable but not separately
+re-verified). 53 raw findings consolidated to the entries below;
+duplicates across dimensions are merged with all locations kept.
+Dispositions: **wave A** = slice 1 fix set, **wave B** = slice 2 fix
+set, **plan** = scheduled later work, **escalate** = Kevin decision
+(section 24), **reject** = considered, not worth doing (reasons kept).
+
+### Severity index
+
+| ID | Sev | Verdict | Title | Disposition |
+| --- | --- | --- | --- | --- |
+| F-DB-1 | high | CONFIRMED | connect/init failure cleanup deletes by pathname; data-loss race | fix_now (wave A, Kevin review) |
+| F-WDR-1 | medium | CONFIRMED | Withdrawing cited evidence permanently blocks mission export | escalate (D-9) |
+| F-WDR-2 | medium | CONFIRMED | Withdrawn-citation refusal hits optional citations on non-material statements | plan (D-9) |
+| F-OPS-2 | medium | CONFIRMED | Restore masks migration-state errors as "failed integrity validation" | fix_now (wave A) |
+| F-FUL-1 | medium | CONFIRMED | Import-audit lookup full-scans global audit_events, ×2 per snapshot | plan (slice 1, migration 0003) |
+| F-FUL-2 | medium | CONFIRMED | run.started CTE branch full-scans audit_events, ×2 per fulfillment | plan (slice 1, migration 0003) |
+| F-AI-2 | medium | CONFIRMED | Anthropic fail-closed env list omits ANTHROPIC_AUTH_TOKEN | fix_now (wave A) |
+| F-GATE-1 | medium | CONFIRMED | Static security gate misses process/egress primitives | fix_now (wave A, Kevin review) |
+| F-DB-2 | low | — | recursive_triggers off: OR REPLACE bypasses append-only DELETE triggers | fix_now (wave A) |
+| F-OPS-3 | low | — | backup_to lacks restore's destination-sidecar refusal | fix_now (wave A) |
+| F-AI-3 | low | — | OpenAI adapter labels non-terminal responses as REFUSED | fix_now (wave A) |
+| F-SEC-1 | low | — | Packet error-code classification spoofable via identifier substring | fix_now (wave A) |
+| F-SEC-2 | low | — | Security middleware passes websocket scopes unchecked | fix_now (wave A) |
+| F-VAL-1 | low | — | Undecodable argv/quote bytes surface as internal_error | fix_now (wave A) |
+| F-VAL-2 | low | — | Finding citation-count bound exists only in the API adapter | fix_now (wave A) |
+| F-GATE-2 | low | — | No suite-wide outbound-network denial in tests | fix_now (wave A) |
+| F-PERF-1 | low | — | Per-card snapshot re-hash on ledger/finding/doctor paths | fix_now (wave B) |
+| F-TEST-2 | low | — | Supersession workflows (withdrawn target, chains, N-to-1) untested | fix_now (wave B) |
+| F-VAL-3 | low | — | Uncertainty NUL reported as size-limit failure | fix_now (wave B) |
+| F-PKG-1 | low | — | web/static package-data glob non-recursive | fix_now (wave B) |
+| F-PAR-4 | low | — | Dead DTOs HealthRead/ReadinessRead; endpoints hand-build JSON | fix_now (wave B) |
+| F-DOC-1 | low | — | Milestone-numbering drift across doc titles | fix_now (wave B) |
+| F-PAR-5 | info | — | Identity-header denylist omits common proxy headers | fix_now (wave B) |
+| F-DUP-1 | low | — | Status-evidence + pagination helpers duplicated across services | fix_now (wave B) |
+| F-FUL-3 | low | — | Claim-scoped finding queries scan all mission findings ×3 | plan (slice 1, migration 0003) |
+| F-FUL-4 | low | — | Snapshot verification duplicated within one fulfillment | plan (slice 1, code-only) |
+| F-TEST-1 | low | — | Error-branch coverage gaps in security-critical modules | plan (slice 1, issue 6) |
+| F-OPS-1 | info | — | Orphan staging files invisible to doctor and docs | plan (slice 2, ADR 0006) |
+| F-OPS-5 | low | — | Doctor mutates journal-mode header; wal/foreign_keys checks tautological | plan |
+| F-OPS-6 | low | — | No directory fsync after export/backup/restore publication | plan |
+| F-AI-4 | low | — | KeyboardInterrupt during provider call leaves no terminal audit event | plan |
+| F-PAR-3 | low | — | Web mission list truncates at 100; CLI capped at 200; REST-only enumeration | plan |
+| F-PAR-2 | low | — | Capability manifest `.cli` suffix taxonomy inconsistent | plan (D-10) |
+| F-SYN-1 | info | — | Claim-scoped briefs exclude mission-level findings citing target-claim evidence | plan (document + pin test) |
+| F-DUP-2 | info | — | Canonical-JSON/strict-parse helpers duplicated packet↔request | plan (dedicated reviewed change) |
+| F-REL-1 | info | CONFIRMED (downgraded from medium) | Version 0.2.0a1 spans five functional states; no tags | plan |
+| F-REL-2 | info | — | Agent provenance only in branch names; commit convention drifted | plan |
+| F-TEST-3 | info | — | Coverage floor 85 sits ~4 points under actual | plan (ratchet to 88 after F-TEST-1) |
+| F-AI-1 | info | — | Assist candidates ephemeral by contract; accepted work loses model-run provenance | escalate (D-1) |
+| F-PAR-1 | info | — | Evidence withdrawal has no REST endpoint or manifest entry | escalate (D-10) |
+| F-OPS-4 | info | — | No audited path to restore a pre-upgrade backup with an upgraded binary | escalate (D-11) |
+| R-1..R-7 | info | — | Rejected items (below) | reject |
+
+### High
+
+**F-DB-1 — connect/init failure cleanup deletes by pathname and can
+destroy a concurrently initialized live database.** CONFIRMED (high,
+found independently by two dimensions).
+*Location:* `src/minerva/core/db.py` — `Database.connect` (257–277),
+`Database.initialize` (354, 429–435), `_remove_database_artifacts`
+(244–247).
+*Evidence:* `connect()` snapshots `path.exists()` before
+`sqlite3.connect()` creates the file and, on failure, unlinks base +
+`-wal/-shm/-journal` purely by pathname; `initialize()` mirrors this.
+Two processes racing a fresh path both see `exists()==False`; the loser
+(`migration_failed` or `database_busy`) unlinks the winner's committed
+database and live WAL after the winner reported success. Also
+reachable: a mutation command racing the first `minerva init`
+(`database_unready` → cleanup unlinks mid-transaction); `minerva
+mission create --db dangling-symlink` deletes the operator's symlink;
+stale operator sidecars beside a nonexistent path are deleted on any
+failed open. The identity-checked pattern already exists in the same
+file (`_PrivateDatabaseFile.cleanup`, 137–144) and in
+`operations._unlink_if_same`.
+*Invariant:* PRD invariant 6 (failure must not leave misleading state —
+here it destroys another process's committed domain+audit state); ADR
+0004's doctrine that cleanup never removes state Minerva did not create.
+*Impact:* silent loss of a just-initialized database, including audit
+history, with a success report standing.
+*Action:* (a) non-initialize connects open with `file:{path}?mode=rw`
+URI so they never create and never clean up — a missing database
+becomes an immediate error with zero filesystem side effects; (b)
+`initialize()` on a fresh path creates the file with `O_CREAT|O_EXCL`
+(or stages + hard-links like restore) and restricts cleanup to a
+dev/inode-identity-checked file this process created; (c) never unlink
+sidecars the process did not create; (d) short ADR 0004 amendment note
++ regression test mirroring
+`test_database_cleanup_preserves_concurrent_replacements`.
+*Disposition:* fix_now (wave A) — flag prominently for Kevin's PR
+review; this touches the migration/connection trust surface.
+
+### Medium
+
+**F-WDR-1 — Withdrawing cited evidence permanently blocks mission brief
+export with no remediation path.** CONFIRMED.
+`synthesis/service.py:1231–1238` raises `citation_withdrawn` on every
+brief path (CLI preview/export, web, API preview, request fulfillment);
+findings/citations are append-only, withdrawal irreversible
+(UNIQUE(evidence_id)), no retraction record exists; deep doctor also
+reports `finding_integrity=False` for this honest state
+(`core/doctor.py:229–235`). The documented correction workflow
+(withdraw bad evidence) therefore permanently disables the milestone's
+core deliverable for the whole mission. Invariant 8 is honored *by
+refusal*; the gap is the 3+8+append-only interaction. → escalate D-9.
+
+**F-WDR-2 — The withdrawn-citation refusal also applies to optional
+citations on explicitly non-evidentiary statements.** CONFIRMED.
+The check loop (`synthesis/service.py:1231–1243`) runs before the
+statement-kind branch, and `research_packet.py:584–595` hard-codes the
+same for AssumptionRecord/UnresolvedQuestionRecord — stricter than PRD
+invariant 8, which mandates refusal for *material* findings only; the
+tests bless optional citations on non-material statements but never
+test their withdrawal. Same permanent-block consequence; misleading
+"cannot support a finding" message for statements that assert no
+support. → plan under D-9 (touches the v2 packet validator, needs the
+ADR, align service + validator together).
+
+**F-OPS-2 — Restore reports healthy pre-upgrade or too-new backups as
+"failed integrity validation".** CONFIRMED.
+`db.py:515–528` wraps `_validate_migration_state(source,
+require_latest=True)` in a blanket except that re-raises everything as
+`backup_invalid` ("The backup failed integrity validation."), masking
+`database_migration_required` / `database_too_new` /
+`migration_checksum_mismatch`. At recovery time an operator may
+conclude a good backup is corrupt and discard it — the doctrine's
+worst failure mode (manufactured certainty about corruption).
+→ wave A: preserve the underlying code (or add
+`backup_migration_required`), regression test with a
+truncated-migration backup.
+
+**F-FUL-1 — Per-snapshot import-audit lookup full-scans the global
+audit_events table twice per cited snapshot.** CONFIRMED empirically.
+`sources/integrity.py:42–53`: `WHERE event_type = ? AND entity_id = ?`
+has no usable index; EXPLAIN shows `SCAN audit_events`; measured
+600,028 VM steps over 200,001 rows (~3/row); runs twice per distinct
+snapshot (sources loop + citation batch, separate caches). With ~20
+snapshots the 8M budget dies at ~60–70k total audit rows across ALL
+missions. → migration 0003 `idx_audit_event_entity` (slice 1).
+
+**F-FUL-2 — run.started branch of the scoped audit CTE full-scans
+audit_events and executes twice per fulfillment.** CONFIRMED
+empirically. `synthesis/service.py:104–112` plans as `SCAN started`
+probing an automatic index on the tiny CTE; ~600k VM steps against
+200k unrelated audit rows, doubled (preflight + assembly); the
+mission-export path `_packet_audit_references` (735–747) shares the
+missing index. → same index; optionally reuse the materialized
+scoped-event set so the CTE runs once (code-only).
+
+**F-AI-2 — Anthropic fail-closed environment list omits
+ANTHROPIC_AUTH_TOKEN.** CONFIRMED against installed SDK internals.
+`anthropic.py:35` blocks only `ANTHROPIC_CUSTOM_HEADERS`; anthropic
+0.118.0 skips ambient `ANTHROPIC_AUTH_TOKEN` only because of a
+non-upstreamed hand-written guard, and the pin `>=0.117,<1` admits
+versions without it; the bearer-header builder attaches `Authorization:
+Bearer` alongside `x-api-key` when auth_token is set. Drift from ADR
+0003's fail-closed principle (the OpenAI list is complete by
+comparison). → wave A: add to `_UNSUPPORTED_SDK_ENVIRONMENT` + test
+parameter + ADR 0003 list note.
+
+**F-GATE-1 — Static security gate ban list misses process/egress
+primitives.** CONFIRMED by probe: `os.posix_spawn(p)`,
+`multiprocessing.Process().start()`, `ProcessPoolExecutor()`,
+`webbrowser.open()`, `ctypes.cdll.LoadLibrary()`/`ctypes.WinDLL()`,
+`loop.getaddrinfo()` (DNS exfiltration channel), `loop.sock_connect()`
+all pass with zero violations while control probes are flagged.
+No runtime violation exists today; the risk is silent future drift
+past a gate the docs describe as static enforcement. → wave A: extend
+the frozen sets + one parametrized negative probe per new ban in
+`test_gate_scripts.py`; Kevin review (security gate change).
+
+### Low — wave A (slice 1 fixes)
+
+**F-DB-2 — recursive_triggers off; OR REPLACE bypasses append-only
+DELETE triggers.** Verified empirically on SQLite 3.45.1: `INSERT OR
+REPLACE` silently deletes+rewrites a trigger-protected row unless
+`PRAGMA recursive_triggers=ON`. No shipped SQL uses OR REPLACE; this
+hardens the trigger contract against future drift. One pragma in
+`Database._connect` + one test asserting OR REPLACE aborts.
+
+**F-OPS-3 — backup_to lacks destination-sidecar refusal.** Restore
+checks `_reject_restore_destination_sidecars`; backup publishes beside
+stale `X-wal/-shm/-journal`, deferring the failure to restore time
+(`backup_not_standalone`) — the worst moment. Mirror the refusal +
+parametrized test.
+
+**F-AI-3 — OpenAI adapter classifies non-terminal/failed responses with
+a refusal item as REFUSED.** `openai.py:119–140` checks `_has_refusal`
+before `status != "completed"`; a failed/cancelled/in-progress response
+with refusal content commits an `assistance.invocation.refused` audit
+event for an outcome Minerva never observed (invariant 12 honesty).
+Reorder the status check + fake-response test.
+
+**F-SEC-1 — Packet error-code classification spoofable via substring
+match.** `research_packet_file.py:169–176` matches the digest-failure
+phrase as a substring of `detail["msg"]`; identifiers are unconstrained
+and embedded in semantic ValueErrors, so a crafted packet steers
+`packet_invalid` → `packet_digest_mismatch` (verified against venv
+pydantic). Rejection still happens (exit 3). Tighten to `loc == ()` +
+exact-match; mirror in the request adapter; regression test.
+
+**F-SEC-2 — Security middleware forwards non-HTTP ASGI scopes
+unchecked.** `web/security.py:315–318` passes websocket scopes to the
+inner app with no Host/Origin/body enforcement. Unexploitable today
+(no websocket routes; plain uvicorn); silently voids the documented
+boundary if one is ever added. Allow only `http` (checked) +
+`lifespan`; reject others; test.
+
+**F-VAL-1 — Undecodable argv/content bytes surface as
+`internal_error`.** Surrogate-escaped argv passes `validate_text`
+(`core/types.py:64–84`) and dies at sqlite3 binding as bare-Exception
+exit 1; `evidence add --quote` dies at `quote.encode()` similarly
+(`evidence/service.py:49,84`); the API content encode at
+`api/routes.py:485` would 500. All fail closed (rollback confirmed)
+but misreport operator input as a Minerva bug. Add strict-encodability
+to `validate_text`, wrap the two encode sites into domain errors +
+CLI regression tests.
+
+**F-VAL-2 — Finding citation-count bound lives only in the API
+adapter.** `FindingCreate` caps at 100; the service and CLI accept
+unbounded lists (AGENTS.md forbids adapter-only validation), and a CLI
+operator can push `finding_citations` past `MAX_SYNTHESIS_REFERENCES`,
+self-inflicting a permanent `brief_work_limit` export refusal. Move
+the bound into `ResearchService.add_finding` + stable error + test.
+
+**F-GATE-2 — No suite-wide outbound-network denial.** Fakes-only is
+enforced by convention plus three local patches (demo/packet/request
+tests). Add an autouse conftest fixture denying non-loopback
+`socket.connect`/`create_connection` with the existing canary pattern,
+keeping the stricter local total-denial patches.
+
+### Low — wave B (slice 2 fixes)
+
+**F-PERF-1 — Per-card snapshot re-hash on hot paths** (three dimensions
+flagged): `_ledger_entries_from_rows` (`evidence/service.py:331`),
+`add_finding` loop (`research/service.py:330–336`), read paths
+(`research/service.py:756–772, 891–914`), doctor loops
+(`core/doctor.py:187–194, 229–235`) each construct a fresh
+`snapshot_cache`, re-reading and re-SHA-256-ing the same BLOB per card
+(≈200 MiB redundant work per 200-entry ledger page; gigabytes for a
+100-citation finding on 20 MiB snapshots). The batch verifier with a
+shared cache exists and synthesis already uses it. Switch call sites;
+semantics unchanged; pin with the existing batching-count test pattern.
+
+**F-TEST-2 — Supersession workflows untested.** Superseding a withdrawn
+card (the documented correction flow), three-card chains, and N-to-1
+supersession are all currently legal and consistent across service/
+export/packet layers but have zero regression tests; document the DAG
+semantics while adding them.
+
+**F-VAL-3 — Uncertainty NUL misreported as size failure**
+(`research/service.py:310–312`): split the conditions under the
+existing `uncertainty_invalid` code.
+
+**F-PKG-1 — `web/static/*` glob non-recursive** (pyproject:68) unlike
+templates; a future nested static asset ships a silently broken wheel
+that verify_dist can only half-catch. Add `web/static/**/*` + a gate
+test tying the tree to `EXPECTED_RESOURCES`.
+
+**F-PAR-4 — Dead DTOs** `HealthRead`/`ReadinessRead`
+(`api/models.py:197,207`): endpoints hand-build JSON; construct through
+the DTOs (preferred) or delete them.
+
+**F-DOC-1 — Milestone-numbering drift:** PRD title omits 1.1,
+THREAT_MODEL omits 1.2, README labels the base slice 1.1. One
+docs-only normalization pass.
+
+**F-PAR-5 — Identity-header denylist misses `X-Remote-User`,
+`X-Forwarded-User`, `X-Auth-Request-User/Email`** and applies only to
+`/api/v1`. Trust boundary intact (nothing consumes headers); extending
+the frozenset widens the loud misdeployment signal. One-line + test.
+
+**F-DUP-1 — Duplicated validation helpers:**
+`_claim_status_evidence_valid` byte-identical in research + synthesis
+services (the packet validator's independent copies are intentional);
+`_validate_page_request` duplicated verbatim. Consolidate the
+service-layer copies into one shared pure helper with a
+cross-reference comment; a one-sided future edit would brick export
+fail-closed until re-synced.
+
+### Plan (scheduled, non-wave)
+
+- **F-FUL-3** (slice 1, migration 0003): `idx_findings_claim` +
+  `INDEXED BY` hint updates — claim-scoped queries currently scan all
+  mission findings ×3 (`synthesis/service.py:603–654, 1202–1211`).
+- **F-FUL-4** (slice 1, code-only): share one snapshot-verification
+  cache across `_assemble_brief`'s sources loop and citation batch
+  (`:967` vs `:1021`) — halves hashing and audit probes per
+  fulfillment.
+- **F-TEST-1** (slice 1, issue 6): error-injection tests for
+  `safe_artifact_file.py` (73%), `core/operations.py` (66%),
+  `sources/integrity.py` (77%) — the fail-closed branches are the
+  security contract; several are asserted only by documentation.
+- **F-OPS-1** (slice 2, ADR 0006): doctor enumeration of orphan
+  `.{db}.minerva-*.tmp` staging files (full sensitive DB copies as
+  dotfiles), partial outputs, unmatched assist `requested` events;
+  README staging-convention note. Report-only, never delete.
+- **F-OPS-5:** doctor's `read()` connection executes `PRAGMA
+  journal_mode=WAL` — a persistent header write on the inspected file
+  — and its wal/foreign_keys checks re-read what `_connect` itself
+  forced (constant-true). Open read-only (`mode=ro`), report the
+  persisted journal mode, extend `test_doctor_is_read_only` to assert
+  byte-identity.
+- **F-OPS-6:** no directory fsync after `_write_exclusive`,
+  `_publish_private_database`, or staged cleanup — a reported+audited
+  export/backup/restore publication can vanish on power loss while
+  its audit row survives. fsync the directory fd (export already
+  holds it) or extend ADR 0004's consequences honestly.
+- **F-AI-4:** `generate_finding_candidates` records no terminal audit
+  event when KeyboardInterrupt escapes the provider call although
+  control returns to Minerva; add a BaseException arm recording
+  `outcome_unknown` best-effort before re-raising (design care: a
+  second Ctrl-C must not mask the first).
+- **F-PAR-3:** web mission list silently truncates at 100 (no
+  indicator), CLI caps at 200 (no cursor); short-term truncation
+  indicator, longer-term paging (UX decision).
+- **F-PAR-2:** manifest taxonomy (`brief.export.markdown_json` without
+  `.cli`) — fold into D-10's deliberate manifest revision; the string
+  is pinned in routes.py, test_api.py, and installed_smoke.py.
+- **F-SYN-1:** claim-scoped packets exclude mission-level findings
+  even when they cite target-claim evidence (`synthesis/
+  service.py:1202–1211`); invariant 16 doesn't specify finding
+  scoping. Document the rule (claim-linked only) or extend selection;
+  either way pin with a test.
+- **F-DUP-2:** `_canonical_json_bytes`/`_strict_json_loads`/
+  `_require_bounded_json_shape` are character-identical between
+  packet and request modules — digest-critical duplication. Dedicated
+  reviewed change (shared helper or byte-equivalence test); do not
+  bundle.
+- **F-REL-1** (downgraded medium→info by verification: real, but no
+  written contract violated): version 0.2.0a1 spans five functional
+  states (~5.8k lines) with zero git tags; SECURITY.md asks reporters
+  to name affected versions they cannot name. Bump per milestone
+  merge; retro-tag 876f790/7cf6439/5868a12/4977f5a if useful.
+- **F-REL-2:** agent provenance lives only in branch names (codex/*,
+  sol/*, fable/*); commit-prefix convention silently dropped in PRs
+  #5–#7. Add a commit/attribution convention to CONTRIBUTING.
+- **F-TEST-3:** coverage floor 85 vs actual 89.04 — ratchet to 88
+  after F-TEST-1 lands; never chase the number.
+
+### Escalated to Kevin
+
+- **F-AI-1 → D-1** (ephemeral-by-contract candidates mean an operator
+  who accepts a model draft retypes it as an ordinary finding, losing
+  the machine-readable link to the assist run recorded in audit; the
+  persistence design is section 12 / ADR 0007 and is Kevin's call
+  because ADR 0003 promises "never persisted").
+- **F-WDR-1 → D-9** (finding retraction vs permanent export block).
+- **F-PAR-1 → D-10** (REST evidence-withdrawal endpoint or documented
+  CLI-only boundary; API tests currently reach withdrawal only by
+  calling the service directly).
+- **F-OPS-4 → D-11** (`restore_from` requires latest schema; after
+  upgrade + data loss the only path is unaudited copy+init recording
+  the wrong provenance event).
+
+### Rejected (considered; reasons preserved)
+
+- **R-1** DB CHECK against self-referential `supersedes_evidence_id`:
+  unreachable through every service path; direct-SQL writers are
+  outside the trust boundary and already fail closed at export.
+- **R-2** Depth/width preflight runs post-decode; extreme nesting maps
+  to `*_malformed` not `*_too_complex`: cosmetic code choice; memory
+  is bounded by pre-decode caps; optionally clarify ARCHITECTURE
+  wording only.
+- **R-3** Backup compensation stat→unlink TOCTOU: reversing order
+  would leave a worse residue (audit event with no file); actor is
+  inside the documented trust boundary.
+- **R-4** Backup cleanup captures identity post-publication:
+  sub-millisecond window, same-OS-user actor, correctly inode-guarded
+  otherwise.
+- **R-5** Unused `EXIT_USAGE` constant: keep as documentation of the
+  argparse-owned exit code.
+- **R-6** AST gate evadable via `getattr` string-building: inherent
+  static-analysis limit; MIN003/MIN005 block generic laundering;
+  optionally note in the script docstring.
+- **R-7** Fulfillment artifacts lack directory fsync: docs already
+  declare publication non-crash-atomic and the result manifest's
+  SHA-256 makes partial publication detectable (the export/backup
+  variant stays open as F-OPS-6 because there an *audited success*
+  can vanish).
 
 ## 28. Verification evidence and unavailable checks
 
@@ -1049,7 +1553,11 @@ Unavailable / not-run checks (reported as open verification, not passes):
 - **Non-Linux platforms** — out of the supported boundary; untested.
 - **Coverage-floor caveat** — the pytest gate result includes coverage
   instrumentation; the lowest-covered security-relevant modules are
-  listed in section 4 item 5 and targeted by issue 6.
+  listed in section 4 item 8 and targeted by issue 6.
+- **Timing note** — the eleven gates were run against `4977f5a`
+  (pre-merge tip of `main`); the only change merged since (PR #8) is
+  this document, which no gate inspects, so the results transfer to
+  the current `main`. Opus re-runs the full list per slice regardless.
 
 Review methodology: all governing documents read in full (AGENTS,
 README, CONTRIBUTING, SECURITY, PRD, ARCHITECTURE, ROADMAP,
@@ -1064,4 +1572,13 @@ and digest semantics; fulfillment bounds and false-refusal risk;
 provider consent/credentials/prompt-injection/timeouts; API/web/CLI
 parity; tests/gates/packaging; Git/PR archaeology), and every
 high/medium candidate finding was independently adversarially
-re-verified against the code before entering section 27.
+re-verified against the code before entering section 27. Final
+workflow accounting: 21 agents (11 reviewers + 10 verifiers), 642
+tool uses, zero agent errors; 53 raw findings consolidated into the
+ledger; verification confirmed 9 of 10 serious candidates at severity
+and downgraded 1 (F-REL-1, medium → info). Several verifiers
+reproduced their claims empirically (EXPLAIN QUERY PLAN and VM-step
+measurements on schema replicas for F-FUL-1/2/3; live probe files
+against the static gate for F-GATE-1; installed-SDK source inspection
+for F-AI-2; SQLite OR REPLACE trigger-bypass demonstration for
+F-DB-2).
