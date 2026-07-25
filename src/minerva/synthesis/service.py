@@ -619,7 +619,7 @@ def _preflight_claim_synthesis(
                            ELSE 0
                        END
                    ) AS finding_text_storage_bytes
-            FROM findings INDEXED BY idx_findings_mission
+            FROM findings INDEXED BY idx_findings_claim
             WHERE mission_id = ? AND claim_id = ?
             ORDER BY created_at, id
             LIMIT ?
@@ -642,7 +642,7 @@ def _preflight_claim_synthesis(
         connection.execute(
             """
             SELECT LENGTH(CAST(reference.evidence_id AS BLOB)) AS reference_text_storage_bytes
-            FROM findings AS finding INDEXED BY idx_findings_mission
+            FROM findings AS finding INDEXED BY idx_findings_claim
             JOIN finding_citations AS reference INDEXED BY idx_finding_citations_finding
               ON reference.finding_id = finding.id
             WHERE finding.mission_id = ? AND finding.claim_id = ?
@@ -1203,7 +1203,7 @@ def _assemble_brief(
             """
             SELECT id, claim_id, statement, statement_kind, status, uncertainty,
                    creator_id, run_id, created_at
-            FROM findings
+            FROM findings INDEXED BY idx_findings_claim
             WHERE mission_id = ? AND claim_id = ?
             ORDER BY created_at, id
             """,

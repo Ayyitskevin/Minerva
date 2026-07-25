@@ -4,6 +4,7 @@
 - [ADR 0002: Keep sibling systems behind artifact/protocol seams](adr/0002-system-boundaries.md)
 - [ADR 0003: Require explicit BYOK consent for bounded model assistance](adr/0003-explicit-byok-model-assistance.md)
 - [ADR 0004: Audit restored databases before exclusive publication](adr/0004-staged-restore-audit-publication.md)
+- [ADR 0005: Add targeted indexes for claim-scoped request fulfillment](adr/0005-targeted-fulfillment-indexing.md)
 
 ## Milestone 1 implementation decisions
 
@@ -71,8 +72,9 @@
   call the mutating/audited brief-export path.
 - Fulfillment bounds cumulative SQLite virtual-machine work with a connection-local
   progress handler and maps only its own exhaustion interrupt to the existing
-  `brief_work_limit` refusal. This schema-free hardening accepts possible false refusal
-  on scan-heavy databases; targeted indexes are deferred to a human-reviewed migration.
+  `brief_work_limit` refusal. This schema-free hardening accepted possible false refusal
+  on scan-heavy databases; migration 0003 has since supplied the targeted indexes
+  (ADR 0005) while retaining the budget.
 - Before full database text or snapshot content is returned to Python, claim-scoped
   synthesis preflights NUL-safe storage-byte lengths at every emitted string's exact
   packet multiplicity. UTF-8 is exact and UTF-16 uses a conservative two-to-one
@@ -101,3 +103,18 @@
 - Requested and terminal audit metadata bracket the external call but cannot be
   transactionally atomic with it. Timeouts have unknown provider outcomes and are not
   retried automatically.
+
+## Milestone 1.4 implementation decisions
+
+- Migration 0003 adds only two indexes: `idx_audit_event_entity` on
+  `audit_events(event_type, entity_id, sequence)` and `idx_findings_claim` on
+  `findings(mission_id, claim_id, created_at, id)`. Fulfillment cost becomes
+  independent of unrelated audit history; the cumulative work budget, its
+  `brief_work_limit` refusal, and the storage-byte preflight are unchanged.
+- The claim-scoped `INDEXED BY` hints are repointed to `idx_findings_claim` in the
+  same change, because SQLite ignores a better index while a hint names another.
+  The hints stay so a budgeted read cannot silently regress to a scan, and a
+  missing index fails loudly instead of quietly.
+- Determinism is unaffected: every order-sensitive read on the export and
+  fulfillment paths orders by a unique key or key suffix, so no plan change can
+  reorder canonical output.

@@ -861,3 +861,30 @@ def test_database_publication_race_preserves_substituted_symlink_victim(
     assert target.resolve() == victim
     assert victim.read_bytes() == victim_bytes
     assert list(tmp_path.glob(f".{target.name}.minerva-*.tmp*")) == []
+
+
+def test_pre_index_schema_fails_closed_before_pinned_queries_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A database missing migration 0003 is refused with a typed error.
+
+    Claim-scoped synthesis pins `idx_findings_claim` with INDEXED BY, so a
+    database stopped at schema 2 would raise a raw sqlite3 "no such index"
+    error if it ever reached those queries. The migration-state check must
+    reject it first.
+    """
+
+    migrations = db_module._migration_files()
+    assert len(migrations) >= 3
+    path = tmp_path / "pre-index.db"
+    database = Database(path)
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:2])
+    assert database.initialize() == 2
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations)
+
+    with pytest.raises(IntegrityError) as caught:
+        with database.read():
+            pass
+
+    assert caught.value.code == "database_migration_required"

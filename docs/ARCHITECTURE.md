@@ -242,10 +242,13 @@ these inert files. Milestone 1.3 adds no adapter, transport, remote identity, sh
 database, shared run envelope, MCP surface, Icarus exchange, publication, messaging,
 execution, approval, or automatic adoption.
 
-Milestone 1.3 deliberately adds no indexing migration. Existing claim/audit access paths
-can therefore make a valid sparse request exceed the work budget; a separately
-human-reviewed migration may add targeted indexes to reduce false refusals while
-retaining the cumulative guard as defense in depth.
+Migration 0003 supplies the indexes that access path needs: `idx_audit_event_entity` on
+`audit_events(event_type, entity_id, sequence)` serves both the snapshot import-event
+lookup and the run-started branch of the scoped audit CTE, and `idx_findings_claim` on
+`findings(mission_id, claim_id, created_at, id)` serves the claim-scoped finding and
+reference queries. Those queries pin the new index with `INDEXED BY`, so a budgeted read
+cannot silently regress to a scan and a missing index fails loudly. The cumulative guard
+is retained unchanged as defense in depth. See [ADR 0005](adr/0005-targeted-fulfillment-indexing.md).
 
 Synthesis work is bounded before rendering, and each rendered output is checked against
 its byte limit before exposure or export. File export uses fixed filenames beneath an

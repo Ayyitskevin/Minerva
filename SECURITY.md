@@ -71,10 +71,13 @@ source/audit/run closure.
 
 The query-only snapshot has one cumulative SQLite virtual-machine instruction budget.
 Exhaustion fails closed as `brief_work_limit` (CLI exit `3`) before artifact publication;
-it is not a wall-clock timeout. Because this milestone deliberately adds no schema
-migration, valid requests can be refused when existing indexes require excessive scans.
-A later human-reviewed indexing migration may reduce that availability tradeoff while
-retaining the guard.
+it is not a wall-clock timeout. Migration 0003 (ADR 0005) adds targeted indexes on
+`audit_events(event_type, entity_id, sequence)` and
+`findings(mission_id, claim_id, created_at, id)`, so the audit and claim-scoped finding
+lookups are point searches and fulfillment work no longer scales with unrelated missions'
+history. The budget is retained unchanged as defense in depth and still refuses genuinely
+oversized work, including same-mission history the claim-scoped audit query must examine
+row by row.
 
 Before full database text or snapshot content is returned to Python, claim-scoped
 synthesis asks SQLite for NUL-safe storage-byte lengths at every emitted string's exact

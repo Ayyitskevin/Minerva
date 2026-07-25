@@ -80,10 +80,22 @@
 - Ephemeral, candidate-only `agent_inference` output with no automatic persistence
 - Metadata-only requested/terminal audit events with honest unknown-outcome handling
 
-## Later milestones, not implemented now
+## Milestone 1.4: targeted fulfillment indexing
 
-- A separately reviewed claim/audit indexing migration to reduce valid fulfillment
-  false refusals while retaining the cumulative work guard
+- Forward-only migration 0003 adds `idx_audit_event_entity` on
+  `audit_events(event_type, entity_id, sequence)` and `idx_findings_claim` on
+  `findings(mission_id, claim_id, created_at, id)`; no table, column, trigger, or
+  data change.
+- Claim-scoped fulfillment work becomes independent of unrelated missions' audit
+  history, redeeming the Milestone 1.3 indexing deferral.
+- Claim-scoped queries pin the new index with `INDEXED BY`, so a budgeted read
+  cannot silently regress to a scan and a missing index fails loudly.
+- The cumulative work budget, `brief_work_limit` refusal, storage-byte preflight,
+  and every other Milestone 1.3 control are retained unchanged.
+- Canonical output is unchanged: every order-sensitive read orders by a unique key,
+  and regression tests assert byte-identical fulfillment across added history.
+
+## Later milestones, not implemented now
 - Authenticated Athena mission/identity coordination adapter that may produce the
   existing request artifact only after a separately reviewed identity/authorization
   boundary; no transport or adapter exists in Milestone 1.3

@@ -1100,3 +1100,146 @@ def test_claim_scoped_fulfillment_rejects_malformed_duplicate_run_start(
 
     assert caught.value.code == "packet_provenance_invalid"
     assert not output_dir.exists()
+
+
+def _insert_unrelated_audit_history(lab: Lab, *, count: int) -> str:
+    """Append audit rows for a second mission that the target claim never references."""
+
+    unrelated = lab.research.create_mission(
+        title="Unrelated research mission",
+        objective="Accumulate history that the requested claim does not reference.",
+        identity=lab.identity,
+    )
+    rows = [
+        (
+            f"aud_{500_000 + index:032x}",
+            "research.question.created",
+            "research_question",
+            f"que_{500_000 + index:032x}",
+            unrelated.id,
+            lab.identity.actor_id,
+            lab.identity.run_id,
+            fixed_clock(),
+            "{}",
+        )
+        for index in range(count)
+    ]
+    with lab.database.transaction() as connection:
+        connection.executemany(
+            """
+            INSERT INTO audit_events(
+                id, event_type, entity_type, entity_id, mission_id,
+                actor_id, run_id, occurred_at, details_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    return unrelated.id
+
+
+@pytest.mark.security
+def test_unrelated_audit_history_does_not_drive_fulfillment_work(
+    lab: Lab,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Migration 0003 keeps fulfillment cost independent of other missions' audit rows.
+
+    Without idx_audit_event_entity the snapshot import-event lookup and the
+    run-started audit branch each scan the whole audit table, so 5,000 unrelated
+    rows cost roughly 60,000 virtual-machine steps. The budget below is far above
+    the indexed cost and far below the scan cost, so this fails closed if the
+    index is dropped or stops being selected.
+    """
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    request_path, _document = _write_request(
+        tmp_path,
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        evidence_ids=(evidence.id,),
+    )
+    _insert_unrelated_audit_history(lab, count=5_000)
+    monkeypatch.setattr(request_fulfillment_module, "MAX_REQUEST_QUERY_VM_STEPS", 20_000)
+    monkeypatch.setattr(request_fulfillment_module, "_QUERY_PROGRESS_GRANULARITY", 100)
+
+    output_dir = tmp_path / "output"
+    _success(capsys, _fulfill_argv(lab.database, request_path, output_dir))
+
+    assert (output_dir / "research-brief.json").is_file()
+
+
+@pytest.mark.security
+def test_targeted_fulfillment_indexes_are_present_and_selected(lab: Lab) -> None:
+    """The packaged indexes exist and serve the queries that pin them."""
+
+    with lab.database.read() as connection:
+        names = {
+            str(row["name"])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type = 'index' AND name LIKE 'idx_%'"
+            )
+        }
+        assert {"idx_audit_event_entity", "idx_findings_claim"} <= names
+
+        audit_plan = " ".join(
+            str(row["detail"])
+            for row in connection.execute(
+                """
+                EXPLAIN QUERY PLAN
+                SELECT entity_type FROM audit_events
+                WHERE event_type = ? AND entity_id = ?
+                ORDER BY sequence LIMIT 2
+                """,
+                ("source.snapshot.imported", "snp_" + "0" * 32),
+            )
+        )
+        assert "idx_audit_event_entity" in audit_plan
+        assert "SCAN audit_events" not in audit_plan
+
+        findings_plan = " ".join(
+            str(row["detail"])
+            for row in connection.execute(
+                """
+                EXPLAIN QUERY PLAN
+                SELECT id FROM findings INDEXED BY idx_findings_claim
+                WHERE mission_id = ? AND claim_id = ?
+                ORDER BY created_at, id
+                """,
+                ("mis_" + "0" * 32, "clm_" + "0" * 32),
+            )
+        )
+        assert "idx_findings_claim" in findings_plan
+        assert "USE TEMP B-TREE FOR ORDER BY" not in findings_plan
+
+
+def test_fulfilled_brief_bytes_are_unchanged_by_unrelated_history(
+    lab: Lab,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Canonical output stays byte-identical when unrelated history changes query plans."""
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    request_path, _document = _write_request(
+        tmp_path,
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        evidence_ids=(evidence.id,),
+    )
+
+    first_dir = tmp_path / "before"
+    first_payload, _ = _success(capsys, _fulfill_argv(lab.database, request_path, first_dir))
+    first_bytes = (first_dir / "research-brief.json").read_bytes()
+
+    _insert_unrelated_audit_history(lab, count=1_000)
+
+    second_dir = tmp_path / "after"
+    second_payload, _ = _success(capsys, _fulfill_argv(lab.database, request_path, second_dir))
+    second_bytes = (second_dir / "research-brief.json").read_bytes()
+
+    assert first_bytes == second_bytes
+    assert first_payload["output_artifact"] == second_payload["output_artifact"]
