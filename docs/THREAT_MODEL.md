@@ -33,6 +33,7 @@ evidence leaves the machine.
 | Citation forgery | Exact byte offsets and quote match at creation and export; cross-mission checks; stable IDs | Source assertions may themselves be false; Minerva records provenance, not truth |
 | Audit rewriting | Same-transaction audit insert; update/delete triggers; no raw source content or paths in details | Direct file replacement by the OS user is outside the process boundary |
 | Export path attack | Fixed contained filenames; reject symlink/pre-existing targets; size bounds; cleanup after caught exceptions | Operator can intentionally select a sensitive directory; a process or power-loss crash can leave a partial new export, but existing files are never overwritten |
+| Failure cleanup deletes state Minerva did not create | Opening uses a `mode=rw` URI and never creates or removes a file; fresh initialization stages privately and publishes with an exclusive hard link; pathname removal is reachable only from the device/inode-checked staging cleanup | A crash between the staged commit and publication can leave an orphan staging file for operator cleanup |
 | Fulfillment mutates or coordinates work | Request validated before DB open; one query-only snapshot; identity/audit/mutation/export APIs absent; fixed local files only; no provider/network/transport surface | SQLite/file publication is not crash-atomic; a crash can leave a partial new output directory for operator cleanup |
 | Result misbinding or coordination leakage | Minimal strict result contains only status, request digest, output schema, and exact file SHA-256; request/scope/result fields never enter canonical v2 | A scoped v2 packet separated from its request/result binding does not prove database completeness |
 | Private-data disclosure in errors/API | Stable error codes; packet failures never reflect submitted content or paths; bounded packet inspection omits research text, labels, URLs, identities, and IDs; API omits import paths and snapshot content by default | Authorized source preview intentionally reveals selected source text locally |
@@ -48,6 +49,8 @@ evidence leaves the machine.
 
 - State-changing domain logic and its audit event commit or roll back together.
 - Rejected requests never create success events.
+- A failed database open creates no file and removes none. Only staging files
+  whose device and inode Minerva recorded are ever unlinked.
 - Milestone 1 defines no server-rendered web mutations. Any future unsafe form must
   require both an accepted local origin and a valid CSRF token.
 - No endpoint accepts a filesystem path or an actor identity header.

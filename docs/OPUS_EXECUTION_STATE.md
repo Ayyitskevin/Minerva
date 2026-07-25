@@ -118,6 +118,64 @@ merge, the whole slice is revertible as a single commit.
 coverage lift (F-TEST-1), the doctor remnant work, and everything behind
 decision gates D-1..D-11.
 
+### Slice 2 — failure cleanup must not destroy foreign state (COMPLETE, all gates green)
+
+**User outcome.** A failed database open can no longer delete files Minerva did
+not create, and concurrent `minerva init` can no longer destroy the database one
+of the callers just published.
+
+**The plan's high finding, confirmed and worse than described.** Three
+destructive outcomes were reproduced against the shipped code:
+
+| Scenario | Before | After |
+| --- | --- | --- |
+| Six initializers racing one fresh path | 6 of 6 trials: one caller reports success, directory left **empty** | 6 of 6: all return version 3, one database survives, no staging leftovers |
+| Operator `-wal`/`-shm`/`-journal` beside a missing database | all three deleted | preserved byte for byte; open reports `database_missing` |
+| Dangling operator symlink at the database path | unlinked | preserved; still rejected as `database_symlink` |
+
+The concurrent-init loss is deterministic, not a narrow race: losers replay
+migration 0001 against the winner's committed database, every migration uses bare
+`CREATE TABLE`, so the replay fails with `migration_failed` and the failure
+cleanup unlinks the winner's file.
+
+**Fix.** `connect()` opens a `mode=rw` URI and neither creates nor removes
+anything; `SQLITE_CANTOPEN` maps to the existing `database_missing`. Fresh
+`initialize()` stages into an unpredictable owner-only file, migrates and runs
+`on_ready` inside that staged transaction, refuses retained staging sidecars, and
+publishes with an exclusive hard link — ADR 0004's restore pattern, now applied
+to initialization. Losing the publication race repeats initialization against the
+published database, preserving the documented idempotent-init contract.
+`_remove_database_artifacts` is now reachable only from the device/inode-checked
+staging cleanup, and says so in its docstring.
+
+**Critically, the plan's literal fix would not have worked.** Fable proposed
+`O_CREAT|O_EXCL` plus a dev/inode-checked cleanup. Verification proved that still
+loses data: the loser creates the file, the winner initializes that same inode,
+and the loser's identity check then passes against the winner's database. Only
+staged publication fixes it.
+
+**Files changed.** `src/minerva/core/db.py`, `tests/test_database.py` (five
+regressions), `docs/adr/0004-staged-restore-audit-publication.md` (amendment),
+`docs/ARCHITECTURE.md`, `docs/THREAT_MODEL.md`, `docs/DECISIONS.md`.
+
+**Migration status.** None. No schema change.
+
+**Security impact.** Removes a data-loss defect. One API-visible change:
+mutations against a missing database now raise `database_missing` (503) instead
+of creating a file and reporting `database_unready` (422). That matches what read
+paths already returned and leaves no stray file behind. `/readyz` is unaffected
+(it already returned 503 for any `MinervaError`).
+
+**Tests.** Four of the five new tests fail on the pre-fix code. The fifth,
+`test_database_paths_with_uri_metacharacters_open_the_intended_file`, guards a
+trap introduced *by* this fix and was verified to fail when the URI is built with
+an f-string instead of `Path.as_uri()` — a database named `with?query.db` would
+otherwise open a file named `with`.
+
+**Rollback.** Pure code change, no migration; revert the commit. Databases
+created by the staged path are ordinary Minerva databases indistinguishable from
+ones created in place.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -235,28 +293,20 @@ None. Slice 1 required no human decision.
 
 ## Next task
 
-**Slice 2 — F-DB-1, the plan's single confirmed high finding.**
-`Database.connect()` and `Database.initialize()` clean up failures with
-`_remove_database_artifacts()`, which unlinks the base path plus
-`-wal/-shm/-journal` by pathname with no device/inode identity check
-(`src/minerva/core/db.py:244-267, 429-435`). This can delete a database a
-concurrent process just committed, an operator's dangling symlink, or
-stale sidecars Minerva never created — the pattern class ADR 0004
-eliminated for restore but never applied to the fresh-database path.
+**Slice 3 — remaining wave-A hardening.** Ten smaller verified findings,
+none of which needs a decision gate: `recursive_triggers` (F-DB-2),
+restore masking migration-state errors (F-OPS-2), backup destination
+sidecar refusal (F-OPS-3), `ANTHROPIC_AUTH_TOKEN` fail-closed (F-AI-2),
+OpenAI refusal-before-terminal-status ordering (F-AI-3), packet
+error-code spoofing (F-SEC-1), websocket scope bypass (F-SEC-2), UTF-8
+encodability in `validate_text` (F-VAL-1), the finding citation bound
+(F-VAL-2), and the static-gate ban list plus a suite-wide network denial
+(F-GATE-1/2). The static-gate change is review-gated and must be flagged
+for Kevin.
 
-Planned approach (to be verified before coding): open non-initializing
-connections with a `file:{path}?mode=rw` URI so they never create a file
-and never need cleanup; for `initialize()` on a fresh path, establish
-creation ownership (`O_CREAT|O_EXCL` or an immediate dev/inode capture)
-and restrict cleanup to that identity-verified inode; never unlink
-sidecars this process did not create. Ships with an ADR 0004 amendment
-note and a regression test mirroring
-`test_database_cleanup_preserves_concurrent_replacements`. This touches a
-review-gated surface and must be flagged for Kevin.
-
-Then slice 3 (remaining wave-A hardening), slice 4 (wave B quality plus
-F-FUL-4/F-PERF-1), slice 5 (doctor remnants, ADR 0006). Stop after the
-wave-B slice unless a decision gate has been recorded.
+Then slice 4 (wave B quality plus F-FUL-4/F-PERF-1) and slice 5 (doctor
+remnants, ADR 0006). Stop after the wave-B slice unless a decision gate
+(D-1..D-11) has been recorded.
 
 ## Rollback instructions (whole phase)
 

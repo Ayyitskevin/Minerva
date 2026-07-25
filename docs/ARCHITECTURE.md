@@ -96,8 +96,14 @@ Remote actor headers are rejected. On first mutation in a run, the service inser
 run and its audit record in the same transaction as the requested state change.
 
 SQLite connections enable foreign keys, WAL journal mode, a busy timeout, and safe
-row access. Migrations are ordered package resources with recorded SHA-256 checksums.
-A newer or checksum-mismatched database fails closed.
+row access. Connections open a `mode=rw` URI, so opening never creates a database and
+a missing one fails closed as `database_missing`; a failed open removes nothing.
+Fresh initialization stages into an unpredictable owner-only file, migrates and runs
+its audit callback inside that staged transaction, and publishes with an exclusive
+hard link, so concurrent initializers cannot destroy a published database
+(see [ADR 0004](adr/0004-staged-restore-audit-publication.md)). Migrations are ordered
+package resources with recorded SHA-256 checksums. A newer or checksum-mismatched
+database fails closed.
 
 Audit rows are insert-only. Database triggers reject updates and deletes. Snapshot
 rows, snapshot content, evidence cards, and finding-citation links are likewise

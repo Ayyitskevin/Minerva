@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import stat
+import threading
 from collections.abc import Mapping
 from contextlib import closing
 from pathlib import Path
@@ -13,7 +14,7 @@ import minerva.core.db as db_module
 from conftest import SequenceIds, fixed_clock
 from minerva.core.audit import AuditRecorder, list_audit_events
 from minerva.core.db import Database, Migration, latest_schema_version
-from minerva.core.errors import ConflictError, IntegrityError, NotFoundError
+from minerva.core.errors import ConflictError, IntegrityError, MinervaError, NotFoundError
 from minerva.core.operations import OperationsService
 from minerva.core.types import ActorKind, IdentityContext
 from minerva.research.service import ResearchService
@@ -887,3 +888,110 @@ def test_pre_index_schema_fails_closed_before_pinned_queries_run(
         pass
 
     assert caught.value.code == "database_migration_required"
+
+
+def test_concurrent_initialization_preserves_the_published_database(tmp_path: Path) -> None:
+    """Racing initializers must not destroy the database one of them published.
+
+    Before staged publication, every loser's failure cleanup unlinked the
+    winner's committed database by pathname, so the directory ended empty while
+    one caller had already reported success.
+    """
+
+    path = tmp_path / "research.db"
+    workers = 6
+    barrier = threading.Barrier(workers)
+    versions: list[int] = []
+    failures: list[str] = []
+    lock = threading.Lock()
+
+    def initialize() -> None:
+        barrier.wait(timeout=30)
+        try:
+            version = Database(path).initialize()
+        except MinervaError as error:  # pragma: no cover - recorded, then asserted away
+            with lock:
+                failures.append(error.code)
+            return
+        with lock:
+            versions.append(version)
+
+    threads = [threading.Thread(target=initialize) for _ in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert failures == []
+    assert versions == [latest_schema_version()] * workers
+    assert path.is_file()
+    assert sorted(item.name for item in tmp_path.iterdir()) == ["research.db"]
+    with Database(path).read() as connection:
+        recorded = connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
+    assert recorded == latest_schema_version()
+
+
+def test_failed_open_preserves_operator_owned_sidecars(tmp_path: Path) -> None:
+    """A failed open must not remove SQLite sidecars Minerva did not create."""
+
+    path = tmp_path / "research.db"
+    for suffix in ("-wal", "-shm", "-journal"):
+        Path(f"{path}{suffix}").write_bytes(b"operator owned")
+
+    with pytest.raises(MinervaError) as caught:
+        Database(path).connect()
+
+    assert caught.value.code == "database_missing"
+    assert sorted(item.name for item in tmp_path.iterdir()) == [
+        "research.db-journal",
+        "research.db-shm",
+        "research.db-wal",
+    ]
+    for suffix in ("-wal", "-shm", "-journal"):
+        assert Path(f"{path}{suffix}").read_bytes() == b"operator owned"
+
+
+def test_failed_open_preserves_a_dangling_operator_symlink(tmp_path: Path) -> None:
+    """A rejected symlink path must be left for the operator to inspect."""
+
+    path = tmp_path / "research.db"
+    path.symlink_to(tmp_path / "absent.db")
+
+    with pytest.raises(IntegrityError) as caught:
+        Database(path).connect()
+
+    assert caught.value.code == "database_symlink"
+    assert path.is_symlink()
+
+
+def test_connect_never_creates_a_database(tmp_path: Path) -> None:
+    """Opening a missing database reports it plainly and writes nothing."""
+
+    path = tmp_path / "research.db"
+
+    with pytest.raises(MinervaError) as caught:
+        Database(path).connect()
+
+    assert caught.value.code == "database_missing"
+    assert caught.value.http_status == 503
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_database_paths_with_uri_metacharacters_open_the_intended_file(tmp_path: Path) -> None:
+    """Percent-encoding keeps `?` and `#` from truncating the connection URI."""
+
+    for name in ("plain.db", "with space.db", "with?query.db", "with#fragment.db"):
+        path = tmp_path / name
+        assert Database(path).initialize() == latest_schema_version()
+        assert path.is_file()
+        with Database(path).read() as connection:
+            assert (
+                connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
+                == latest_schema_version()
+            )
+    assert sorted(item.name for item in tmp_path.iterdir()) == [
+        "plain.db",
+        "with space.db",
+        "with#fragment.db",
+        "with?query.db",
+    ]

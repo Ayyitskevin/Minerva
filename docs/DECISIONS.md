@@ -113,8 +113,17 @@
   `brief_work_limit` refusal, and the storage-byte preflight are unchanged.
 - The claim-scoped `INDEXED BY` hints are repointed to `idx_findings_claim` in the
   same change, because SQLite ignores a better index while a hint names another.
-  The hints stay so a budgeted read cannot silently regress to a scan, and a
-  missing index fails loudly instead of quietly.
+  The hints stay so the chosen index is explicit at the call site and a missing
+  migration fails at prepare time; they do not by themselves prevent a scan, so
+  the plan is pinned by an `EXPLAIN QUERY PLAN` assertion in the tests.
 - Determinism is unaffected: every order-sensitive read on the export and
   fulfillment paths orders by a unique key or key suffix, so no plan change can
   reorder canonical output.
+- `connect()` never creates a database and never removes one. It opens a `mode=rw`
+  URI built with `Path.as_uri()`, so a path containing `?` or `#` cannot address a
+  different file, and a missing database is reported as `database_missing` (503)
+  rather than being created and then rejected as `database_unready` (422).
+- Fresh `initialize()` stages, migrates, audits, and publishes with an exclusive
+  hard link, matching ADR 0004's restore pattern. Losing that race repeats
+  initialization against the published database so concurrent init stays
+  idempotent instead of destroying the winner's data.

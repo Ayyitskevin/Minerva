@@ -111,6 +111,22 @@ def _is_busy_error(error: sqlite3.Error) -> bool:
     return isinstance(code, int) and (code & 0xFF) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
 
 
+def _is_missing_database_error(error: sqlite3.Error) -> bool:
+    code = getattr(error, "sqlite_errorcode", 0)
+    return isinstance(code, int) and (code & 0xFF) == sqlite3.SQLITE_CANTOPEN
+
+
+def _read_write_uri(path: Path) -> str:
+    """Build a `mode=rw` URI that opens an existing database and never creates one.
+
+    `Path.as_uri()` percent-encodes `?` and `#`; interpolating the path into the
+    URI directly would let those characters terminate it and silently open or
+    create a different file.
+    """
+
+    return Path(os.path.abspath(path)).as_uri() + "?mode=rw"
+
+
 def _reject_unsafe_database_path(path: Path) -> None:
     absolute = Path(os.path.abspath(path))
     current = Path(absolute.anchor)
@@ -231,6 +247,16 @@ def _require_standalone_staged_restore(staged: Path) -> None:
             )
 
 
+def _require_standalone_staged_initialize(staged: Path) -> None:
+    for suffix in ("-wal", "-shm", "-journal"):
+        sidecar = Path(f"{staged}{suffix}")
+        if sidecar.exists() or sidecar.is_symlink():
+            raise IntegrityError(
+                "database_not_standalone",
+                "The new database has live SQLite sidecars and cannot be published safely.",
+            )
+
+
 def _reject_restore_destination_sidecars(target: Path) -> None:
     for suffix in ("-wal", "-shm", "-journal"):
         sidecar = Path(f"{target}{suffix}")
@@ -242,6 +268,13 @@ def _reject_restore_destination_sidecars(target: Path) -> None:
 
 
 def _remove_database_artifacts(path: Path) -> None:
+    """Remove a database and its sidecars by pathname.
+
+    Call this only from `_PrivateDatabaseFile.cleanup`, which first confirms the
+    device and inode it created. Pathname removal on a public database path can
+    delete a file another process published, so no caller may skip that check.
+    """
+
     for suffix in ("", "-wal", "-shm", "-journal"):
         with suppress(OSError):
             Path(f"{path}{suffix}").unlink(missing_ok=True)
@@ -255,16 +288,15 @@ class Database:
         return self.path.is_file() and not self.path.is_symlink()
 
     def connect(self, *, validate_schema: bool = True) -> sqlite3.Connection:
-        was_present = self.path.exists()
         try:
             return self._connect(validate_schema=validate_schema)
-        except MinervaError:
-            if not was_present:
-                _remove_database_artifacts(self.path)
-            raise
         except sqlite3.Error as error:
-            if not was_present:
-                _remove_database_artifacts(self.path)
+            if _is_missing_database_error(error):
+                raise MinervaError(
+                    "database_missing",
+                    "The Minerva database does not exist.",
+                    http_status=503,
+                ) from error
             if _is_busy_error(error):
                 raise MinervaError(
                     "database_busy",
@@ -278,8 +310,9 @@ class Database:
 
     def _connect(self, *, validate_schema: bool) -> sqlite3.Connection:
         _reject_unsafe_database_path(self.path)
-        was_present = self.path.exists()
-        connection = sqlite3.connect(self.path, isolation_level=None, timeout=5.0)
+        connection = sqlite3.connect(
+            _read_write_uri(self.path), uri=True, isolation_level=None, timeout=5.0
+        )
         try:
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
@@ -289,8 +322,6 @@ class Database:
             if journal_mode.lower() != "wal":
                 raise IntegrityError("database_wal_unavailable", "SQLite WAL mode is unavailable.")
             connection.execute("PRAGMA synchronous = FULL")
-            if not was_present:
-                os.chmod(self.path, 0o600)
             if validate_schema:
                 _validate_migration_state(connection, require_latest=True)
             return connection
@@ -355,6 +386,31 @@ class Database:
         if refuse_existing and existed_before:
             raise ConflictError("database_exists", "Refusing to overwrite an existing database.")
         _reject_unsafe_database_path(self.path)
+        if existed_before:
+            return self._initialize_in_place(on_ready=on_ready)
+
+        staged = _create_private_database_file(self.path)
+        try:
+            version = Database(staged.path)._initialize_in_place(on_ready=on_ready)
+            _require_standalone_staged_initialize(staged.path)
+            try:
+                _publish_private_database(staged, self.path, conflict_code="database_exists")
+            except ConflictError:
+                if refuse_existing:
+                    raise
+                # Another process published first. Repeat initialization against
+                # the public database so a race stays idempotent, exactly as a
+                # sequential second `initialize()` already is.
+                return self._initialize_in_place(on_ready=on_ready)
+            return version
+        finally:
+            staged.cleanup()
+
+    def _initialize_in_place(
+        self,
+        *,
+        on_ready: Callable[[sqlite3.Connection, int], None] | None = None,
+    ) -> int:
         connection = self.connect(validate_schema=False)
         try:
             existing = {
@@ -429,9 +485,6 @@ class Database:
         except BaseException:
             if connection.in_transaction:
                 connection.rollback()
-            if not existed_before:
-                connection.close()
-                _remove_database_artifacts(self.path)
             raise
         finally:
             connection.close()
