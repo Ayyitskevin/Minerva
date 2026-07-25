@@ -883,8 +883,7 @@ def test_pre_index_schema_fails_closed_before_pinned_queries_run(
     assert database.initialize() == 2
     monkeypatch.setattr(db_module, "_migration_files", lambda: migrations)
 
-    with pytest.raises(IntegrityError) as caught:
-        with database.read():
-            pass
+    with pytest.raises(IntegrityError) as caught, database.read():
+        pass
 
     assert caught.value.code == "database_migration_required"
