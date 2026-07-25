@@ -44,22 +44,32 @@ Add forward-only migration `0003_fulfillment_indexes.sql` containing two
 `CREATE INDEX` statements and nothing else:
 
 ```sql
-CREATE INDEX idx_audit_event_entity ON audit_events(event_type, entity_id, sequence);
+CREATE INDEX idx_audit_event_entity ON audit_events(event_type, entity_id);
 CREATE INDEX idx_findings_claim ON findings(mission_id, claim_id, created_at, id);
 ```
 
 `idx_audit_event_entity` serves both audit access paths: the snapshot
 import-event lookup and the run-started branch of the scoped audit CTE both
-filter on an exact `event_type` plus `entity_id`, and the trailing `sequence`
-column preserves their `ORDER BY sequence` without a temporary b-tree.
+filter on an exact `event_type` plus `entity_id`. `sequence` is deliberately not
+named. It is an `INTEGER PRIMARY KEY`, so it is the rowid alias and SQLite
+already stores it as every index's implicit trailing key; naming it produced
+byte-identical query plans and virtual-machine step counts while making the
+index about 5% larger on a 150,000-row audit table. Their `ORDER BY sequence` is
+still satisfied without a temporary b-tree.
 
 `idx_findings_claim` serves the three claim-scoped finding and reference
 queries. Because SQLite ignores a better index while an `INDEXED BY` hint names
 another one, the two preflight queries and the claim-scoped assembly query are
-repointed to the new index in the same change. Those hints are retained
-deliberately: they pin the plan so a budgeted read cannot silently regress to a
-scan, and SQLite raises `no such index` if the migration is ever removed, which
-turns a silent performance regression into a loud failure.
+repointed to the new index in the same change.
+
+The hints are retained, but their guarantee is narrower than it looks and should
+not be overstated. `INDEXED BY` fails to prepare only when the named index does
+not exist, which is what makes the index names load-bearing and makes a removed
+migration fail loudly rather than silently. It does **not** guarantee a seek: if
+a future edit dropped the equality predicate, SQLite would quietly fall back to
+scanning that index instead of raising. The actual plan pin is therefore a test
+that asserts on `EXPLAIN QUERY PLAN` output
+(`test_targeted_fulfillment_indexes_are_present_and_selected`), not the hint.
 
 The cumulative work budget, its `brief_work_limit` refusal, the storage-byte
 preflight, and every other Milestone 1.3 control are unchanged. This migration
@@ -86,7 +96,12 @@ adds no table, column, trigger, constraint, or default, and rewrites no data.
   fail-closed behaviour, not a new one.
 - Both index names are now load-bearing. They are named by `INDEXED BY` hints in
   `src/minerva/synthesis/service.py`, so they cannot be renamed or dropped
-  without changing those queries in the same commit.
+  without changing those queries in the same commit. A database stopped at
+  schema 2 is refused with the typed `database_migration_required` before those
+  queries run, which is pinned by
+  `test_pre_index_schema_fails_closed_before_pinned_queries_run`.
+- The migration file's bytes are hashed into `schema_migrations.checksum`, so it
+  must not be edited — including its comments — once it has shipped.
 - Index maintenance adds a small write cost to `audit_events` and `findings`
   inserts and some database growth. Both are acceptable against a read path that
   previously scanned the entire audit table several times per request.
@@ -119,6 +134,9 @@ row.
   makes index selection depend on SQLite proving the partial predicate from a
   bound parameter. The full index keeps the pinned plan obvious and testable.
 - **Dropping the `INDEXED BY` hints and trusting the planner.** Measurement
-  showed the planner does choose the new indexes unaided, but the hints are the
-  mechanism that keeps a budgeted read from regressing silently as data
-  distributions change.
+  showed the planner does choose the new indexes unaided, but the hints keep the
+  chosen index explicit at the call site and make a missing migration fail at
+  prepare time. They are kept for that, not as a substitute for the
+  `EXPLAIN QUERY PLAN` assertion.
+- **Naming `sequence` in the audit index.** Measured byte-identical plans and
+  step counts with a larger index, because the column is the rowid alias.

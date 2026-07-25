@@ -83,7 +83,7 @@
 ## Milestone 1.4: targeted fulfillment indexing
 
 - Forward-only migration 0003 adds `idx_audit_event_entity` on
-  `audit_events(event_type, entity_id, sequence)` and `idx_findings_claim` on
+  `audit_events(event_type, entity_id)` and `idx_findings_claim` on
   `findings(mission_id, claim_id, created_at, id)`; no table, column, trigger, or
   data change.
 - Claim-scoped fulfillment work becomes independent of unrelated missions' audit

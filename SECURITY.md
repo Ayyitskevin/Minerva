@@ -72,7 +72,7 @@ source/audit/run closure.
 The query-only snapshot has one cumulative SQLite virtual-machine instruction budget.
 Exhaustion fails closed as `brief_work_limit` (CLI exit `3`) before artifact publication;
 it is not a wall-clock timeout. Migration 0003 (ADR 0005) adds targeted indexes on
-`audit_events(event_type, entity_id, sequence)` and
+`audit_events(event_type, entity_id)` and
 `findings(mission_id, claim_id, created_at, id)`, so the audit and claim-scoped finding
 lookups are point searches and fulfillment work no longer scales with unrelated missions'
 history. The budget is retained unchanged as defense in depth and still refuses genuinely

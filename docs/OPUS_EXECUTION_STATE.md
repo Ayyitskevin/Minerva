@@ -144,6 +144,23 @@ plan's intent.
    pair*, so a single-snapshot claim tolerated ~667k rows and a
    20-snapshot claim ~63k. Both readings agree; the figure is
    snapshot-count-dependent.
+8. **`sequence` dropped from the audit index.** The plan and the first
+   draft of this slice used
+   `audit_events(event_type, entity_id, sequence)`. `sequence` is an
+   `INTEGER PRIMARY KEY`, hence the rowid alias that SQLite already
+   stores as every index's implicit trailing key. Measured: identical
+   query plans and identical virtual-machine step counts (33 and 30) with
+   an index about 5% smaller on 150,000 rows. Shipped as
+   `audit_events(event_type, entity_id)`.
+9. **An overstated guarantee was corrected before merge.** The first
+   draft of ADR 0005 and the migration comment claimed the `INDEXED BY`
+   hints mean a budgeted read "cannot silently regress to a scan". That
+   is wrong: `INDEXED BY` fails only when the named index does not
+   exist; if a future edit dropped the equality predicate SQLite would
+   quietly scan the named index instead. The prose now states the narrow
+   guarantee and points at
+   `test_targeted_fulfillment_indexes_are_present_and_selected` as the
+   actual plan pin.
 
 ## Verification evidence
 

@@ -107,7 +107,7 @@
 ## Milestone 1.4 implementation decisions
 
 - Migration 0003 adds only two indexes: `idx_audit_event_entity` on
-  `audit_events(event_type, entity_id, sequence)` and `idx_findings_claim` on
+  `audit_events(event_type, entity_id)` and `idx_findings_claim` on
   `findings(mission_id, claim_id, created_at, id)`. Fulfillment cost becomes
   independent of unrelated audit history; the cumulative work budget, its
   `brief_work_limit` refusal, and the storage-byte preflight are unchanged.

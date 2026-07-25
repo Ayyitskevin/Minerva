@@ -243,7 +243,7 @@ database, shared run envelope, MCP surface, Icarus exchange, publication, messag
 execution, approval, or automatic adoption.
 
 Migration 0003 supplies the indexes that access path needs: `idx_audit_event_entity` on
-`audit_events(event_type, entity_id, sequence)` serves both the snapshot import-event
+`audit_events(event_type, entity_id)` serves both the snapshot import-event
 lookup and the run-started branch of the scoped audit CTE, and `idx_findings_claim` on
 `findings(mission_id, claim_id, created_at, id)` serves the claim-scoped finding and
 reference queries. Those queries pin the new index with `INDEXED BY`, so a budgeted read
