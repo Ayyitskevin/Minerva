@@ -577,3 +577,74 @@ The three items slice 16 left open. Each was reproduced before being changed.
   audit event — with a test holding that claim.
 
 Issue 11 is now complete. Issue 12 is the last Phase 0C item.
+
+## The last Phase 0C slice (plan 2, issue 12)
+
+- **Ctrl-C during a provider call left the invocation open forever.** The
+  interrupt handling caught `MinervaError` and `Exception`, and
+  `KeyboardInterrupt` is neither — it is a `BaseException`. So the likeliest
+  interruption of all, on the one operation that can run for a full timeout with
+  the operator watching it, produced a requested event with no terminal one, and
+  `doctor` counted that invocation as unfinished permanently. Reproduced for both
+  `KeyboardInterrupt` and `SystemExit`.
+
+  The recorded outcome is `outcome_unknown`, not `failed`. The request had
+  already left the machine, so the provider may have processed and charged for
+  it; that is exactly the claim a timeout makes, and the only honest one
+  available. The interrupt is re-raised **unchanged** — converting it into a
+  `MinervaError` would stop Ctrl-C from ending the process, which is worse than
+  an unmatched audit pair.
+
+  Recording is best effort on this path only. A second Ctrl-C or a busy database
+  while writing that row must not replace the operator's interrupt with a
+  database error, which would both hide the interrupt and look like corruption.
+  When the write cannot happen the invocation stays unmatched — the state the
+  threat model already documents and `doctor`'s `unfinished_assistance` notice
+  already reports. A test drives that path and asserts doctor still counts it.
+
+- **Two readers had four identical helpers between them.** `research_packet.py`
+  and `research_request.py` each carried their own canonical-JSON writer, strict
+  loader, and bounded-shape check. They were byte-identical apart from one noun,
+  which is the shape that drifts silently: a fix applied to one reader and not
+  the other changes what the two contracts accept without either looking wrong.
+  F-SEC-1 and F2-INTEGRATIONS-1 were both instances of exactly that divergence.
+  They now come from `integrations/canonical_json.py`.
+
+  **The noun is a parameter, not a constant.** Both file readers classify on
+  `str(error).startswith(f"{subject} JSON ")` to produce `packet_too_complex` or
+  `request_too_complex`, so collapsing the messages would have silently changed
+  which error code an oversized document gets. Deliberately swapping the packet's
+  subject fails two existing tests, so that wiring is already pinned and needed no
+  new test.
+
+  **Not everything that calls `json.dumps(sort_keys=True)` was consolidated.**
+  `api/routes.py` builds ASCII-only cursor tokens, `cli/_common.py` writes to a
+  stream after coercing values, and `core/audit.py`, `core/doctor.py`, and
+  `sources/integrity.py` serialize a single field for comparison. Those differ in
+  ways that matter; collapsing them would be consolidation for its own sake. The
+  golden fixtures are byte-identical across the change, which is what proves the
+  consolidation changed no behaviour.
+
+- **The coverage floor is now 88%, and it is a ratchet.** The suite measures
+  90.00% on 3.12 and 3.13 — identically — so 88 leaves two points of headroom:
+  enough that an ordinary change cannot make the gate flap, tight enough that
+  five points can no longer disappear unnoticed. `CONTRIBUTING.md` records the
+  rule that the floor is never lowered to make a red gate green.
+
+- **The release runbook exists; the tag does not.** `CONTRIBUTING.md` now carries
+  the release procedure and the commit-attribution convention, and `CHANGELOG.md`
+  records the observed gate evidence including one open verification. No tag was
+  created: `pyproject.toml` declares `0.2.0a1`, and plan 2 asks for `v0.2.0`.
+  Those disagree, and reconciling them is a product decision — dropping the `a1`
+  says the pre-release period is over. Tagging is also outward-facing and a tag
+  is never moved once published, so it waits for Kevin rather than being resolved
+  by picking the version that makes the plan text true.
+
+- **Python 3.14 is unverified locally, and is recorded that way.** Only
+  `3.14.0rc2` is available here, and the pinned pydantic fails on it with
+  `_eval_type() got an unexpected keyword argument 'prefer_fwd_module'`. CI
+  installs a released 3.14.x where the suite passes. This is an environment
+  limitation rather than a known defect, and the coverage ratchet therefore takes
+  effect on 3.14 for the first time in CI, not here.
+
+Phase 0C is complete. Everything remaining is gated on a decision from Kevin.

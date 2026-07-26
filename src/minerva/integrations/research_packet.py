@@ -7,7 +7,6 @@ verify that projection using only the packet bytes.
 
 from __future__ import annotations
 
-import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from hashlib import sha256
@@ -15,6 +14,12 @@ from itertools import pairwise
 from typing import Annotated, Literal, Self, cast
 
 from pydantic import BaseModel, ConfigDict, FailFast, Field, StringConstraints, model_validator
+
+from minerva.integrations.canonical_json import (
+    canonical_json_bytes,
+    require_bounded_json_shape,
+    strict_json_loads,
+)
 
 RESEARCH_PACKET_SCHEMA_VERSION: Literal["minerva.research-brief.v2"] = "minerva.research-brief.v2"
 CITATION_SCHEME = "utf8-byte-offset-v1"
@@ -37,8 +42,6 @@ class ResearchPacketTooLargeError(ValueError):
 
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
-_MAX_JSON_DEPTH = 64
-_MAX_JSON_OBJECT_FIELDS = 64
 _NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 _Sha256 = Annotated[str, StringConstraints(pattern=_SHA256_PATTERN)]
 _AuditKey = tuple[str, str, str, str | None, str, str]
@@ -324,7 +327,7 @@ def canonical_research_payload_bytes(
     """Return compact canonical UTF-8 JSON bytes for the inner brief."""
 
     validated = payload if isinstance(payload, ResearchBriefPayload) else _validate_payload(payload)
-    return _canonical_json_bytes(validated.model_dump(mode="json"))
+    return canonical_json_bytes(validated.model_dump(mode="json"))
 
 
 def research_payload_digest(payload: ResearchBriefPayload | Mapping[str, object]) -> str:
@@ -348,10 +351,10 @@ def serialize_research_packet(document: ResearchPacketDocument) -> bytes:
     """Serialize a validated packet as compact canonical JSON with one final newline."""
 
     # Revalidation protects callers that bypassed normal construction with model_construct().
-    encoded = _canonical_json_bytes(document.model_dump(mode="json"))
+    encoded = canonical_json_bytes(document.model_dump(mode="json"))
     _require_packet_size(encoded)
     validated = ResearchPacketDocument.model_validate_json(encoded, strict=True)
-    serialized = _canonical_json_bytes(validated.model_dump(mode="json")) + b"\n"
+    serialized = canonical_json_bytes(validated.model_dump(mode="json")) + b"\n"
     _require_packet_size(serialized)
     return serialized
 
@@ -362,13 +365,13 @@ def parse_research_packet(data: bytes | str) -> ResearchPacketDocument:
     encoded = data if isinstance(data, bytes) else data.encode("utf-8")
     _require_packet_size(encoded)
     text = encoded.decode("utf-8")
-    parsed = _strict_json_loads(text)
-    _require_bounded_json_shape(parsed)
+    parsed = strict_json_loads(text)
+    require_bounded_json_shape(parsed, subject="research packet")
     return ResearchPacketDocument.model_validate_json(text, strict=True)
 
 
 def _validate_payload(payload: Mapping[str, object]) -> ResearchBriefPayload:
-    encoded = _canonical_json_bytes(dict(payload))
+    encoded = canonical_json_bytes(dict(payload))
     _require_packet_size(encoded)
     return ResearchBriefPayload.model_validate_json(encoded, strict=True)
 
@@ -376,51 +379,6 @@ def _validate_payload(payload: Mapping[str, object]) -> ResearchBriefPayload:
 def _require_packet_size(data: bytes) -> None:
     if len(data) > MAX_RESEARCH_PACKET_BYTES:
         raise ResearchPacketTooLargeError("research packet exceeds the protocol size limit")
-
-
-def _canonical_json_bytes(value: object) -> bytes:
-    return json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-
-
-def _strict_json_loads(text: str) -> object:
-    def reject_duplicate_keys(pairs: Sequence[tuple[str, object]]) -> dict[str, object]:
-        result: dict[str, object] = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"duplicate JSON object key: {key}")
-            result[key] = value
-        return result
-
-    def reject_non_finite(token: str) -> object:
-        raise ValueError(f"non-finite JSON number is forbidden: {token}")
-
-    return cast(
-        object,
-        json.loads(
-            text,
-            object_pairs_hook=reject_duplicate_keys,
-            parse_constant=reject_non_finite,
-        ),
-    )
-
-
-def _require_bounded_json_shape(value: object, *, depth: int = 0) -> None:
-    if depth > _MAX_JSON_DEPTH:
-        raise ValueError("research packet JSON nesting exceeds the safety limit")
-    if isinstance(value, dict):
-        if len(value) > _MAX_JSON_OBJECT_FIELDS:
-            raise ValueError("research packet JSON object exceeds the field safety limit")
-        for child in value.values():
-            _require_bounded_json_shape(child, depth=depth + 1)
-    elif isinstance(value, list):
-        for child in value:
-            _require_bounded_json_shape(child, depth=depth + 1)
 
 
 def _unique_by_id[RecordT](records: Sequence[RecordT], *, field: str) -> dict[str, RecordT]:

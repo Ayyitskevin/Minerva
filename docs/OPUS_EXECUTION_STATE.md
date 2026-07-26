@@ -19,13 +19,24 @@ records what has actually been built, verified, and deviated from.
 **Plan 1 Phase 0 is complete and merged** (PRs #10, #11, #12). Slice 6
 answered decision gate **D-9**, the first gate Kevin recorded.
 
-**Plan 2 Phase 0C is in progress.** Plan 2 (base commit `b26268c`,
-merged as PRs #13/#14) re-verified every load-bearing claim below against
-the code and re-ran all eleven gates before trusting any of it: all
-claims held, all gates passed. It also found eleven defects that survived
-adversarial verification, two of them high, and both highs were
-consequences of D-9 landing in the database but not on the reading
-surfaces. Slice 7 closes exactly those two.
+**Plan 2 Phase 0C is complete** (slices 7-18, PRs #15-#24 plus this one).
+Plan 2 (base commit `b26268c`, merged as PRs #13/#14) re-verified every
+load-bearing claim below against the code and re-ran all eleven gates
+before trusting any of it: all claims held, all gates passed. It also
+found eleven defects that survived adversarial verification, two of them
+high, both consequences of D-9 landing in the database but not on the
+reading surfaces.
+
+Executing those twelve issues surfaced **five further defects the plan
+did not name**, each found while fixing another: `backup_to` rewriting
+its own source, a regression slice 9 introduced into backup, a test of
+mine that passed for the wrong reason, the loser of a mixed-version
+migration race reporting `migration_failed` where the truth was
+`database_too_new`, and `KeyboardInterrupt` escaping the assistance
+interrupt handling entirely.
+
+The only ungated work left is the release tag, which needs a version
+decision from Kevin rather than code — see **Next task**.
 
 No decision gate beyond D-9 has been entered; none may be until Kevin
 records it.
@@ -1075,6 +1086,88 @@ with nothing recorded.
 **Rollback.** Revert the commit. The new script is additive and unreferenced by
 any gate.
 
+### Slice 18 — the last Phase 0C slice (plan 2, issue 12, COMPLETE except the tag)
+
+**User outcome.** Ctrl-C during a provider call no longer leaves an invocation
+open forever, two wire contracts share one parsing implementation instead of two
+copies that could drift, the coverage floor is a real ratchet, and the release
+procedure is written down.
+
+**Reproduced against real code, then re-run after:**
+
+| | Before | After |
+| --- | --- | --- |
+| `KeyboardInterrupt` during the provider call | **only `requested`, unmatched forever** | `requested` + `outcome_unknown` |
+| `SystemExit` during the provider call | **only `requested`** | `requested` + `outcome_unknown` |
+| the interrupt itself | propagated | propagated **unchanged** |
+| terminal write fails during an interrupt | invocation unmatched | invocation unmatched, doctor reports it |
+| golden fixtures across helper consolidation | — | byte-identical |
+| coverage floor | 85% against 90.00% | 88% against 90.00% |
+
+**F-AI-4: the outcome is unknown, not failed.** `except Exception` does not catch
+`KeyboardInterrupt` or `SystemExit`. The fix records `outcome_unknown` because the
+request had already left the machine — the provider may have processed and charged
+for it, which is the same claim a timeout makes. The interrupt is re-raised
+unchanged: converting it to a `MinervaError` would stop Ctrl-C from ending the
+process, which is worse than an unmatched audit pair. Recording is best effort on
+this path only, so a second Ctrl-C or a busy database cannot replace the operator's
+interrupt with a database error.
+
+**F-DUP-2: the noun had to survive consolidation.** The four helpers were
+byte-identical between `research_packet.py` and `research_request.py` apart from
+one word, and that word is load-bearing: both readers classify on
+`startswith(f"{subject} JSON ")` to produce `packet_too_complex` /
+`request_too_complex`. It is a parameter in the shared module. Deliberately
+swapping the packet's subject fails two existing tests, so the wiring was already
+pinned and needed no new test — recorded rather than a redundant one added.
+
+Modules that were **not** consolidated, deliberately: `api/routes.py` (ASCII-only
+cursor tokens), `cli/_common.py` (stream output after coercion), and
+`core/audit.py` / `core/doctor.py` / `sources/integrity.py` (one field serialized
+for comparison). Those differ in ways that matter.
+
+**F-TEST-3: 88, not 90.** Two points of headroom against a measured 90.00% — enough
+that an ordinary change cannot make the gate flap, tight enough that five points
+cannot vanish unnoticed. `CONTRIBUTING.md` records that the floor is never lowered
+to make a red gate green.
+
+**F-REL-1/2: runbook yes, tag no.** `CHANGELOG.md` and the release runbook exist,
+with observed gate evidence. **No tag was created.** `pyproject.toml` declares
+`0.2.0a1` and plan 2 asks for `v0.2.0`; those disagree, and dropping the `a1` is a
+product decision saying the pre-release period is over. Tagging is outward-facing
+and a published tag is never moved, so this is Kevin's call rather than something
+to resolve by picking whichever version makes the plan text true. A tag also has to
+point at a commit on `main`, so it cannot happen before this merges regardless.
+
+**Tests.** Two genuine defect witnesses: both interrupt cases fail on pre-fix
+source with only a `requested` event. The best-effort-write test **passes** on
+pre-fix source — nothing called `_record_terminal` on that path there — so it is a
+pin on the new behaviour, not a witness, and is recorded as such. The consolidation
+added no test: the golden fixtures and the two `too_complex` tests already cover
+it, verified by deliberately breaking the subject wiring. 689 tests, 208
+security-marked, 90.00% branch coverage on both 3.12 and 3.13.
+
+**Open verification.** Python 3.14 could not be measured locally: only
+`3.14.0rc2` is available and the pinned pydantic fails on it with `_eval_type() got
+an unexpected keyword argument 'prefer_fwd_module'`. CI installs a released 3.14.x
+where the suite passes. The coverage ratchet therefore takes effect on 3.14 for the
+first time in CI, not here. This is reported as unverified, not as a pass.
+
+**Files changed.** `src/minerva/assist/service.py`,
+`src/minerva/integrations/canonical_json.py` (new),
+`src/minerva/integrations/research_packet.py`,
+`src/minerva/integrations/research_request.py`, `pyproject.toml`,
+`CONTRIBUTING.md`, `CHANGELOG.md` (new), `docs/DECISIONS.md`,
+`tests/test_assist.py`.
+
+**Migration status.** None. **Security impact.** Strengthening: an interrupted
+external call is now recorded rather than silently unmatched, and one parsing
+implementation replaces two that could diverge. No prohibition relaxed, no contract
+weakened, and the golden fixtures prove the wire bytes are unchanged.
+
+**Rollback.** Revert the commit. The consolidation is the only structural change
+and it is behaviour-preserving by fixture equality.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -1192,34 +1285,21 @@ None. Slice 1 required no human decision.
 
 ## Next task
 
-**Ungated work remains available.** Unlike after slice 6, Opus is not
-blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
-traceable to a reproduced finding. Slice 7 completed issues 1-2; slice 8
-completed issue 3.
+**Phase 0C is complete.** Slices 7-18 closed plan 2 issues 1-12. Slice 18 took
+the last of them: F-AI-4 (interrupt-safe assist audit), F-DUP-2 (canonical-helper
+consolidation), F-TEST-3 (coverage floor 85 -> 88), and the documentation half of
+F-REL-1/2.
 
-Slices 7-17 completed **issues 1-11**. Slice 16 took seven of issue 11's ten
-items and slice 17 took the last three (`F2-CORE-5`, `F2-TESTS-4`,
-`F4-CLI-UNDOC`), plus one defect neither slice's plan entry named: the loser of a
-mixed-version migration race reporting `migration_failed` where the truth was
-`database_too_new`.
+**One ungated item is left, and it needs Kevin, not code.** The release tag was
+deliberately not created. `pyproject.toml` declares `0.2.0a1`; plan 2 asks for
+`v0.2.0`. Dropping the `a1` is a product decision that says the pre-release period
+is over, a published tag is never moved, and the tag has to point at a commit on
+`main` anyway. `CONTRIBUTING.md` carries the runbook and `CHANGELOG.md` carries the
+observed gate evidence, so tagging is a single step once the version question is
+answered:
 
-The next and final Phase 0C slice is **issue 12**:
-
-- **F-AI-4** — interrupt-safe assist audit. Process death between the requested
-  and terminal events leaves an unmatched record; the threat model already says
-  so, and this is about whether doctor can *see* it rather than about making the
-  external call atomic, which it cannot be.
-- **F-DUP-2** — canonical-helper consolidation. Several modules carry their own
-  canonical-JSON byte writer; they agree today, which is exactly why the drift
-  would be silent.
-- **F-REL-1/2** — release tag `v0.2.0`. The distribution builds as
-  `0.2.0a1` and nothing has ever been tagged.
-- **F-TEST-3** — coverage ratchet. The floor is 85% while the suite sits at
-  90.04%, so a change could delete five points of coverage without the gate
-  noticing.
-
-Nothing in issue 12 is gated, so it can start without a decision from Kevin.
-
+- tag `v0.2.0a1` as-is, or
+- bump `version` to `0.2.0` and tag `v0.2.0`.
 
 Still awaiting Kevin, and not to be started without a recorded decision:
 
