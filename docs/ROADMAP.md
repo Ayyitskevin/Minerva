@@ -88,8 +88,10 @@
   data change.
 - Claim-scoped fulfillment work becomes independent of unrelated missions' audit
   history, redeeming the Milestone 1.3 indexing deferral.
-- Claim-scoped queries pin the new index with `INDEXED BY`, so a budgeted read
-  cannot silently regress to a scan and a missing index fails loudly.
+- Claim-scoped finding queries name `idx_findings_claim` with `INDEXED BY`, so a
+  missing index fails loudly at statement preparation. The hint does not guarantee
+  a seek, and `idx_audit_event_entity` is planner-selected; the query plans are
+  pinned by an `EXPLAIN QUERY PLAN` regression test.
 - The cumulative work budget, `brief_work_limit` refusal, storage-byte preflight,
   and every other Milestone 1.3 control are retained unchanged.
 - Canonical output is unchanged: every order-sensitive read orders by a unique key,

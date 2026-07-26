@@ -471,6 +471,56 @@ first dropping a trigger doctor reports.
 **Rollback.** Pure code, tests, and docs; no migration. The read-model
 fields default to the non-retracted values, so reverting is safe.
 
+### Slice 8 — index-pinning claims corrected (plan 2, issue 3, COMPLETE)
+
+**User outcome.** Four documents described a security control Minerva does not
+have. They now describe the one it does.
+
+**Measured before writing, on a fresh connection per statement** so no cached
+plan could mislead (the first probe did use one connection and reported a
+dropped index still in use — a statement-cache artifact, discarded):
+
+| Query | Index present | Index dropped |
+| --- | --- | --- |
+| audit lookup (no hint in product code) | `SEARCH audit_events USING INDEX idx_audit_event_entity` | `SCAN audit_events`, **no error** |
+| claim-scoped findings (`INDEXED BY idx_findings_claim`) | `SEARCH findings USING COVERING INDEX` | raises `OperationalError: no such index` |
+| findings with the hint but no equality predicate | `SCAN findings USING COVERING INDEX ... USE TEMP B-TREE FOR ORDER BY`, **no error** | — |
+
+So `INDEXED BY` gives a loud failure only for the index it names, and never
+forces a seek. ADR 0005's decision section already said this correctly;
+THREAT_MODEL.md:27, ARCHITECTURE.md:251-256, ROADMAP.md:91-92, and ADR 0005's
+own consequences bullet contradicted it. All four are corrected, and each now
+names `test_targeted_fulfillment_indexes_are_present_and_selected` as the real
+control.
+
+**Deviation from the plan, with evidence.** Plan 2 issue 3 listed migration
+0003's header comment among the places to fix. **It must not be touched.**
+`schema_migrations.checksum` is `sha256` over the entire migration file,
+comments included: editing the comment changes the digest from `4622fe79...`
+to `09d38ed6...`, and every database already at schema 3 or higher would then
+refuse to open with `migration_checksum_mismatch`. Measured directly against a
+real initialized database. The stale comment stays; ADR 0005 carries the
+correction of record and states why the comment cannot be fixed. `git status`
+on `src/minerva/core/migrations/` was verified empty before commit.
+
+**New regression.** `test_index_protection_is_only_what_the_documents_now_claim`
+pins both halves: dropping the audit index must degrade to a scan, and dropping
+the hinted findings index must raise `no such index`. If a future change adds a
+hint for the audit index, the test fails and the documents must move with it.
+
+**Files changed.** `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`,
+`docs/THREAT_MODEL.md`, `docs/adr/0005-targeted-fulfillment-indexing.md`,
+`docs/DECISIONS.md`, `tests/test_request_cli.py`. No product code, no
+migration.
+
+**Migration status.** None, deliberately — see the deviation above.
+
+**Security impact.** Retires a false security claim. The control itself is
+unchanged; only its description is now accurate, and the residual (a silently
+droppable audit index guarded solely by a test) is stated rather than hidden.
+
+**Rollback.** Docs and one test; revert the commit.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -590,21 +640,24 @@ None. Slice 1 required no human decision.
 
 **Ungated work remains available.** Unlike after slice 6, Opus is not
 blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
-traceable to a reproduced finding, and slice 7 completed issues 1-2. The
-next slice is **issue 3** — the `INDEXED BY` documentation correction
-(F1-IDX-AUDIT / F2-IDX-SCAN), a docs-only change that retires a security
-claim four documents make and the code does not honour: THREAT_MODEL.md:27,
-ARCHITECTURE.md:251-256, ADR 0005's consequences, ROADMAP.md:91-92, and the
-migration 0003 comment all say `idx_audit_event_entity` is pinned with
-`INDEXED BY`; no such hint exists, and dropping the index degrades
-silently. Recommended resolution: correct the prose, because the
-`EXPLAIN QUERY PLAN` test is the real pin and already exists.
+traceable to a reproduced finding. Slice 7 completed issues 1-2; slice 8
+completed issue 3.
 
-Then issues 4-7 (doctor read-only inspection, publication fsync, backup
-schema honesty, mission-wide preflight text accounting), issues 8-10 (scope
-pinning, honest web pagination, test-suite honesty gaps), issue 11 (the low
-sweep), issue 12 (interrupt audit, helper consolidation, release tag,
-coverage ratchet).
+The next slice is **issue 4** — doctor must stop mutating the database it
+inspects (F2-CORE-2 / F-OPS-5). Measured: converting a database to
+delete-journal, recording its SHA-256, and running `doctor` changes the
+bytes (`f26dacd5...` to `6e8b338b...`) because `Database._connect` forces
+`PRAGMA journal_mode = WAL` on every open and `read()` uses that same
+read-write connection. It also makes the `wal` and `foreign_keys` checks
+tautological, since they report what `connect` just forced. Fix: open
+doctor and `read()` with `mode=ro`, skip the WAL-forcing pragma on read
+paths, report the mode actually found. Regression: byte-compare a
+delete-journal database before and after `doctor --deep`.
+
+Then issues 5-7 (publication fsync, backup schema honesty, mission-wide
+preflight text accounting), issues 8-10 (scope pinning, honest web
+pagination, test-suite honesty gaps), issue 11 (the low sweep), issue 12
+(interrupt audit, helper consolidation, release tag, coverage ratchet).
 
 Still awaiting Kevin, and not to be started without a recorded decision:
 
