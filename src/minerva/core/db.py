@@ -455,10 +455,15 @@ class Database:
         refuse_existing: bool = False,
         on_ready: Callable[[sqlite3.Connection, int], None] | None = None,
     ) -> int:
+        # The unsafe-path rule dominates. `Path.exists()` follows symlinks, so
+        # checking `refuse_existing` first made the same filesystem state report
+        # `database_exists` or `database_symlink` depending only on a flag, and
+        # the flag-dependent one misdescribed the problem: a symlinked path is
+        # categorically unusable, not merely occupied.
+        _reject_unsafe_database_path(self.path)
         existed_before = self.path.exists()
         if refuse_existing and existed_before:
             raise ConflictError("database_exists", "Refusing to overwrite an existing database.")
-        _reject_unsafe_database_path(self.path)
         if existed_before:
             return self._initialize_in_place(on_ready=on_ready)
 

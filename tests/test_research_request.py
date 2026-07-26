@@ -7,14 +7,16 @@ from pathlib import Path
 from typing import NoReturn
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 
 import minerva.integrations.research_request_file as request_file_module
+import minerva.integrations.research_request_file as research_request_file
 import minerva.integrations.safe_artifact_file as safe_file_module
-from minerva.core.errors import IntegrityError
+from minerva.core.errors import IntegrityError, MinervaError
 from minerva.integrations.research_request import (
     MAX_EXPECTED_ACTIVE_CITATION_IDS,
     MAX_RESEARCH_REQUEST_BYTES,
+    REQUEST_DIGEST_MISMATCH_MESSAGE,
     build_research_request,
     canonical_research_request_bytes,
     parse_research_request,
@@ -511,3 +513,42 @@ def test_request_reader_rejects_content_change_between_pinned_reads(
     monkeypatch.setattr(safe_file_module, "_reread_bounded", changed)
 
     _load_failure(_GOLDEN, "request_input_changed")
+
+
+@pytest.mark.security
+def test_request_digest_classification_is_anchored_to_the_envelope_root() -> None:
+    """Classification must not be steerable by a file's own contents.
+
+    The packet reader learned this as F-SEC-1: an unanchored substring test lets
+    a file that happens to contain the sentinel sentence choose its own error
+    code. The request reader still used one. Every request field is
+    pattern-constrained so nothing can carry that sentence today, but the two
+    readers should not differ on a defensive rule, and a future free-text field
+    would silently inherit the weaker one.
+
+    Driven through the real classifier with a synthetic ValidationError, because
+    the hostile input the packet side can construct is unconstructible here —
+    which is precisely why the weaker test would have looked fine.
+    """
+
+    class _Nested(BaseModel):
+        mission_id: str
+
+        @field_validator("mission_id")
+        @classmethod
+        def _reject(cls, value: str) -> str:
+            raise ValueError(REQUEST_DIGEST_MISMATCH_MESSAGE)
+
+    try:
+        _Nested(mission_id="anything")
+    except ValidationError as error:
+        nested = error
+    else:  # pragma: no cover - the validator always raises
+        raise AssertionError("expected a validation error")
+
+    with pytest.raises(MinervaError) as caught:
+        research_request_file._raise_validation_failure(nested)
+
+    assert caught.value.code == "request_invalid", (
+        "a non-root error carrying the sentinel message must not claim to be a digest mismatch"
+    )

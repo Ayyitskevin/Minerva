@@ -725,3 +725,62 @@ def test_withdrawn_optional_citation_does_not_block_a_non_material_statement(
         item for item in brief.payload["citations"] if item["citation_id"] == evidence.id
     )
     assert citation["withdrawn"] is True
+
+
+def test_an_assumption_may_cite_already_withdrawn_evidence(lab: Lab) -> None:
+    """Creation must not be stricter than export about withdrawn citations.
+
+    PRD invariant 8 and ADR 0007 scope the withdrawn-citation refusal to
+    material findings, and the packet carries a non-material statement's
+    withdrawn citation marked `withdrawn: true`. `add_finding` nonetheless
+    refused every kind, so the same end state was reachable by withdrawing
+    afterwards but not by citing evidence already withdrawn.
+    """
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    lab.evidence.withdraw_evidence(
+        evidence_id=evidence.id,
+        reason="Withdrawn before the assumption is recorded.",
+        identity=lab.identity,
+    )
+
+    assumption = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="An assumption that keeps an optional citation to withdrawn evidence.",
+        statement_kind=StatementKind.ASSUMPTION,
+        status=FindingStatus.INCONCLUSIVE,
+        uncertainty="",
+        evidence_ids=(evidence.id,),
+        identity=lab.identity,
+    )
+
+    assert assumption.evidence_ids == (evidence.id,)
+    assert lab.synthesis.build_brief(seed.mission.id) is not None
+
+
+def test_a_material_finding_still_cannot_cite_withdrawn_evidence(lab: Lab) -> None:
+    """Relaxing the assumption case must not relax PRD invariant 8."""
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    lab.evidence.withdraw_evidence(
+        evidence_id=evidence.id,
+        reason="Withdrawn before the finding is recorded.",
+        identity=lab.identity,
+    )
+
+    with pytest.raises(IntegrityError) as caught:
+        lab.research.add_finding(
+            mission_id=seed.mission.id,
+            claim_id=seed.claim.id,
+            statement="A material finding resting on withdrawn evidence.",
+            statement_kind=StatementKind.OBSERVED_FACT,
+            status=FindingStatus.SUPPORTED,
+            uncertainty="",
+            evidence_ids=(evidence.id,),
+            identity=lab.identity,
+        )
+
+    assert caught.value.code == "citation_withdrawn"

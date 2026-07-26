@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from minerva.core.errors import IntegrityError
 from minerva.integrations.research_request import (
     MAX_RESEARCH_REQUEST_BYTES,
+    REQUEST_DIGEST_MISMATCH_MESSAGE,
     ResearchRequestDocument,
     parse_research_request,
 )
@@ -135,8 +136,14 @@ def _raise_validation_failure(error: ValidationError) -> Never:
             "request_selection_policy_unsupported",
             "The research request evidence-selection policy is unsupported.",
         )
+    # Anchored to the root envelope validator and matched exactly, for the same
+    # reason the packet reader is: a substring test would let a file choose its
+    # own error code if any field could ever carry this sentence.
     if any(
-        "request digest does not match the canonical request" in detail["msg"] for detail in details
+        detail["type"] == "value_error"
+        and tuple(detail["loc"]) == ()
+        and detail["msg"] == f"Value error, {REQUEST_DIGEST_MISMATCH_MESSAGE}"
+        for detail in details
     ):
         _fail(
             "request_digest_mismatch",

@@ -17,6 +17,16 @@ RESEARCH_RESULT_SCHEMA_VERSION: Literal["minerva.research-result.v1"] = "minerva
 REQUESTED_OUTPUT_SCHEMA_VERSION: Literal["minerva.research-brief.v2"] = "minerva.research-brief.v2"
 EVIDENCE_SELECTION_POLICY: Literal["complete_claim_ledger"] = "complete_claim_ledger"
 MAX_RESEARCH_REQUEST_BYTES = 65_536
+
+REQUEST_DIGEST_MISMATCH_MESSAGE = "request digest does not match the canonical request"
+"""The one message the file reader may classify as a digest mismatch.
+
+Named so the reader can match it exactly and anchored to the envelope root,
+mirroring the packet reader. A substring test would let a file whose fields
+happen to contain this sentence choose its own error code; today every request
+field is pattern-constrained so nothing can, but the packet side already learned
+that lesson (F-SEC-1) and the two readers should not differ on it.
+"""
 MAX_EXPECTED_ACTIVE_CITATION_IDS = 200
 
 _MISSION_ID_PATTERN = r"^mis_[0-9a-f]{32}$"
@@ -70,7 +80,7 @@ class ResearchRequestDocument(_StrictFrozenModel):
         if self.schema_version != self.request.schema_version:
             raise ValueError("request envelope and payload schema versions differ")
         if self.request_digest != research_request_digest(self.request):
-            raise ValueError("request digest does not match the canonical request")
+            raise ValueError(REQUEST_DIGEST_MISMATCH_MESSAGE)
         return self
 
 

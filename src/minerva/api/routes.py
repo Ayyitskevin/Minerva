@@ -84,24 +84,53 @@ _FORBIDDEN_IDENTITY_HEADERS: Final = frozenset(
     {
         "authorization",
         "proxy-authorization",
+        "remote-user",
         "x-actor",
         "x-actor-id",
+        "x-auth-request-access-token",
         "x-auth-request-email",
+        "x-auth-request-groups",
         "x-auth-request-user",
         "x-authenticated-user",
+        "x-consumer-id",
+        "x-consumer-username",
+        "x-forwarded-email",
+        "x-forwarded-groups",
         "x-forwarded-user",
         "x-minerva-actor",
         "x-minerva-actor-id",
+        "x-ms-client-principal",
+        "x-ms-client-principal-id",
+        "x-ms-client-principal-name",
         "x-remote-user",
         "x-user",
         "x-user-id",
     }
 )
+"""Headers that mean an identity-injecting proxy is in front of Minerva.
+
+The real guarantee is elsewhere: `local_identity` derives the actor from
+`getpass.getuser()` and no code path reads an actor from a header, so accepting
+one of these would grant nothing. Refusing them is defence in depth — a
+misconfigured deployment fails loudly instead of looking like it works. The set
+now covers the mainstream identity proxies (Cloudflare Access is handled by the
+`cf-access-authenticated-user-*` prefix rule below, plus Google IAP,
+oauth2-proxy, Azure EasyAuth, and Kong) rather than an arbitrary subset.
+"""
+
+_FORBIDDEN_IDENTITY_HEADER_PREFIXES: Final = (
+    "cf-access-authenticated-user-",
+    "x-goog-authenticated-user-",
+)
+"""Proxy identity headers whose vendors define a family rather than fixed names."""
 _CLAIM_ETAG_RE_TEMPLATE: Final = r'"claim-{claim_id}-v([1-9][0-9]*)"'
 
 
 def _reject_external_identity_headers(request: Request) -> None:
-    if any(name in request.headers for name in _FORBIDDEN_IDENTITY_HEADERS):
+    present = {name.lower() for name in request.headers}
+    if present & _FORBIDDEN_IDENTITY_HEADERS or any(
+        name.startswith(_FORBIDDEN_IDENTITY_HEADER_PREFIXES) for name in present
+    ):
         raise SecurityBoundaryError(
             "external_identity_rejected",
             "External authentication and actor headers are not accepted.",
@@ -290,6 +319,8 @@ def create_api_router(database: Database) -> APIRouter:
                 "brief.preview.markdown_json",
                 "brief.export.markdown_json",
                 "research.packet.v2.canonical",
+                "research.packet.v2.verify.cli",
+                "research.packet.v2.inspect.cli",
                 "research.request.v1.canonical",
                 "research.request.v1.verify.cli",
                 "research.request.v1.fulfill.cli",

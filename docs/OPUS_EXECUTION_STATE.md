@@ -903,6 +903,94 @@ relaxed.
 
 **Rollback.** Pure test, script, and config changes; revert the commit.
 
+### Slice 16 — the low sweep (plan 2, issue 11, PARTIAL: 7 of 10 items)
+
+**User outcome.** Five refusals now describe the right problem, or fire at all;
+two documents no longer understate their scope; and the capability manifest
+lists two verbs that already shipped.
+
+**Reproduced against real code, then re-run after:**
+
+| | Before | After |
+| --- | --- | --- |
+| `add_finding(ASSUMPTION, withdrawn citation)` | **refused `citation_withdrawn`** | accepted |
+| `add_finding(MATERIAL, withdrawn citation)` | refused `citation_withdrawn` | refused `citation_withdrawn` |
+| `add_evidence(start_byte=1.0)` | **raw `TypeError` in the transaction** | `citation_offsets_invalid` |
+| `initialize(refuse_existing=True)` on a symlink | **`database_exists`** | `database_symlink` |
+| `initialize(refuse_existing=False)` on a symlink | `database_symlink` | `database_symlink` |
+| non-root validation error carrying the digest sentence | **`request_digest_mismatch`** | `request_invalid` |
+| genuine root digest mismatch | `request_digest_mismatch` | `request_digest_mismatch` |
+| `X-Forwarded-Email`, `X-Goog-Authenticated-User-Email`, +5 more | **accepted** | `external_identity_rejected` |
+
+**F2-RES-2 was resolved toward the ADR, not away from it.** The choice plan 2
+offered was to gate on `kind.requires_citation` or amend ADR 0007. Amending
+would have been weakening a contract to match an implementation: the ADR and
+PRD invariant 8 both scope the withdrawn-citation refusal to material findings,
+and the blanket refusal was not even a stronger guarantee, because the same end
+state reached by withdrawing *after* creation already exported fine. The flag
+now derives from `statement_kind.requires_citation`, so creation and export
+read one predicate.
+
+**F2-SURFACES-3 is defence in depth and is labelled as such.** `local_identity`
+derives the actor from `getpass.getuser()`; no code path reads an actor from a
+header, so the headers this now rejects would have granted nothing if accepted.
+The value is that a misconfigured identity proxy in front of Minerva fails
+loudly instead of appearing to work. Matching is case-normalised and covers the
+mainstream families — Google IAP, oauth2-proxy, Azure EasyAuth, Kong, and
+Cloudflare Access via prefix — rather than the arbitrary subset it listed.
+
+**F2-INTEGRATIONS-1 closes a class, not a live hole.** Every request field is
+pattern-constrained today, so no input can currently carry the mismatch
+sentence into a non-root error. The classifier is anchored anyway — exact
+message, `value_error`, empty `loc` — because the packet reader already learned
+this lesson as F-SEC-1 and the two readers should not differ.
+
+**F3-MILESTONE-TITLES needed more than a title.** Retitling
+`docs/THREAT_MODEL.md` to cover Milestone 1.5 would have claimed coverage its
+body did not have, since it had no retraction row at all. It gained one, plus a
+security invariant that states what the code does rather than the tidier thing:
+finding reads return a retracted finding marked with its reason, timestamp, and
+actor, while synthesis *excludes* it from the brief. Both are true; they are not
+the same rule, and an invariant that said "every surface returns it" would have
+been false for export.
+
+**F5-CAP-PACKET-CLI changes a published contract, additively.**
+`research.packet.v2.verify.cli` and `research.packet.v2.inspect.cli` back real
+`minerva packet verify` / `minerva packet inspect` commands, verified present
+before being declared. This adds two names to `minerva.capabilities.v2` and
+removes or alters none, so a consumer pinning the previous set sees new entries,
+never a missing one. `test_capability_manifest_is_versioned_and_truthful` pins
+the full document, so the manifest cannot drift from this record silently.
+
+**Three items are NOT done.** `F2-CORE-5` (recompute pending migrations inside
+the write transaction), `F2-TESTS-4` (golden-fixture regeneration procedure),
+and `F4-CLI-UNDOC` (README CLI verb reference) remain open. Issue 11 is
+therefore partially complete and is recorded that way; the next slice picks
+them up.
+
+**Tests.** Five regressions verified to fail on pre-fix source, one per code
+fix. 676 tests, 208 security-marked, 89.97% branch coverage. All eleven gates
+green.
+
+**Files changed.** `src/minerva/research/service.py`,
+`src/minerva/evidence/service.py`, `src/minerva/core/db.py`,
+`src/minerva/integrations/research_request.py`,
+`src/minerva/integrations/research_request_file.py`,
+`src/minerva/api/routes.py`, `docs/PRD.md`, `docs/THREAT_MODEL.md`,
+`docs/DECISIONS.md`, and five test modules.
+
+**Migration status.** None. **Security impact.** One refusal deliberately
+relaxed — assumptions may now cite withdrawn evidence — which restores the
+documented contract rather than weakening it; the material-finding refusal is
+unchanged and pinned. Everything else strengthens: an unmapped exception became
+a domain refusal, a flag-dependent error code became deterministic, a
+classifier was anchored, and seven proxy identity headers plus two vendor
+prefixes are now rejected.
+
+**Rollback.** Revert the commit. The manifest addition is the only externally
+visible contract change and reverting it removes two names a consumer may have
+started reading.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -1025,23 +1113,24 @@ blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
 traceable to a reproduced finding. Slice 7 completed issues 1-2; slice 8
 completed issue 3.
 
-Slices 7-15 completed issues 1-10. The next slice is **issue 11** — the low
-sweep from plan 2 section 27: `F2-CORE-5` (recompute pending migrations inside
-the write transaction so a concurrent upgrade resolves as a no-op instead of a
-spurious `migration_failed`), `F2-CORE-6` (check the unsafe-path rule before
-`refuse_existing` so a symlinked path always reports `database_symlink`),
-`F2-RES-2` (`add_finding` passes a blanket `allow_withdrawn=False`, refusing an
-assumption that cites already-withdrawn evidence — a state ADR 0007 explicitly
-says is supported and which is reachable by creating in the other order; either
-gate it on `kind.requires_citation` or amend the ADR), `F2-EVD-1` (float
-citation offsets raise a raw `TypeError` inside the transaction instead of
-`citation_offsets_invalid`), `F2-INTEGRATIONS-1` (anchor the request
-digest-mismatch classifier the way the packet one is), `F2-SURFACES-3` (extend
-the identity-header denylist to the mainstream proxy headers),
-`F2-TESTS-4` (a deterministic golden-fixture regeneration procedure),
-`F3-MILESTONE-TITLES`, `F4-CLI-UNDOC`, `F5-CAP-PACKET-CLI`, and the
-`OPUS_EXECUTION_STATE.md` corrections listed in plan 2 section 27. Each is
-small; each still needs its own reproduction before it is called fixed.
+Slices 7-15 completed issues 1-10. Slice 16 completed **seven of the ten**
+items in issue 11 — the low sweep from plan 2 section 27: `F2-CORE-6`,
+`F2-RES-2`, `F2-EVD-1`, `F2-INTEGRATIONS-1`, `F2-SURFACES-3`,
+`F3-MILESTONE-TITLES`, and `F5-CAP-PACKET-CLI`.
+
+**Issue 11 is not finished.** Three items remain and are the next slice:
+
+- `F2-CORE-5` — recompute pending migrations inside the write transaction so a
+  concurrent upgrade resolves as a no-op instead of a spurious
+  `migration_failed`. The only one of the three that touches migration history,
+  so it needs a reproduction that actually races two upgraders, not a mocked
+  one.
+- `F2-TESTS-4` — a deterministic golden-fixture regeneration procedure. Today
+  a contract change means hand-editing fixtures, which is how a fixture and the
+  code it pins drift apart without either looking wrong.
+- `F4-CLI-UNDOC` — the README does not list every CLI verb. `packet verify` and
+  `packet inspect` were undocumented there even while slice 16 was adding them
+  to the capability manifest.
 
 Then issue 12 (interrupt audit, helper consolidation, release tag, coverage
 ratchet).
