@@ -328,3 +328,31 @@
   write connection, which forced `journal_mode = WAL` and rewrote the header of
   the database being copied. It now reads through the same non-mutating
   connection every other read path uses.
+
+## Oversized is a work limit, never tampering (plan 2, issue 7)
+
+- The mission-wide branch of `_preflight_synthesis` bounded record counts,
+  reference counts, and snapshot bytes but never emitted text, unlike the
+  claim-scoped branch. Record and snapshot counts do not bound emitted text:
+  one evidence quote may be 100,000 bytes and many cards may quote the same
+  small snapshot, so a mission can hold far more packet text than snapshot
+  bytes. Measured: 215 cards quoting one 99,001-byte range produced 21.3 MB of
+  quote text against 99 KB of snapshots and passed the preflight.
+- The oversize then surfaced at serialization, where `_require_packet_size`
+  raised a bare `ValueError` that a blanket `except ValueError` reported as
+  `packet_integrity_invalid` — a tamper alarm for a completely intact database,
+  and one that wedged mission-wide export permanently. It now refuses at the
+  preflight with `brief_work_limit`, before any snapshot BLOB is materialized.
+- **The accounting is a deliberate lower bound.** It sums the unbounded
+  free-text columns (quotes, statements, uncertainty, falsification criteria,
+  status reasons, question text, snapshot labels) and ignores identifiers,
+  timestamps, and JSON structure. A lower bound can only refuse a mission whose
+  output genuinely exceeds the cap, never one that would have fit.
+- `ResearchPacketTooLargeError` subclasses `ValueError`, so every consumer-side
+  handler behaves identically while a producer can distinguish "too large" from
+  "malformed". The serializer guard remains as a backstop for a mission whose
+  canonical bytes exceed the cap by less than the lower bound could see, and it
+  now maps to `brief_work_limit` too.
+- The UTF-8/UTF-16 storage factor is now one shared helper
+  (`_storage_bytes_per_output_byte`) instead of being spelled out in the
+  claim-scoped branch only, so the two branches cannot drift on it.
