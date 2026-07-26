@@ -801,6 +801,51 @@ there is no pre-fix source to fail against, because nothing was broken.
 
 **Migration status.** None. **Rollback.** Docs and one test.
 
+### Slice 14 — the review surface says what it is showing (plan 2, issue 9, COMPLETE)
+
+**User outcome.** A reviewer can tell whether the mission list is the whole set.
+
+**Reproduced, then re-run against the fix** (105 missions seeded):
+
+| | Before | After |
+| --- | --- | --- |
+| cards rendered | 100 | 100 |
+| "Mission 104" visible | no | no |
+| says "Showing the first" | **no** | yes |
+| says "More exist than this page displays" | **no** | yes |
+| names a paging surface | **no** | yes |
+
+**Fix.** `/missions` uses `page_missions`, which fetches one extra row and
+reports whether it existed, so "more exist" is exact. A `len(missions) == limit`
+heuristic would have claimed more missions existed whenever a count landed
+exactly on the page size — a surface built to stop overstating completeness must
+not start overstating truncation instead, and the second regression pins that.
+
+**Single-page on purpose.** Cursor navigation would mean coupling the review
+surface to the REST layer's cursor encoding or growing a second one, and this is
+a deliberately restrained GET-only surface. What it owed the reviewer was
+honesty about the cap, not navigation; the banner names `minerva mission list`
+and `/api/v1/missions` as the surfaces that page, so nothing is unreachable.
+
+**A weak test caught and strengthened.** Both new tests failed on the pre-fix
+source only with `AttributeError: module has no attribute
+'WEB_MISSION_PAGE_SIZE'` — a missing-symbol failure that proves nothing about
+behaviour. The behavioural before/after above was measured separately against
+pre-fix source with the constant inlined, which is what actually establishes the
+defect. A first attempt at that probe also mis-reported (its indicator check
+included the substring "page", which matches page chrome and returned true in
+both directions); tightened to the exact banner strings.
+
+**Files changed.** `src/minerva/web/app.py`,
+`src/minerva/web/templates/missions.html`, `src/minerva/web/static/style.css`,
+`tests/test_web.py`, `docs/DECISIONS.md`.
+
+**Migration status.** None. **Security impact.** No boundary moved; the route
+still reads through the shared service, and the page remains GET-only.
+650 tests, 90.28% branch coverage.
+
+**Rollback.** Pure code, template, and tests; revert the commit.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -923,25 +968,27 @@ blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
 traceable to a reproduced finding. Slice 7 completed issues 1-2; slice 8
 completed issue 3.
 
-Slices 7-13 completed issues 1-8. The next slice is **issue 9** —
-F2-SURFACES-1 (F-PAR-3), honest web pagination. The `/missions` route calls
-`research.list_missions()` with no argument, which defaults to `limit=100`, and
-`missions.html` has no count, banner, or pagination affordance. Reproduced in
-the plan sweep with 150 seeded missions: exactly 100 cards render, "Mission 100"
-and "Mission 149" absent, no truncation indicator anywhere, while the REST route
-on the same data returns a `next_cursor`. A human review surface silently
-presenting a capped list as the whole set is the same false-completeness class
-as slices 7 and 12. Fix: cursor pagination like the REST route, or at minimum an
-explicit "showing first N" banner when `len(missions) == limit`. The service
-already has `page_missions` with validated cursors, so the web route can use it
-rather than growing new query logic.
+Slices 7-14 completed issues 1-9. The next slice is **issue 10** — the
+test-suite honesty gaps (F2-TESTS-1/2/3), three places where the suite claims
+more than it delivers:
 
-Then issue 10 (test-suite honesty gaps: the network guard misses `connect_ex`
-and UDP while its docstring claims to fail any non-loopback socket; `scripts/`
-sits outside the coverage floor at 39% with MIN003 unwitnessed; tuple/list/
-starred alias unpacking evades the static gate untested), issue 11 (the low
-sweep), issue 12 (interrupt audit, helper consolidation, release tag, coverage
-ratchet).
+- the autouse `deny_outbound_network` fixture's docstring says it will "fail any
+  test that opens a non-loopback socket", but it patches only `connect` and
+  `create_connection`; measured against the real fixture, `connect_ex` to
+  127.0.0.2 returned ECONNREFUSED and UDP `sendto` delivered 5 bytes, both
+  silently. Either patch the remaining entry points or narrow the docstring to
+  what it covers;
+- the coverage floor is scoped to `--cov=minerva`, so the whole `scripts/` tree
+  sits outside it at 39%, with `static_security_check.py` at 79% and its MIN003
+  (eval/exec/compile) emit branch uncovered and unwitnessed by any test;
+- `_bind_alias` returns early for any non-`ast.Name` target, so
+  `(runner,) = (os.system,)` and `[runner] = [os.system]` evade MIN002 while the
+  tested `runner = os.system` form is caught — the alias tests assert a stronger
+  guarantee than the scanner provides. Extend `_bind_alias` to walk
+  `ast.Tuple`/`ast.List` targets and add the cases.
+
+Then issue 11 (the low sweep) and issue 12 (interrupt audit, helper
+consolidation, release tag, coverage ratchet).
 
 
 Still awaiting Kevin, and not to be started without a recorded decision:

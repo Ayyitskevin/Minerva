@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Final
 
 from fastapi import FastAPI, Request
 from fastapi import Path as ApiPath
@@ -28,6 +28,16 @@ from minerva.synthesis.service import SynthesisService
 from minerva.web.security import LocalSecurityMiddleware
 
 _WebId = Annotated[str, ApiPath(min_length=1, max_length=100)]
+
+WEB_MISSION_PAGE_SIZE: Final = 100
+"""How many missions the review surface renders at once.
+
+The page is deliberately single-page: this is a restrained review surface, and
+adding cursor navigation would mean either coupling it to the REST layer's
+cursor encoding or growing a second one. What it must not do is present a capped
+list as the whole set, so the template says how many it is showing and whether
+more exist, and points at the surfaces that can page.
+"""
 
 
 def _templates() -> Jinja2Templates:
@@ -112,11 +122,18 @@ def create_app(db_path: str | Path, testing: bool = False) -> FastAPI:
 
     @app.get("/missions", include_in_schema=False)
     def mission_list(request: Request) -> Response:
+        # `page_missions` fetches one extra row and reports whether it existed,
+        # so "more missions exist" is exact rather than the `len == limit`
+        # guess, which would claim more whenever a mission count landed
+        # exactly on the page size.
+        missions, next_position = research.page_missions(limit=WEB_MISSION_PAGE_SIZE)
         return templates.TemplateResponse(
             request,
             "missions.html",
             {
-                "missions": research.list_missions(),
+                "missions": missions,
+                "mission_page_size": WEB_MISSION_PAGE_SIZE,
+                "more_missions_exist": next_position is not None,
                 "page_title": "Research missions",
             },
         )
