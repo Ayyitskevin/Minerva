@@ -1,4 +1,4 @@
-# Minerva product requirements: Milestones 1 through 1.4 and 2B
+# Minerva product requirements: Milestones 1 through 1.5 and 2B
 
 ## Product identity
 

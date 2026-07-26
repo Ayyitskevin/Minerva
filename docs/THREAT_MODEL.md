@@ -1,4 +1,4 @@
-# Current threat model: Milestones 1 through 1.4 and 2B
+# Current threat model: Milestones 1 through 1.5 and 2B
 
 ## Boundary and assets
 
@@ -32,6 +32,7 @@ evidence leaves the machine.
 | Source mutation | Snapshot bytes stored in SQLite; SHA-256 and length checked; append-only triggers; import never references original afterward | Doctor/export detect partial or inconsistent corruption, but no external signature or anchor detects a determined same-OS-user coordinated rewrite |
 | Citation forgery | Exact byte offsets and quote match at creation and export; cross-mission checks; stable IDs | Source assertions may themselves be false; Minerva records provenance, not truth |
 | Audit rewriting | Same-transaction audit insert; update/delete triggers; `PRAGMA recursive_triggers` so conflict-resolution deletes cannot bypass them; no raw source content or paths in details | Direct file replacement by the OS user is outside the process boundary |
+| Retraction used to erase or hide a statement | Findings are never edited or deleted; retraction is a separate append-only `finding_retractions` row with its own no-update/no-delete triggers, committed with its audit event; finding reads left-join that row so a retracted finding is still returned, marked with its reason, timestamp, and actor, while synthesis excludes it from the brief instead of asserting it; doctor enforces the triggers by packaged fingerprint and reconciles every retraction row against its audit event | Retraction records that a statement was withdrawn, not why it was wrong or whether the withdrawal was justified; an operator who retracts every inconvenient finding shortens the brief, and only the retained finding history and audit trail show that it happened |
 | Export path attack | Fixed contained filenames; reject symlink/pre-existing targets; size bounds; cleanup after caught exceptions | Operator can intentionally select a sensitive directory; a process or power-loss crash can leave a partial new export, but existing files are never overwritten |
 | Failure cleanup deletes state Minerva did not create | Opening uses a `mode=rw` URI and never creates or removes a file; fresh initialization stages privately and publishes with an exclusive hard link; pathname removal is reachable only from the device/inode-checked staging cleanup | A crash between the staged commit and publication can leave an orphan staging file for operator cleanup |
 | Fulfillment mutates or coordinates work | Request validated before DB open; one query-only snapshot; identity/audit/mutation/export APIs absent; fixed local files only; no provider/network/transport surface | SQLite/file publication is not crash-atomic; a crash can leave a partial new output directory for operator cleanup |
@@ -62,6 +63,10 @@ evidence leaves the machine.
   database, credential source, provider, or network. Fulfillment validates first, then
   uses one query-only snapshot under one cumulative SQLite work guard. Exhaustion creates
   no artifacts, Minerva state, or audit record.
+- Retraction deletes nothing. Surfaces that read findings still return a retracted
+  finding, marked with its reason, timestamp, and actor; synthesis surfaces exclude
+  it from the brief rather than presenting it as asserted. Neither path can make the
+  finding, its citations, or its history disappear.
 - The complete-ledger active precondition prevents silent stance omission. Result
   bytes bind request digest to exact canonical output without paths, URLs, identity,
   authority, approval, timestamps, transport, or run-coordination metadata.

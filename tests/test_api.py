@@ -209,6 +209,8 @@ def test_capability_manifest_is_versioned_and_truthful(client: TestClient) -> No
             "brief.preview.markdown_json",
             "brief.export.markdown_json",
             "research.packet.v2.canonical",
+            "research.packet.v2.verify.cli",
+            "research.packet.v2.inspect.cli",
             "research.request.v1.canonical",
             "research.request.v1.verify.cli",
             "research.request.v1.fulfill.cli",
@@ -317,6 +319,41 @@ def test_evidence_offsets_reject_coercive_json_types(
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "request_validation_failed"
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "header_name",
+    [
+        # Cloudflare Access, Google IAP, oauth2-proxy, Azure EasyAuth, Kong, and
+        # the bare form. The denylist covered a curated subset, so the headers
+        # the mainstream identity proxies actually inject passed through. Nothing
+        # is granted by accepting them — identity always comes from
+        # getpass.getuser() — but a misconfigured deployment should fail loudly
+        # rather than look like it works.
+        "CF-Access-Authenticated-User-Email",
+        "X-Goog-Authenticated-User-Email",
+        "X-Forwarded-Email",
+        "X-Auth-Request-Groups",
+        "X-Ms-Client-Principal-Name",
+        "X-Consumer-Username",
+        "Remote-User",
+    ],
+)
+def test_proxy_injected_identity_headers_are_rejected(
+    client: TestClient,
+    header_name: str,
+) -> None:
+    actor_value = "proxy-asserted-private-value"
+    response = client.post(
+        "/api/v1/missions",
+        headers={header_name: actor_value},
+        json={"title": "Mission", "objective": "Objective"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "external_identity_rejected"
+    assert actor_value not in response.text
 
 
 @pytest.mark.parametrize("header_name", ["X-Minerva-Actor", "X-Actor-ID", "Authorization"])

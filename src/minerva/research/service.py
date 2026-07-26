@@ -353,7 +353,13 @@ class ResearchService:
                     connection,
                     evidence_id=evidence_id,
                     mission_id=mission_id,
-                    allow_withdrawn=False,
+                    # PRD invariant 8 and ADR 0007 scope the withdrawn-citation
+                    # refusal to material findings. Refusing it here for every
+                    # kind made creation stricter than export: an assumption
+                    # citing already-withdrawn evidence was rejected, while the
+                    # same end state reached by withdrawing afterwards exports
+                    # fine with the citation marked withdrawn.
+                    allow_withdrawn=not statement_kind.requires_citation,
                     snapshot_cache=snapshot_cache,
                 )
                 if claim_id is not None and citation.claim_id != claim_id:

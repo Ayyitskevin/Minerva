@@ -403,3 +403,41 @@ def test_supersession_chains_and_branches_are_recorded_faithfully(lab: Lab) -> N
         third.id: second.id,
         branch.id: first.id,
     }
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "offsets",
+    [
+        pytest.param((0.0, 33), id="float_start"),
+        pytest.param((0, 33.0), id="float_end"),
+    ],
+)
+def test_non_integer_citation_offsets_are_a_domain_refusal(
+    lab: Lab,
+    offsets: tuple[object, object],
+) -> None:
+    """A float offset must refuse like any other invalid citation.
+
+    Floats passed every range comparison and then failed inside the transaction
+    as a raw TypeError from slicing the snapshot, so a direct service caller —
+    the shared layer the CLI, API, and web all wrap — got an unmapped exception
+    instead of a stable error code.
+    """
+
+    seed = lab.seed_claim()
+    start, end = offsets
+
+    with pytest.raises(IntegrityError) as caught:
+        lab.evidence.add_evidence(
+            mission_id=seed.mission.id,
+            claim_id=seed.claim.id,
+            snapshot_id=seed.snapshot.snapshot_id,
+            start_byte=start,  # type: ignore[arg-type]
+            end_byte=end,  # type: ignore[arg-type]
+            quote="Evidence supports the claim.",
+            stance=EvidenceStance.SUPPORTS,
+            identity=lab.identity,
+        )
+
+    assert caught.value.code == "citation_offsets_invalid"

@@ -1239,3 +1239,27 @@ def test_restore_preserves_migration_state_codes_for_intact_backups(
 
     assert caught.value.code == expected_code
     assert not (tmp_path / "restored.db").exists()
+
+
+@pytest.mark.security
+def test_symlinked_database_path_reports_the_symlink_regardless_of_flags(tmp_path: Path) -> None:
+    """The unsafe-path rule dominates `refuse_existing`.
+
+    `Path.exists()` follows symlinks, so checking the flag first made identical
+    filesystem state report two different stable codes depending only on a
+    caller's argument — and the flag-dependent one misdescribed the problem. A
+    symlinked database path is categorically unusable, not merely occupied.
+    """
+
+    real = tmp_path / "real.db"
+    Database(real).initialize()
+    link = tmp_path / "link.db"
+    link.symlink_to(real)
+
+    codes = []
+    for refuse_existing in (True, False):
+        with pytest.raises(IntegrityError) as caught:
+            Database(link).initialize(refuse_existing=refuse_existing)
+        codes.append(caught.value.code)
+
+    assert codes == ["database_symlink", "database_symlink"]

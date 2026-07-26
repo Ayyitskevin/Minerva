@@ -48,7 +48,16 @@ class EvidenceService:
         identity: IdentityContext,
         supersedes_evidence_id: str | None = None,
     ) -> EvidenceCard:
-        if isinstance(start_byte, bool) or isinstance(end_byte, bool):
+        # `bool` is excluded before the `int` check because it is a subclass.
+        # A float passed every range comparison below and then failed inside the
+        # transaction as a raw `TypeError` from slicing the snapshot, so a direct
+        # service caller got an unmapped exception instead of a domain refusal.
+        if (
+            isinstance(start_byte, bool)
+            or isinstance(end_byte, bool)
+            or not isinstance(start_byte, int)
+            or not isinstance(end_byte, int)
+        ):
             raise IntegrityError("citation_offsets_invalid", "Citation offsets must be integers.")
         if start_byte < 0 or end_byte <= start_byte:
             raise IntegrityError("citation_offsets_invalid", "Citation offsets are invalid.")

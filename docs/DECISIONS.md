@@ -445,3 +445,64 @@ before being changed.
   them under pytest would report how little pytest calls them rather than how
   well they are tested. Including all of `scripts/` unfiltered put the total at
   exactly 85.0%, which would have made the floor flap on any small change.
+
+## The low sweep (plan 2, issue 11)
+
+Five small refusals that were each wrong in a different way, plus two
+documentation corrections. Every one was reproduced against real code before
+being changed, and each regression was checked to fail on the pre-fix source.
+
+- **Creation was stricter than export for assumptions.** `add_finding` passed
+  `allow_withdrawn=False` for every statement kind, so an assumption citing
+  already-withdrawn evidence was refused `citation_withdrawn`. PRD invariant 8
+  and ADR 0007 scope that refusal to *material* findings: an assumption may keep
+  an optional citation to withdrawn evidence, which the packet marks as
+  withdrawn. The old behaviour was not even a stronger guarantee — the same end
+  state reached by withdrawing the evidence *after* creating the assumption
+  exported fine. The flag now derives from `statement_kind.requires_citation`,
+  so one predicate governs both ends.
+- **A float citation offset escaped as a raw `TypeError`.** Every range
+  comparison in `add_evidence` passes for a float, and the failure surfaced
+  deeper in the write path when the snapshot was sliced. A CLI caller never saw
+  it because argparse types the argument, but a direct service caller got an
+  unmapped exception instead of a domain refusal. The offsets are now
+  type-checked up front, `bool` excluded first because it is an `int` subclass.
+- **Error-code ordering let a flag decide what the problem was.** `initialize`
+  checked `refuse_existing` before the unsafe-path rule, and `Path.exists()`
+  follows symlinks — so the identical filesystem state reported `database_exists`
+  or `database_symlink` depending only on the caller's flag. The symlink rule now
+  runs first: a symlinked database path is categorically unusable, not merely
+  occupied.
+- **The request digest classifier was unanchored.** The reader matched the
+  mismatch sentence anywhere in any validation error, so a non-root error that
+  happened to carry the sentinel could claim `request_digest_mismatch`. It now
+  matches the packet reader: `value_error`, empty `loc`, exact message against
+  the named `REQUEST_DIGEST_MISMATCH_MESSAGE` constant. Today every request field
+  is pattern-constrained so nothing can carry that text — this closes the class,
+  not a live hole.
+- **The identity-header denylist was an arbitrary subset.** It listed
+  `x-forwarded-user` but not `x-forwarded-email`, and missed Google IAP, Azure
+  EasyAuth, Kong, and Cloudflare Access entirely. Seven names and two vendor
+  prefixes were added, and matching is now case-normalised. This is defence in
+  depth and is documented as such: `local_identity` derives the actor from
+  `getpass.getuser()` and no code path reads an actor from a header, so accepting
+  one of these would have granted nothing. Refusing them makes a misconfigured
+  deployment fail loudly instead of appearing to work.
+- **Two documents understated their own scope.** `docs/PRD.md` and
+  `docs/THREAT_MODEL.md` were titled "Milestones 1 through 1.4 and 2B" after
+  Milestone 1.5 (finding retraction, D-9) shipped. Retitling the threat model
+  would have claimed coverage its body did not have, so it also gained the
+  retraction row and invariant. The invariant states what the code does rather
+  than the tidier thing: finding reads return a retracted finding marked with its
+  reason, timestamp, and actor, while synthesis *excludes* it from the brief.
+  Both are true and they are not the same rule.
+- **The capability manifest omitted two shipped verbs.**
+  `research.packet.v2.verify.cli` and `research.packet.v2.inspect.cli` back real
+  `minerva packet verify` / `minerva packet inspect` commands. This is an
+  additive change to `minerva.capabilities.v2`: it makes the manifest more
+  truthful without removing or altering an existing entry, so a consumer pinning
+  the previous set sees new names, never a missing one.
+
+Three issue 11 items are **not** done and are not implied by the above:
+migration-runner TOCTOU (F2-CORE-5), a golden-fixture regeneration script
+(F2-TESTS-4), and the README CLI verb reference (F4-CLI-UNDOC).
