@@ -688,6 +688,68 @@ mutating its source.
 
 **Rollback.** Pure code and tests; revert the commit.
 
+### Slice 12 — oversized is a work limit, never tampering (plan 2, issue 7, COMPLETE)
+
+**User outcome.** A mission that is merely too large to export says so, instead
+of reporting that its data failed integrity validation.
+
+**Reproduced first.** 215 evidence cards quoting the same 99,001-byte range —
+21,285,215 bytes of quote text against 99,002 bytes of snapshot:
+
+| | Before | After |
+| --- | --- | --- |
+| mission-wide `build_brief` | `packet_integrity_invalid` "Research packet integrity validation failed." | `brief_work_limit` "The research brief exceeds synthesis limits." |
+
+The mission-wide preflight bounded record counts, reference counts, and
+snapshot bytes but never emitted text, unlike the claim-scoped branch. Record
+and snapshot counts do not bound emitted text: one quote may be 100,000 bytes
+and many cards may quote the same small snapshot. The oversize therefore
+surfaced only at serialization, where a blanket `except ValueError` classified
+it as tampering — and wedged mission-wide export permanently.
+
+**Fix.** Mission-scoped materialized-text accounting in the mission-wide
+branch, refusing with `brief_work_limit` before any snapshot BLOB is
+materialized. `ResearchPacketTooLargeError` (a `ValueError` subclass, so every
+consumer-side handler is unaffected) lets the producer distinguish "too large"
+from "malformed"; the serializer guard stays as a backstop and now also maps to
+`brief_work_limit`.
+
+**The accounting is a deliberate lower bound.** It sums the unbounded free-text
+columns and ignores identifiers, timestamps, and JSON structure, so it can only
+refuse a mission whose output genuinely exceeds the cap — never one that would
+have fit. The existing
+`test_claim_materialization_lower_bound_never_exceeds_canonical_json` guards
+that property for the claim-scoped side and still passes.
+
+**Incidental deduplication.** The UTF-8/UTF-16 storage factor was spelled out
+in the claim-scoped branch only; it is now one shared helper
+(`_storage_bytes_per_output_byte`) so the two branches cannot drift on it.
+
+**Tests.** Two new security-marked regressions, both verified to fail on the
+pre-fix source (`snapshot BLOB materialized after the preflight should have
+refused`, and `module ... has no attribute 'ResearchPacketTooLargeError'`).
+647 tests, 90.28% branch coverage, 184 security-marked.
+
+**One test-authoring correction worth recording.** The first draft patched
+`synthesis_module.MAX_EXPORT_BYTES`, which does nothing: `max_export_bytes` is a
+constructor default captured when the service is built, so the fixture's
+instance had already bound the old value. The test now constructs its own
+`SynthesisService` with the small cap, which is what actually exercises the
+path.
+
+**Files changed.** `src/minerva/synthesis/service.py`,
+`src/minerva/integrations/research_packet.py`, `tests/test_synthesis.py`,
+`docs/DECISIONS.md`.
+
+**Migration status.** None.
+
+**Security impact.** Removes a false tamper report and closes a permanent
+availability failure. No limit relaxed — `MAX_EXPORT_BYTES`,
+`MAX_RESEARCH_PACKET_BYTES`, and every count bound are unchanged; the refusal
+simply happens earlier and under an honest code.
+
+**Rollback.** Pure code and tests; revert the commit.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -810,28 +872,30 @@ blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
 traceable to a reproduced finding. Slice 7 completed issues 1-2; slice 8
 completed issue 3.
 
-Slices 7-11 completed issues 1-6. The next slice is **issue 7** — the
-mission-wide preflight has no text-storage accounting (F2-SYNTHESIS-2).
-`_preflight_synthesis`'s mission-wide branch bounds record counts (50k),
-reference counts (20k), and snapshot bytes (20MiB), but never accounts for
-quote or statement text, unlike the claim-scoped branch. Evidence quotes may
-be 100,000 bytes each and may repeat the same snapshot range, so aggregate
-packet text is effectively unbounded while snapshot bytes stay small.
-Assembly then materializes everything, and when canonical JSON exceeds
-`MAX_RESEARCH_PACKET_BYTES` the size `ValueError` is swallowed by a blanket
-`except ValueError` and reported as `packet_integrity_invalid` — a tamper
-alarm for a completely intact database, and one that wedges mission-wide
-export permanently. Reproduced in the plan sweep with 215 cards quoting the
-same 99,001-byte range: 21.3 MB of aggregate quote text against 99 KB of
-snapshots; the claim-scoped path refuses the same data honestly with
-`brief_work_limit`. Fix: add mission-scoped materialized-text accounting to
-the mission-wide branch mirroring `_preflight_claim_synthesis`, and
-distinguish the size error from validation errors so oversized-but-intact
-never reports as tampering.
+Slices 7-12 completed issues 1-7. The next slice is **issue 8** —
+F2-SYNTHESIS-1 (F-SYN-1), the claim-scoped scope boundary. The claim-scoped
+findings query filters `claim_id = ?`, so a mission-level finding
+(`claim_id` NULL) never matches even when it cites the target claim's own
+evidence. The scoped packet then carries the cited card while dropping the
+finding, its unresolved question, and its uncertainty, emitting empty arrays
+that a consumer cannot distinguish from "none exist". Both the finder and its
+verifier reproduced this. `add_finding` deliberately allows a mission-level
+finding to cite any claim's evidence, so the state is reachable through
+supported use.
 
-Then issues 8-10 (scope pinning, honest web pagination, test-suite honesty
-gaps), issue 11 (the low sweep), issue 12 (interrupt audit, helper
-consolidation, release tag, coverage ratchet).
+Two options, and this one needs a judgement rather than a mechanical fix:
+document the boundary and pin it with a regression, or include mission-level
+findings whose citation set intersects the target ledger. The scoped audit CTE
+already applies the same `claim_id` filter, so the packet is internally
+consistent either way. Inclusion is the more honest output but changes what a
+claim-scoped packet contains, which touches the `research-brief.v2` consumer
+contract — assess that carefully before choosing, and if the boundary stays,
+the emptiness must be made distinguishable from absence rather than left
+ambiguous.
+
+Then issues 9-10 (honest web pagination, test-suite honesty gaps), issue 11
+(the low sweep), issue 12 (interrupt audit, helper consolidation, release tag,
+coverage ratchet).
 
 Still awaiting Kevin, and not to be started without a recorded decision:
 

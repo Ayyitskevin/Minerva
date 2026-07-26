@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import minerva.evidence.integrity as evidence_integrity_module
+import minerva.integrations.research_packet as packet_module
 import minerva.synthesis.service as synthesis_module
 from conftest import ClaimSeed, Lab, SequenceIds, fixed_clock
 from minerva.core.audit import AuditRecorder
@@ -629,6 +630,90 @@ def test_synthesis_preflight_rejects_work_bound_before_snapshot_materialization(
 
     with pytest.raises(IntegrityError) as caught:
         lab.synthesis.build_brief(seed.mission.id)
+
+    assert caught.value.code == "brief_work_limit"
+
+
+@pytest.mark.security
+def test_oversized_mission_text_refuses_as_work_not_tampering(
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An intact mission that is merely too large must not report as tampered.
+
+    The mission-wide preflight bounded record counts and snapshot bytes but not
+    emitted text. One evidence quote may be 100,000 bytes and many cards may
+    quote the same small snapshot, so a mission could hold far more packet text
+    than snapshot bytes. The oversize then surfaced at serialization, where a
+    blanket `except ValueError` reported it as failed integrity validation — a
+    tamper alarm for a completely healthy database, and one that wedged
+    mission-wide export permanently.
+    """
+
+    quote_length = 4_000
+    body = ("x" * quote_length + "\n").encode("utf-8")
+    seed = lab.seed_claim(content=body, source_label="notes/large.txt")
+    quote = "x" * quote_length
+    for _ in range(8):
+        lab.evidence.add_evidence(
+            mission_id=seed.mission.id,
+            claim_id=seed.claim.id,
+            snapshot_id=seed.snapshot.snapshot_id,
+            start_byte=0,
+            end_byte=quote_length,
+            quote=quote,
+            stance=EvidenceStance.SUPPORTS,
+            identity=lab.identity,
+        )
+    # A cap the quote text exceeds while snapshot bytes and record counts stay
+    # far inside their own limits, which is the shape the finding described.
+    synthesis = SynthesisService(
+        lab.database,
+        clock=fixed_clock,
+        id_factory=lab.ids,
+        max_export_bytes=8_000,
+    )
+
+    def unexpected_snapshot_verification(
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> None:
+        raise AssertionError("snapshot BLOB materialized after the preflight should have refused")
+
+    monkeypatch.setattr(
+        synthesis_module,
+        "verify_snapshot_integrity",
+        unexpected_snapshot_verification,
+    )
+
+    with pytest.raises(IntegrityError) as caught:
+        synthesis.build_brief(seed.mission.id)
+
+    assert caught.value.code == "brief_work_limit"
+
+
+@pytest.mark.security
+def test_packet_size_overflow_is_a_work_limit_not_an_integrity_failure(
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The serializer's size guard must be distinguishable from a validation error.
+
+    The guard raised a bare `ValueError`, indistinguishable from a malformed
+    packet, so the producer classified "too large" as "integrity validation
+    failed". It now raises a `ValueError` subclass: consumers catching
+    `ValueError` are unaffected, and the producer can tell the two apart.
+
+    Lowering only the protocol cap leaves the preflight satisfied, so this
+    exercises the serializer backstop rather than the preflight.
+    """
+
+    scenario = _populate_brief(lab)
+    assert issubclass(packet_module.ResearchPacketTooLargeError, ValueError)
+    monkeypatch.setattr(packet_module, "MAX_RESEARCH_PACKET_BYTES", 64)
+
+    with pytest.raises(IntegrityError) as caught:
+        lab.synthesis.build_brief(scenario.seed.mission.id)
 
     assert caught.value.code == "brief_work_limit"
 

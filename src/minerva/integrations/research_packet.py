@@ -24,6 +24,18 @@ EXPORT_DIGEST_ALGORITHM = "sha256-canonical-json-v1"
 EXPORT_DIGEST_MISMATCH_MESSAGE = "packet export digest does not match the canonical brief"
 MAX_RESEARCH_PACKET_BYTES = 20_971_520
 
+
+class ResearchPacketTooLargeError(ValueError):
+    """The canonical packet exceeds the protocol size limit.
+
+    A `ValueError` subclass so every existing consumer-side handler keeps
+    behaving identically, but nameable so a *producer* can tell an oversized
+    packet apart from a malformed one. Without that distinction, a mission whose
+    data was entirely intact but too large to serialize was reported as failing
+    integrity validation — a tamper alarm for a healthy database.
+    """
+
+
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _MAX_JSON_DEPTH = 64
 _MAX_JSON_OBJECT_FIELDS = 64
@@ -363,7 +375,7 @@ def _validate_payload(payload: Mapping[str, object]) -> ResearchBriefPayload:
 
 def _require_packet_size(data: bytes) -> None:
     if len(data) > MAX_RESEARCH_PACKET_BYTES:
-        raise ValueError("research packet exceeds the protocol size limit")
+        raise ResearchPacketTooLargeError("research packet exceeds the protocol size limit")
 
 
 def _canonical_json_bytes(value: object) -> bytes:

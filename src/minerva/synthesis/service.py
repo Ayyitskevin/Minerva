@@ -20,6 +20,7 @@ from minerva.evidence.integrity import new_snapshot_cache, verify_evidence_refer
 from minerva.integrations.research_packet import (
     CITATION_SCHEME,
     RESEARCH_PACKET_SCHEMA_VERSION,
+    ResearchPacketTooLargeError,
     build_research_packet,
     serialize_research_packet,
 )
@@ -382,9 +383,38 @@ def _preflight_synthesis(
                 ) AS record_count,
                 (
                     SELECT COUNT(*) FROM finding_citations WHERE mission_id = ?
-                ) AS reference_count
+                ) AS reference_count,
+                (
+                    COALESCE((
+                        SELECT SUM(LENGTH(CAST(quote AS BLOB)))
+                        FROM evidence_cards WHERE mission_id = ?
+                    ), 0) +
+                    COALESCE((
+                        SELECT SUM(
+                            LENGTH(CAST(statement AS BLOB)) + LENGTH(CAST(uncertainty AS BLOB))
+                        ) FROM findings WHERE mission_id = ?
+                    ), 0) +
+                    COALESCE((
+                        SELECT SUM(
+                            LENGTH(CAST(statement AS BLOB)) +
+                            LENGTH(CAST(falsification_criteria AS BLOB))
+                        ) FROM claims WHERE mission_id = ?
+                    ), 0) +
+                    COALESCE((
+                        SELECT SUM(LENGTH(CAST(reason AS BLOB)))
+                        FROM claim_status_events WHERE mission_id = ?
+                    ), 0) +
+                    COALESCE((
+                        SELECT SUM(LENGTH(CAST(question_text AS BLOB)))
+                        FROM research_questions WHERE mission_id = ?
+                    ), 0) +
+                    COALESCE((
+                        SELECT SUM(LENGTH(CAST(original_label AS BLOB)))
+                        FROM source_snapshots WHERE mission_id = ?
+                    ), 0)
+                ) AS text_storage_bytes
             """,
-        (mission_id,) * 8,
+        (mission_id,) * 14,
     ).fetchone()
     if row is None:
         raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
@@ -394,6 +424,42 @@ def _preflight_synthesis(
         or int(row["reference_count"]) > MAX_SYNTHESIS_REFERENCES
     ):
         raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+
+    # Record and snapshot counts do not bound emitted text: one evidence quote
+    # may be 100,000 bytes and many cards may quote the same small snapshot, so
+    # a mission can hold far more packet text than snapshot bytes. Without this
+    # the oversize surfaced only at serialization, where it was reported as
+    # failed integrity validation — a tamper alarm for intact data.
+    #
+    # This is a lower bound on emitted bytes: it sums the unbounded free-text
+    # columns and ignores identifiers, timestamps, and JSON structure. A lower
+    # bound can only ever refuse a mission whose output genuinely exceeds the
+    # cap, never one that would have fit.
+    _accumulate_materialized_text_storage_bytes(
+        0,
+        row,
+        "text_storage_bytes",
+        limit=max_export_bytes * _storage_bytes_per_output_byte(connection),
+    )
+
+
+def _storage_bytes_per_output_byte(connection: sqlite3.Connection) -> int:
+    """How many stored bytes one canonical output byte can occupy.
+
+    Minerva only ever creates UTF-8 databases, where stored length equals
+    canonical length exactly. UTF-16 is accepted with a factor of two, which is
+    permissive rather than exact: it can only ever under-count the limit's
+    strictness, so it never refuses a mission that would have fit.
+    """
+
+    encoding_row = connection.execute("PRAGMA encoding").fetchone()
+    encoding = str(encoding_row[0]).upper() if encoding_row is not None else ""
+    if encoding not in {"UTF-8", "UTF-16LE", "UTF-16BE"}:
+        raise IntegrityError(
+            "packet_integrity_invalid",
+            "Research packet integrity validation failed.",
+        )
+    return 1 if encoding == "UTF-8" else 2
 
 
 def _accumulate_materialized_text_storage_bytes(
@@ -431,15 +497,7 @@ def _preflight_claim_synthesis(
     if remaining_records < 0:
         raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
 
-    encoding_row = connection.execute("PRAGMA encoding").fetchone()
-    encoding = str(encoding_row[0]).upper() if encoding_row is not None else ""
-    if encoding not in {"UTF-8", "UTF-16LE", "UTF-16BE"}:
-        raise IntegrityError(
-            "packet_integrity_invalid",
-            "Research packet integrity validation failed.",
-        )
-    # UTF-16 storage is at most twice the canonical UTF-8 size for valid text.
-    storage_bytes_per_output_byte = 1 if encoding == "UTF-8" else 2
+    storage_bytes_per_output_byte = _storage_bytes_per_output_byte(connection)
     text_storage_limit = max_export_bytes * storage_bytes_per_output_byte
 
     core_row = connection.execute(
@@ -1338,6 +1396,15 @@ def _assemble_brief(
     try:
         document = build_research_packet(payload)
         json_bytes = serialize_research_packet(document)
+    except ResearchPacketTooLargeError as error:
+        # Intact data that will not fit is a work limit, not tampering. The
+        # preflight normally refuses first; this is the backstop for a mission
+        # whose canonical bytes exceed the cap by less than the preflight's
+        # lower bound could see.
+        raise IntegrityError(
+            "brief_work_limit",
+            "The research brief exceeds synthesis limits.",
+        ) from error
     except ValueError as error:
         raise IntegrityError(
             "packet_integrity_invalid",
