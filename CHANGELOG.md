@@ -8,10 +8,14 @@ release here is a tag plus this record.
 
 ## Unreleased
 
-Prepared for `v0.2.0a1`; the tag is created on `main` once this work merges.
-`v0.2.0a1` was chosen over `v0.2.0` deliberately: it matches the declared version
-and makes no claim that the pre-release period is over. See the release runbook in
-`CONTRIBUTING.md`.
+`v0.2.0a1`, tagging commit `b162573`. `v0.2.0a1` was chosen over `v0.2.0`
+deliberately: it matches the declared version and makes no claim that the
+pre-release period is over.
+
+The annotated tag exists and was verified by building from a clean checkout of it,
+but **it has not been pushed**: the session that created it gets HTTP 403 from its
+git proxy on tag refs. Until someone with push rights publishes it, this entry is
+the release record and `b162573` is the commit it describes.
 
 ### Research record
 
@@ -77,7 +81,7 @@ and makes no claim that the pre-release period is over. See the release runbook 
 
 ### Gate evidence
 
-Observed on Linux, Python 3.12.3, at the head of this entry's work:
+Observed on Linux, Python 3.12.3, on the tagged commit `b162573`:
 
 | Gate | Result |
 | --- | --- |

@@ -1299,10 +1299,37 @@ F-REL-1/2.
 version and makes no product claim. `v0.2.0` remains available later, once a gated
 milestone such as D-1 lands.
 
-The tag is created on `main` after PR #25 merges, following the runbook in
-`CONTRIBUTING.md`: annotated, message carrying the gate evidence from
-`CHANGELOG.md`, then verified by building from a clean checkout of the tag. It is
-the last ungated item; nothing depends on it.
+**The tag is created and verified, but could not be pushed from this session.**
+After PR #25 merged, the runbook in `CONTRIBUTING.md` was followed on the merge
+commit `b162573`:
+
+1. Clean tree, even with `main`. Confirmed.
+2. All eleven gates re-run on `b162573`: 689 passed, 90.00% branch coverage
+   against the 88% floor, wheel and sdist verified, installed-wheel smoke passed,
+   static security check passed over 51 files, 41 packages compatible, diff clean.
+3. `CHANGELOG.md` records that evidence.
+4. `version` is `0.2.0a1` and the tag matches it. No bump.
+5. Annotated tag `v0.2.0a1` created on `b162573`, message carrying the gate
+   evidence. **`git push origin v0.2.0a1` fails with HTTP 403 from the session's
+   git proxy.** Branch pushes from the same remote succeed, so this is a
+   ref-scope policy on tags, not a network fault or a bad tag. The proxy
+   documentation says to report a 403 rather than retry it, so it was retried
+   three times, diagnosed, and stopped rather than worked around.
+6. Verification done anyway, locally: a fresh clone checked out at `v0.2.0a1`
+   builds `minerva_research-0.2.0a1`, and both `verify_dist.py` and
+   `installed_smoke.py` pass against those artifacts.
+
+**What Kevin needs to do.** From a checkout with push rights:
+
+```
+git fetch origin main
+git tag -a v0.2.0a1 b162573 -m "Minerva v0.2.0a1"   # or cherry-pick the message below
+git push origin v0.2.0a1
+```
+
+The full annotated message is reproduced in `CHANGELOG.md`'s gate-evidence table;
+the tag must point at `b162573`. Nothing depends on the tag existing — it is a
+record, and Phase 0C is complete without it.
 
 Still awaiting Kevin, and not to be started without a recorded decision:
 
