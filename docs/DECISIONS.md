@@ -270,3 +270,29 @@
   satisfaction separately, so `foreign_keys` means "the recorded references
   resolve", a property of the database. Both pragmas were already being run;
   only one of them was being reported.
+
+## Publication durability (plan 2, issue 5)
+
+- Publishing a file makes its contents durable but not the directory entry
+  that names it: that entry stays in the page cache until the directory is
+  synced. There was exactly one `fsync` in the whole source tree (the export
+  file descriptor) and none in `core/`, so a crash right after a successful
+  `minerva backup` could leave a committed `database.backup.created` audit row
+  describing a file that no longer existed.
+- The barrier lives in `_publish_private_database`, not at its three call
+  sites. Initialization, backup, and restore all publish through that one
+  `os.link`, so putting it there makes the guarantee structural rather than
+  something each new caller must remember.
+- **Ordering is the point.** The directory is synced before the operation
+  records that it happened — before the `brief_exports` transaction on export,
+  before returning success on fulfillment. A durable audit row can then never
+  outlive the artifact it describes. The regressions assert that ordering, not
+  merely that an fsync occurred.
+- `fsync` failures propagate rather than being suppressed. A filesystem that
+  cannot sync a directory cannot support the durability the operation is about
+  to claim, and Minerva does not report a success it cannot stand behind.
+- **This was verified structurally, not by simulating power loss.** The tests
+  prove the sync happens and happens before the success is recorded; they do
+  not prove behaviour across a real crash, and SECURITY.md states the limits:
+  no multi-file export atomicity, no coverage of SQLite's own write path, and
+  no defence against hardware that acknowledges `fsync` without persisting.

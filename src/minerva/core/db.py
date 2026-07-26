@@ -13,6 +13,7 @@ from hashlib import sha256
 from importlib import resources
 from pathlib import Path
 
+from minerva.core.durability import fsync_directory
 from minerva.core.errors import ConflictError, IntegrityError, MinervaError
 
 BUSY_TIMEOUT_MS = 5_000
@@ -233,6 +234,10 @@ def _publish_private_database(
             "database_path_invalid",
             "The database staging file could not be published safely.",
         ) from error
+    # The link created a new directory entry. Persist it before any caller
+    # records the publication, so an audit row can never survive a crash that
+    # the database it describes did not.
+    fsync_directory(target)
 
 
 def _require_standalone_backup(backup: Path) -> None:

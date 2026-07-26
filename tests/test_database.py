@@ -192,6 +192,43 @@ def test_malformed_database_is_reported_as_a_safe_domain_error(tmp_path: Path) -
     assert path.read_bytes() == malformed
 
 
+@pytest.mark.security
+def test_publication_persists_the_new_directory_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A published database must survive a crash right after the success report.
+
+    `os.link` creates a directory entry that lives in the page cache until the
+    containing directory is synced. Initialization, backup, and restore all
+    publish through that one primitive, so the barrier belongs there rather than
+    at each of the three call sites.
+    """
+
+    synced: list[str] = []
+    original_fsync = db_module.os.fsync
+
+    def recording_fsync(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            synced.append("directory")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(db_module.os, "fsync", recording_fsync)
+
+    source = tmp_path / "source.db"
+    Database(source).initialize()
+    assert synced == ["directory"], "fresh initialization did not persist its directory entry"
+
+    synced.clear()
+    Database(source).backup_to(tmp_path / "backup.db")
+    assert synced == ["directory"], "backup did not persist its directory entry"
+
+    synced.clear()
+    Database.restore_from(tmp_path / "backup.db", tmp_path / "restored.db")
+    assert synced == ["directory"], "restore did not persist its directory entry"
+    assert (tmp_path / "restored.db").is_file()
+
+
 def test_backup_restore_preserves_state_and_owner_only_permissions(
     database: Database,
     tmp_path: Path,

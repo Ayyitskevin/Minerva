@@ -102,6 +102,25 @@ write failures remove only files created by that operation. SQLite and filesyste
 writes are not crash-atomic, so process or power loss can leave a partial new output
 directory that Minerva will refuse to overwrite.
 
+## Publication durability
+
+Every point that publishes a new filename — the exclusive `os.link` behind
+initialization, backup, and restore, plus the exported brief and the fulfillment
+output files — syncs the containing directory before the operation reports success
+or records it. Without that, a file's contents can be durable while the directory
+entry naming it is still only in the page cache, so a crash immediately after a
+successful `minerva backup` could leave a committed `database.backup.created` audit
+row describing a file that no longer exists.
+
+This closes exactly one window and claims nothing further. It does not make a
+multi-file export atomic: a crash between the two exported files still leaves the
+partial directory described above, which Minerva refuses to overwrite. It does not
+cover a crash inside SQLite's own write path, which is SQLite's contract through
+`synchronous = FULL`. It does not survive a filesystem or device that acknowledges
+`fsync` without persisting, and it says nothing about media failure. Backups remain
+an operator responsibility to verify, version, and store outside the database
+directory.
+
 The request digest and result artifact SHA-256 prove self-consistency and exact byte
 binding only. They do not authenticate a producer, establish origin/authority,
 approve work, grant disclosure permission, or prove database completeness. The

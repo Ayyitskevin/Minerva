@@ -260,6 +260,11 @@ class SynthesisService:
             try:
                 written.append(_write_exclusive(root_fd, _MARKDOWN_NAME, artifacts.markdown))
                 written.append(_write_exclusive(root_fd, _JSON_NAME, artifacts.json))
+                # Both files are fsynced, but their directory entries are not
+                # durable until the directory is. Persist them before recording
+                # the export, so a committed `brief_exports` row cannot outlive
+                # the artifacts it names.
+                os.fsync(root_fd)
                 with self.database.transaction() as connection:
                     if _audit_watermark(connection) != audit_watermark:
                         raise ConflictError(
@@ -330,6 +335,9 @@ def write_research_request_artifacts(
         try:
             written.append(_write_exclusive(root_fd, _JSON_NAME, brief_json))
             written.append(_write_exclusive(root_fd, _RESULT_NAME, result_json))
+            # Fulfillment reports success by these files existing, so their
+            # directory entries must survive a crash that follows the report.
+            os.fsync(root_fd)
         except BaseException:
             _clean_written(root_fd, written)
             raise

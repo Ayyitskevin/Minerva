@@ -573,6 +573,63 @@ was asked to inspect". 637 tests, 90.21% branch coverage.
 
 **Rollback.** Pure code and tests; revert the commit.
 
+### Slice 10 — publication durability (plan 2, issue 5, COMPLETE)
+
+**User outcome.** A file Minerva reports as published survives a crash that
+immediately follows the report.
+
+**The gap.** Publishing makes a file's *contents* durable but not the directory
+entry naming it. There was exactly one `fsync` in the whole source tree (the
+export file descriptor in `synthesis/service.py`) and none in `core/`, so a
+crash right after a successful `minerva backup` could leave a committed
+`database.backup.created` audit row describing a file that no longer existed.
+
+**Fix.** `minerva/core/durability.py` (new) provides `fsync_directory`, called
+from `_publish_private_database` — one place, covering initialization, backup,
+and restore, so the guarantee is structural rather than something each new
+caller must remember. The two export paths sync their already-open directory
+descriptor directly.
+
+**Ordering is the substance of the fix.** The directory is synced *before* the
+operation records that it happened: before the `brief_exports` transaction on
+export, before returning success on fulfillment, before any caller of
+`_publish_private_database` audits the publication. The regressions assert that
+ordering, not merely that an fsync occurred.
+
+**Tests.** Three new security-marked regressions, all verified to fail on the
+pre-fix source:
+
+| Test | Pre-fix failure |
+| --- | --- |
+| `test_export_persists_directory_entries_before_recording_the_export` | `the output directory was never fsynced` / `assert 'fsync_directory' in ['record_export']` |
+| `test_fulfillment_persists_directory_entries_before_reporting_success` | `assert 0 == 1` |
+| `test_publication_persists_the_new_directory_entry` | `fresh initialization did not persist its directory entry` |
+
+640 tests, 90.23% branch coverage, 181 security-marked. The static gate now
+scans 50 files.
+
+**Honest limit, stated in SECURITY.md and DECISIONS.md.** This was verified
+structurally, not by simulating power loss — the same caveat plan 2 section 28
+recorded for the original finding. The tests prove the sync happens and happens
+before success is recorded; they do not prove behaviour across a real crash.
+SECURITY.md states what is still not covered: no multi-file export atomicity,
+nothing about SQLite's own write path (`synchronous = FULL` is SQLite's
+contract), and no defence against hardware that acknowledges `fsync` without
+persisting.
+
+**`fsync` failures propagate** rather than being suppressed: a filesystem that
+cannot sync a directory cannot support the durability the operation is about to
+claim.
+
+**Files changed.** `src/minerva/core/durability.py` (new),
+`src/minerva/core/db.py`, `src/minerva/synthesis/service.py`,
+`tests/test_database.py`, `tests/test_synthesis.py`, `SECURITY.md`,
+`docs/DECISIONS.md`.
+
+**Migration status.** None.
+
+**Rollback.** Pure code, tests, and docs; revert the commit.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -695,27 +752,29 @@ blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
 traceable to a reproduced finding. Slice 7 completed issues 1-2; slice 8
 completed issue 3.
 
-Slices 7-9 completed issues 1-4. The next slice is **issue 5** — directory
-fsync after every exclusive publication (F2-CORE-3 / F-OPS-6). There is
-exactly one `fsync` in the whole source tree (the export file descriptor,
-`synthesis/service.py`) and none in `core/`, so the directory entry created
-by `os.link` at publication lives only in the page cache: a crash right
-after `minerva backup`, `restore`, or `init` reports success can lose the
-published file. Backup's ordering makes it worse — the
-`database.backup.created` audit event is committed durably to the source
-database after the non-durably published target. Fix: fsync the parent
-directory after each `_publish_private_database`, plus the export and
-fulfillment output directories; state the resulting durability contract in
-SECURITY.md, including what it still does not cover (a crash inside
-SQLite's own WAL window is SQLite's contract, not Minerva's). Regression:
-fault injection at the publication boundary. Note this is the one finding
-verified structurally rather than by simulating power loss, and the slice
-should say so rather than claim more.
+Slices 7-10 completed issues 1-5. The next slice is **issue 6** — `backup_to`
+must stop masking an outdated schema (F2-CORE-4). It gates on
+`run_doctor(deep=True)` and maps *any* not-ok report to
+`IntegrityError('database_invalid', 'The database failed validation and
+cannot be backed up.')`. Doctor fails for an outdated schema, so an intact
+schema-3 database — the exact state an operator holds immediately before
+upgrading — cannot be backed up at all, and the refusal implies corruption.
+Reproduced by building a legitimate v3 database with correct recorded
+checksums and a passing `PRAGMA integrity_check`. This inverts safe upgrade
+ordering: migrate first, then back up, leaving no pre-migration snapshot.
+It is the same masking defect fixed in `restore_from` during Phase 0 wave A
+(F-OPS-2), surviving in the sibling path. Fix: determine outdated schema
+separately and either permit backing up an intact outdated database (the
+operator-friendly answer, and the one that restores safe upgrade ordering)
+or refuse with the honest `database_migration_required`; reserve
+`database_invalid` for genuine validation failure. Note slice 9 changed
+doctor's `wal` check to report the real journal mode, so re-check what a
+delete-journal source now does to this path.
 
-Then issues 6-7 (backup schema honesty, mission-wide preflight text
-accounting), issues 8-10 (scope pinning, honest web pagination, test-suite
-honesty gaps), issue 11 (the low sweep), issue 12 (interrupt audit, helper
-consolidation, release tag, coverage ratchet).
+Then issue 7 (mission-wide preflight text accounting), issues 8-10 (scope
+pinning, honest web pagination, test-suite honesty gaps), issue 11 (the low
+sweep), issue 12 (interrupt audit, helper consolidation, release tag,
+coverage ratchet).
 
 Still awaiting Kevin, and not to be started without a recorded decision:
 
