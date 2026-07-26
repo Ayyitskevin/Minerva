@@ -182,6 +182,47 @@ def _matches_module(module: str, prohibited: Iterable[str]) -> str | None:
     return None
 
 
+def _unpacked_bindings(
+    target: ast.Tuple | ast.List,
+    value: ast.expr | None,
+) -> list[tuple[ast.expr, ast.expr | None]]:
+    """Pair each unpacking target with the value it receives, where that is knowable.
+
+    Only a literal sequence on the right can be paired positionally. A single
+    starred target consumes the middle, so the names before it pair from the
+    front and the names after it pair from the back; a starred target itself
+    receives a list rather than one callable and is never bound. Anything less
+    certain yields `None`, which clears the name instead of guessing at it — a
+    wrong alias would be worse than none, because it could flag innocent code.
+    """
+
+    elements = list(target.elts)
+    bound: list[ast.expr | None] = [None] * len(elements)
+    source = list(value.elts) if isinstance(value, ast.Tuple | ast.List) else []
+    starred_targets = [
+        index for index, item in enumerate(elements) if isinstance(item, ast.Starred)
+    ]
+    unpackable = source and not any(isinstance(item, ast.Starred) for item in source)
+
+    if unpackable and not starred_targets:
+        for index, item in enumerate(source[: len(bound)]):
+            bound[index] = item
+    elif unpackable and len(starred_targets) == 1:
+        star = starred_targets[0]
+        trailing = len(elements) - star - 1
+        if len(source) >= len(elements) - 1:
+            for index in range(star):
+                bound[index] = source[index]
+            for offset in range(trailing):
+                bound[star + 1 + offset] = source[len(source) - trailing + offset]
+
+    return [
+        (element, item)
+        for element, item in zip(elements, bound, strict=True)
+        if not isinstance(element, ast.Starred)
+    ]
+
+
 class PolicyVisitor(ast.NodeVisitor):
     """Resolve imported aliases and inspect exact qualified call targets."""
 
@@ -254,6 +295,13 @@ class PolicyVisitor(ast.NodeVisitor):
         return None
 
     def _bind_alias(self, target: ast.expr, value: ast.expr | None) -> None:
+        if isinstance(target, ast.Tuple | ast.List):
+            # `(runner,) = (os.system,)` binds exactly like `runner = os.system`,
+            # so skipping unpacking targets let a banned callable be aliased and
+            # then invoked without a violation.
+            for name, bound in _unpacked_bindings(target, value):
+                self._bind_alias(name, bound)
+            return
         if not isinstance(target, ast.Name):
             return
         if isinstance(value, ast.Call):

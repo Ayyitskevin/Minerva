@@ -75,6 +75,7 @@ addopts = [
   "--strict-markers",
   "-ra",
   "--cov=minerva",
+  "--cov=scripts",
   "--cov-report=term-missing:skip-covered",
   "--cov-fail-under=85",
 ]
@@ -86,7 +87,15 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["minerva"]
+# `scripts/static_security_check.py` enforces the network and execution
+# prohibitions the threat model names, so its detection branches belong under
+# the floor. The other two scripts are omitted deliberately rather than
+# overlooked: `verify_dist.py` and `installed_smoke.py` are exercised end to end
+# by their own gate commands against a built distribution, so measuring them
+# under pytest reports how little pytest calls them, not how well they are
+# tested.
+source = ["minerva", "scripts"]
+omit = ["scripts/installed_smoke.py", "scripts/verify_dist.py"]
 
 [tool.coverage.report]
 exclude_also = [

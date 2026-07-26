@@ -407,3 +407,41 @@
   What it owed the reviewer was honesty about the cap, not navigation. The
   banner names `minerva mission list` and `/api/v1/missions` as the surfaces
   that do page, so nothing is unreachable — only differently reached.
+
+## The suite now delivers what it claims (plan 2, issue 10)
+
+Three places where the test suite asserted a stronger guarantee than the code
+behind it provided. Each was reproduced against the real fixture or script
+before being changed.
+
+- **The outbound-network guard covered two entry points, not "any socket".**
+  `deny_outbound_network` patched only `connect` and `create_connection` while
+  its docstring promised to fail any test opening a non-loopback socket.
+  Measured against the real fixture: `connect_ex` to 127.0.0.2 reached the OS
+  and UDP `sendto` delivered its bytes, both silently. It now guards `connect`,
+  `connect_ex`, `create_connection`, `sendto`, and `sendmsg`, and the docstring
+  names them so the two stay in step. A test that forgot to inject a provider
+  fake could otherwise have reached the network from a machine holding real
+  credentials.
+- **Alias tracking ignored unpacking.** `_bind_alias` returned early for any
+  non-`ast.Name` target, so `(runner,) = (os.system,)`, `[runner] = [...]`,
+  `first, runner = 1, os.system`, and `*rest, runner = [...]` all evaded MIN002
+  while the tested `runner = os.system` form was caught. `_unpacked_bindings`
+  now pairs targets with values positionally, including around a single starred
+  target, where names before it pair from the front and names after it from the
+  back. When the pairing is not knowable it binds `None`, clearing the name
+  rather than guessing: a wrong alias is worse than none, because it would flag
+  innocent code.
+- **MIN003 had no test witness.** The rule the threat model names as the
+  prohibition on dynamic code execution was enforced only by the tool running
+  clean over a repository that happens not to call `eval`. It now has cases for
+  `eval`, `exec`, `compile`, and an aliased `eval`. These are new witnesses for
+  behaviour that already worked, not a fix.
+- **The coverage floor now includes the static gate.**
+  `scripts/static_security_check.py` enforces threat-model prohibitions, so its
+  detection branches belong under the floor. `verify_dist.py` and
+  `installed_smoke.py` are omitted **deliberately**: both are exercised end to
+  end by their own gate commands against a built distribution, so measuring
+  them under pytest would report how little pytest calls them rather than how
+  well they are tested. Including all of `scripts/` unfiltered put the total at
+  exactly 85.0%, which would have made the floor flap on any small change.
