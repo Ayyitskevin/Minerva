@@ -1147,11 +1147,14 @@ added no test: the golden fixtures and the two `too_complex` tests already cover
 it, verified by deliberately breaking the subject wiring. 689 tests, 208
 security-marked, 90.00% branch coverage on both 3.12 and 3.13.
 
-**Open verification.** Python 3.14 could not be measured locally: only
-`3.14.0rc2` is available and the pinned pydantic fails on it with `_eval_type() got
-an unexpected keyword argument 'prefer_fwd_module'`. CI installs a released 3.14.x
-where the suite passes. The coverage ratchet therefore takes effect on 3.14 for the
-first time in CI, not here. This is reported as unverified, not as a pass.
+**Open verification, now closed.** Python 3.14 could not be measured locally:
+only `3.14.0rc2` is available here and the pinned pydantic fails on it with
+`_eval_type() got an unexpected keyword argument 'prefer_fwd_module'`. It was
+recorded as unverified rather than assumed, and CI then measured it on released
+`3.14.6`: **689 passed, 90.00% branch coverage, 88% floor reached** — identical to
+3.12 and 3.13 to the hundredth. The rc-only failure was an interpreter mismatch on
+this machine, confirming the diagnosis rather than hiding a defect. Every gate is
+now verified on every supported version.
 
 **Files changed.** `src/minerva/assist/service.py`,
 `src/minerva/integrations/canonical_json.py` (new),

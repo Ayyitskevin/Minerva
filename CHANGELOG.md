@@ -86,7 +86,7 @@ Observed on Linux, Python 3.12.3, at the head of this entry's work:
 | `mypy` | passed, 53 source files |
 | `pytest` | **689 passed**, 90.00% branch coverage against an 88% floor |
 | `pytest` (Python 3.13) | 689 passed, 90.00% branch coverage |
-| `pytest` (Python 3.14) | **not verified locally** — see below |
+| `pytest` (Python 3.14.6, CI) | 689 passed, 90.00% branch coverage |
 | `python -m build` | `minerva_research-0.2.0a1{-py3-none-any.whl,.tar.gz}` |
 | `verify_dist.py dist` | verified wheel and sdist |
 | `installed_smoke.py dist` | passed |
@@ -94,8 +94,11 @@ Observed on Linux, Python 3.12.3, at the head of this entry's work:
 | `uv pip check` | 41 packages compatible |
 | `git diff --check` | clean |
 
-**Open verification.** Python 3.14 could not be measured locally: the only
-interpreter available here is `3.14.0rc2`, and the pinned pydantic fails on it with
-`_eval_type() got an unexpected keyword argument 'prefer_fwd_module'`. CI installs a
-released 3.14.x where the same suite passes. This is an environment limitation, not
-a known defect, and it is recorded as unverified rather than counted as a pass.
+Python 3.14 could not be measured on the development machine: the only interpreter
+available there is `3.14.0rc2`, on which the pinned pydantic fails with
+`_eval_type() got an unexpected keyword argument 'prefer_fwd_module'`. It was
+recorded as open verification until CI measured it on released `3.14.6`, where the
+suite reports the same 689 passed and 90.00% as 3.12 and 3.13. The rc-only failure
+is an interpreter mismatch on that machine, not a defect in Minerva.
+
+No gate is currently unverified.
