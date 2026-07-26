@@ -846,6 +846,63 @@ still reads through the shared service, and the page remains GET-only.
 
 **Rollback.** Pure code, template, and tests; revert the commit.
 
+### Slice 15 — the suite delivers what it claims (plan 2, issue 10, COMPLETE)
+
+**User outcome.** Three guards that were weaker than their own descriptions now
+match them, and the security gate's detection branches are held to the coverage
+floor.
+
+**Reproduced against the real fixture and script, then re-run after:**
+
+| | Before | After |
+| --- | --- | --- |
+| `socket.connect` to 127.0.0.2 | blocked | blocked |
+| `socket.connect_ex` | **reached the OS silently** | blocked |
+| UDP `sendto` | **delivered its bytes silently** | blocked |
+| `socket.create_connection` | blocked | blocked |
+| `runner = os.system` | MIN002 | MIN002 |
+| `(runner,) = (os.system,)` | **evaded** | MIN002 |
+| `[runner] = [os.system]` | **evaded** | MIN002 |
+| `first, runner = 1, os.system` | **evaded** | MIN002 |
+| `*rest, runner = [1, os.system]` | **evaded** | MIN002 |
+
+**Scope decision on the starred form.** The first implementation deliberately
+refused to pair past a star and left that case evading. That was a real hole I
+was about to document instead of close, so it was reworked:
+`_unpacked_bindings` pairs names before the star from the front and names after
+it from the back, which is exact for a literal sequence. Where pairing is not
+knowable it binds `None`, clearing the name rather than guessing — a wrong alias
+would be worse than none, because it could flag innocent code.
+
+**MIN003 witnesses are new coverage, not a fix.** The dynamic-code-execution
+rule already worked; it had simply never been tested, so it was enforced only by
+the tool running clean over a repository that happens not to call `eval`. Those
+four cases pass on the pre-fix source, and this is stated rather than counted as
+a regression.
+
+**Coverage scoping, and why it is not the whole tree.**
+`scripts/static_security_check.py` joins the floor because it enforces
+threat-model prohibitions. `verify_dist.py` and `installed_smoke.py` are omitted
+deliberately: both are exercised end to end by their own gate commands against a
+built distribution, so pytest coverage of them measures how little pytest calls
+them, not how well they are tested. Including all of `scripts/` unfiltered put
+the total at exactly 85.0% — flush against the floor, which would have made the
+gate flap on any small change.
+
+**Tests.** Six of the new cases were verified to fail on the pre-fix source
+(four alias forms, `connect_ex`, `sendto`). 663 tests, 89.93% branch coverage
+over the widened source set, 197 security-marked.
+
+**Files changed.** `tests/conftest.py`, `scripts/static_security_check.py`,
+`tests/test_gate_scripts.py`, `pyproject.toml`, `docs/DECISIONS.md`.
+
+**Migration status.** None. **Security impact.** Strictly strengthening: two
+real egress paths closed in the test harness, four alias-evasion forms closed in
+the static gate, and the gate's own branches now measured. No prohibition
+relaxed.
+
+**Rollback.** Pure test, script, and config changes; revert the commit.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -968,27 +1025,26 @@ blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
 traceable to a reproduced finding. Slice 7 completed issues 1-2; slice 8
 completed issue 3.
 
-Slices 7-14 completed issues 1-9. The next slice is **issue 10** — the
-test-suite honesty gaps (F2-TESTS-1/2/3), three places where the suite claims
-more than it delivers:
+Slices 7-15 completed issues 1-10. The next slice is **issue 11** — the low
+sweep from plan 2 section 27: `F2-CORE-5` (recompute pending migrations inside
+the write transaction so a concurrent upgrade resolves as a no-op instead of a
+spurious `migration_failed`), `F2-CORE-6` (check the unsafe-path rule before
+`refuse_existing` so a symlinked path always reports `database_symlink`),
+`F2-RES-2` (`add_finding` passes a blanket `allow_withdrawn=False`, refusing an
+assumption that cites already-withdrawn evidence — a state ADR 0007 explicitly
+says is supported and which is reachable by creating in the other order; either
+gate it on `kind.requires_citation` or amend the ADR), `F2-EVD-1` (float
+citation offsets raise a raw `TypeError` inside the transaction instead of
+`citation_offsets_invalid`), `F2-INTEGRATIONS-1` (anchor the request
+digest-mismatch classifier the way the packet one is), `F2-SURFACES-3` (extend
+the identity-header denylist to the mainstream proxy headers),
+`F2-TESTS-4` (a deterministic golden-fixture regeneration procedure),
+`F3-MILESTONE-TITLES`, `F4-CLI-UNDOC`, `F5-CAP-PACKET-CLI`, and the
+`OPUS_EXECUTION_STATE.md` corrections listed in plan 2 section 27. Each is
+small; each still needs its own reproduction before it is called fixed.
 
-- the autouse `deny_outbound_network` fixture's docstring says it will "fail any
-  test that opens a non-loopback socket", but it patches only `connect` and
-  `create_connection`; measured against the real fixture, `connect_ex` to
-  127.0.0.2 returned ECONNREFUSED and UDP `sendto` delivered 5 bytes, both
-  silently. Either patch the remaining entry points or narrow the docstring to
-  what it covers;
-- the coverage floor is scoped to `--cov=minerva`, so the whole `scripts/` tree
-  sits outside it at 39%, with `static_security_check.py` at 79% and its MIN003
-  (eval/exec/compile) emit branch uncovered and unwitnessed by any test;
-- `_bind_alias` returns early for any non-`ast.Name` target, so
-  `(runner,) = (os.system,)` and `[runner] = [os.system]` evade MIN002 while the
-  tested `runner = os.system` form is caught — the alias tests assert a stronger
-  guarantee than the scanner provides. Extend `_bind_alias` to walk
-  `ast.Tuple`/`ast.List` targets and add the cases.
-
-Then issue 11 (the low sweep) and issue 12 (interrupt audit, helper
-consolidation, release tag, coverage ratchet).
+Then issue 12 (interrupt audit, helper consolidation, release tag, coverage
+ratchet).
 
 
 Still awaiting Kevin, and not to be started without a recorded decision:

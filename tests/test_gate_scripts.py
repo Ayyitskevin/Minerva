@@ -3,7 +3,9 @@ from __future__ import annotations
 import ast
 import email.parser
 import importlib.util
+import socket
 import sys
+from contextlib import closing
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -74,6 +76,20 @@ def _scan(source: str, *, allowed_imports: tuple[str, ...] = ()) -> set[str]:
         ("import ctypes", "MIN005"),
         ("loop.getaddrinfo('example.invalid', 443)", "MIN001"),
         ("loop.sock_connect(sock, address)", "MIN001"),
+        # MIN003 had no test witness at all: the rule THREAT_MODEL names as the
+        # prohibition on dynamic code execution was enforced only by the tool
+        # running clean over a repository that happens not to use it.
+        ("eval('1 + 1')", "MIN003"),
+        ("exec('value = 1')", "MIN003"),
+        ("compile('1', '<probe>', 'eval')", "MIN003"),
+        ("runner = eval\nrunner('1 + 1')", "MIN003"),
+        # Unpacking binds an alias exactly as a plain assignment does; these
+        # forms evaded the scanner entirely while the tested `runner = os.system`
+        # form was caught, so the suite asserted more than the code delivered.
+        ("import os\n(runner,) = (os.system,)\nrunner('true')", "MIN002"),
+        ("import os\n[runner] = [os.system]\nrunner('true')", "MIN002"),
+        ("import os\nfirst, runner = 1, os.system\nrunner('true')", "MIN002"),
+        ("import os\n*rest, runner = [1, os.system]\nrunner('true')", "MIN002"),
     ],
 )
 def test_static_policy_rejects_direct_and_aliased_bypasses(
@@ -307,3 +323,53 @@ def test_loaded_gate_scripts_are_modules() -> None:
         isinstance(module, ModuleType)
         for module in (installed_smoke, static_security_check, verify_dist)
     )
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "attempt",
+    [
+        pytest.param("connect", id="tcp_connect"),
+        pytest.param("connect_ex", id="tcp_connect_ex"),
+        pytest.param("create_connection", id="create_connection"),
+        pytest.param("sendto", id="udp_sendto"),
+    ],
+)
+def test_outbound_network_guard_covers_every_entry_point(attempt: str) -> None:
+    """The suite-wide guard must cover what its docstring promises.
+
+    It patched only `connect` and `create_connection` while claiming to fail any
+    non-loopback socket, so `connect_ex` returned ECONNREFUSED and a UDP
+    `sendto` delivered its bytes, both without tripping anything. A test that
+    forgot to inject a provider fake would have reached the network from a
+    machine holding real credentials.
+
+    This runs inside the suite, so the autouse fixture is already installed and
+    this exercises the real guard rather than a copy of it.
+    """
+
+    destination = ("127.0.0.2", 9)
+
+    with pytest.raises(AssertionError, match="outbound network access is not permitted"):
+        if attempt == "create_connection":
+            socket.create_connection(destination, timeout=0.2)
+        else:
+            kind = socket.SOCK_DGRAM if attempt == "sendto" else socket.SOCK_STREAM
+            with closing(socket.socket(socket.AF_INET, kind)) as probe:
+                probe.settimeout(0.2)
+                if attempt == "sendto":
+                    probe.sendto(b"probe", destination)
+                else:
+                    getattr(probe, attempt)(destination)
+
+
+@pytest.mark.security
+def test_outbound_network_guard_still_allows_loopback() -> None:
+    """Loopback must stay usable, or the guard would break the web tests."""
+
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        with closing(socket.create_connection(("127.0.0.1", port), timeout=1)) as client:
+            assert client.getpeername()[0] == "127.0.0.1"
