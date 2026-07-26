@@ -521,6 +521,58 @@ droppable audit index guarded solely by a test) is stated rather than hidden.
 
 **Rollback.** Docs and one test; revert the commit.
 
+### Slice 9 — reads no longer alter what they read (plan 2, issue 4, COMPLETE)
+
+**User outcome.** `minerva doctor` no longer changes the bytes of the database
+it inspects, so a recorded artifact digest still matches after a health check.
+
+**Reproduced, then re-run against the fix.** A standalone delete-journal
+artifact: SHA-256 before `doctor` and after differed (`f26dacd5...` →
+`6e8b338b...`), journal mode converted `delete` → `wal`. After: byte-identical,
+mode unchanged, no sidecars left behind.
+
+**Deviation from the plan, with measurements.** Plan 2 issue 4 prescribed
+opening doctor and `read()` with `mode=ro`. **That fix breaks backup and
+restore.** A read-only connection attaches the WAL index and then cannot
+checkpoint or unlink `-wal`/`-shm` on close, so it leaves sidecars beside the
+database; the restore and backup publication guards refuse to publish over live
+sidecars. Measured: with `mode=ro`, seven tests failed, all in the
+backup/restore family. The mutation came from `PRAGMA journal_mode = WAL`, not
+from the open mode, so the write-path pragmas now run only on write paths and
+the connection stays `mode=rw`. `read()` and `_connect` both carry a comment
+saying why, so the rejected approach is not re-introduced as an improvement.
+
+**Second half of the finding also fixed.** Doctor's `wal` and `foreign_keys`
+checks were tautological — both reported state `_connect` had just set.
+`wal` now reports the journal mode stored in the file.
+`Database.integrity_check` returns page integrity and foreign-key satisfaction
+separately, so `foreign_keys` means "the recorded references resolve" rather
+than "this connection has enforcement on". Both pragmas were already run; only
+one was reported.
+
+**One test double updated, not weakened.**
+`test_claim_scoped_audit_query_does_not_materialize_unrelated_mission_rows`
+stubs `Database.connect`; its signature gained `read_only` and now forwards it.
+What the test measures — the count of audit rows returned to Python — is
+unchanged.
+
+**Files changed.** `src/minerva/core/db.py`, `src/minerva/core/doctor.py`,
+`tests/test_doctor.py`, `tests/test_request_cli.py`, `docs/DECISIONS.md`.
+
+**Migration status.** None.
+
+**Security impact.** Restores byte-stable artifact provenance across
+inspection, and converts two theatrical checks into real ones. No guard
+weakened — the `mode=ro` variant that would have weakened one was rejected on
+measurement.
+
+**Tests.** The new regression
+(`test_doctor_leaves_the_bytes_of_what_it_inspects_unchanged`, security-marked)
+was verified to fail on the pre-fix source with "doctor rewrote the database it
+was asked to inspect". 637 tests, 90.21% branch coverage.
+
+**Rollback.** Pure code and tests; revert the commit.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -643,21 +695,27 @@ blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
 traceable to a reproduced finding. Slice 7 completed issues 1-2; slice 8
 completed issue 3.
 
-The next slice is **issue 4** — doctor must stop mutating the database it
-inspects (F2-CORE-2 / F-OPS-5). Measured: converting a database to
-delete-journal, recording its SHA-256, and running `doctor` changes the
-bytes (`f26dacd5...` to `6e8b338b...`) because `Database._connect` forces
-`PRAGMA journal_mode = WAL` on every open and `read()` uses that same
-read-write connection. It also makes the `wal` and `foreign_keys` checks
-tautological, since they report what `connect` just forced. Fix: open
-doctor and `read()` with `mode=ro`, skip the WAL-forcing pragma on read
-paths, report the mode actually found. Regression: byte-compare a
-delete-journal database before and after `doctor --deep`.
+Slices 7-9 completed issues 1-4. The next slice is **issue 5** — directory
+fsync after every exclusive publication (F2-CORE-3 / F-OPS-6). There is
+exactly one `fsync` in the whole source tree (the export file descriptor,
+`synthesis/service.py`) and none in `core/`, so the directory entry created
+by `os.link` at publication lives only in the page cache: a crash right
+after `minerva backup`, `restore`, or `init` reports success can lose the
+published file. Backup's ordering makes it worse — the
+`database.backup.created` audit event is committed durably to the source
+database after the non-durably published target. Fix: fsync the parent
+directory after each `_publish_private_database`, plus the export and
+fulfillment output directories; state the resulting durability contract in
+SECURITY.md, including what it still does not cover (a crash inside
+SQLite's own WAL window is SQLite's contract, not Minerva's). Regression:
+fault injection at the publication boundary. Note this is the one finding
+verified structurally rather than by simulating power loss, and the slice
+should say so rather than claim more.
 
-Then issues 5-7 (publication fsync, backup schema honesty, mission-wide
-preflight text accounting), issues 8-10 (scope pinning, honest web
-pagination, test-suite honesty gaps), issue 11 (the low sweep), issue 12
-(interrupt audit, helper consolidation, release tag, coverage ratchet).
+Then issues 6-7 (backup schema honesty, mission-wide preflight text
+accounting), issues 8-10 (scope pinning, honest web pagination, test-suite
+honesty gaps), issue 11 (the low sweep), issue 12 (interrupt audit, helper
+consolidation, release tag, coverage ratchet).
 
 Still awaiting Kevin, and not to be started without a recorded decision:
 
