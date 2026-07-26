@@ -25,6 +25,7 @@ from minerva.assist.service import SYSTEM_PROMPT, AssistanceService
 from minerva.cli.credentials import load_provider_credential, resolve_provider_selection
 from minerva.cli.main import main
 from minerva.core.audit import list_audit_events
+from minerva.core.doctor import run_doctor
 from minerva.core.errors import ConflictError, IntegrityError, MinervaError, SecurityBoundaryError
 from minerva.evidence.models import EvidenceCard, EvidenceStance
 from minerva.research.models import StatementKind
@@ -517,6 +518,95 @@ def test_provider_failures_are_sanitized_and_terminally_audited(
     assert "private provider body" not in raised.value.public_message
     assert provider.calls == 1
     assert _assistance_events(lab)[-1]["event_type"] == terminal_event
+
+
+@pytest.mark.security
+@pytest.mark.parametrize(
+    "interrupt",
+    [
+        pytest.param(KeyboardInterrupt(), id="keyboard_interrupt"),
+        pytest.param(SystemExit(1), id="system_exit"),
+    ],
+)
+def test_interrupt_inside_the_provider_window_is_terminally_audited(
+    lab: Lab,
+    interrupt: BaseException,
+) -> None:
+    """Ctrl-C during a provider call must not leave the invocation unmatched.
+
+    `except Exception` does not catch `KeyboardInterrupt` or `SystemExit`, so
+    the invocation was left with only its requested event and doctor counted it
+    as unfinished forever. Ctrl-C is the likeliest interruption there is: the
+    call can run for the whole timeout with the operator watching it.
+
+    The recorded outcome is `outcome_unknown`, not `failed`. The request had
+    already left the machine, so the provider may have processed and charged for
+    it -- the same claim a timeout makes, and the only honest one available.
+    """
+
+    service, preview, _seed, _supporting, _opposing = _seed_preview(lab)
+    provider = FakeProvider(failure=interrupt)
+
+    with pytest.raises(type(interrupt)) as raised:
+        service.generate_finding_candidates(
+            preview=preview,
+            expected_request_sha256=preview.request_sha256,
+            provider=provider,
+            credential=ProviderCredential("synthetic-key-value"),
+            timeout_seconds=30,
+            identity=lab.identity,
+        )
+
+    # The interrupt itself must propagate unchanged. Converting it into a
+    # MinervaError would stop Ctrl-C from ending the process.
+    assert raised.value is interrupt
+    assert provider.calls == 1
+    events = _assistance_events(lab)
+    assert [str(event["event_type"]) for event in events] == [
+        "assistance.invocation.requested",
+        "assistance.invocation.outcome_unknown",
+    ]
+    details = events[-1]["details"]
+    assert isinstance(details, dict)
+    assert details["error_code"] == "provider_call_interrupted"
+
+
+@pytest.mark.security
+def test_interrupt_still_propagates_when_the_terminal_record_cannot_be_written(
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed terminal write must not replace the operator's interrupt.
+
+    Recording is best effort on this path only. If the row cannot be written --
+    a second Ctrl-C, a busy database -- raising that instead would both hide the
+    interrupt and look like corruption. The invocation then stays unmatched,
+    which is the state the threat model documents and doctor already reports.
+    """
+
+    service, preview, _seed, _supporting, _opposing = _seed_preview(lab)
+
+    def refuse(**_kwargs: object) -> None:
+        raise MinervaError("database_busy", "The database is busy; retry the operation.")
+
+    monkeypatch.setattr(service, "_record_terminal", refuse)
+    interrupt = KeyboardInterrupt()
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        service.generate_finding_candidates(
+            preview=preview,
+            expected_request_sha256=preview.request_sha256,
+            provider=FakeProvider(failure=interrupt),
+            credential=ProviderCredential("synthetic-key-value"),
+            timeout_seconds=30,
+            identity=lab.identity,
+        )
+
+    assert raised.value is interrupt
+    notices = run_doctor(lab.database, deep=True).notices
+    assert [notice.count for notice in notices if notice.name == "unfinished_assistance"] == [1], (
+        "doctor must still report the invocation this path could not close"
+    )
 
 
 @pytest.mark.parametrize("outcome", [ProviderOutcome.REFUSED, ProviderOutcome.INCOMPLETE])

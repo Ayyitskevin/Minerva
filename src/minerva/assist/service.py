@@ -243,6 +243,26 @@ class AssistanceService:
                 "The external provider call failed safely.",
                 http_status=502,
             ) from None
+        except BaseException:
+            # Ctrl-C is the likeliest interruption of all: the call can run for
+            # the full timeout and the operator is watching it. `except
+            # Exception` does not catch it, so the invocation was left with only
+            # a requested event and doctor counted it as unfinished forever.
+            #
+            # The outcome is genuinely unknown, not failed: the request had
+            # already left the machine, so the provider may have processed and
+            # charged for it. That is the same claim a timeout makes.
+            self._record_terminal_best_effort(
+                preview=preview,
+                invocation_id=invocation_id,
+                identity=identity,
+                outcome="outcome_unknown",
+                details={"error_code": "provider_call_interrupted"},
+            )
+            # Re-raised unchanged. Converting an interrupt into a MinervaError
+            # would stop Ctrl-C from ending the process, which is worse than an
+            # unmatched audit pair.
+            raise
 
         if not self._preview_is_current(preview):
             self._record_terminal(
@@ -376,6 +396,36 @@ class AssistanceService:
                     "system_prompt_version": preview.system_prompt_version,
                 },
             )
+
+    def _record_terminal_best_effort(
+        self,
+        *,
+        preview: CandidatePreview,
+        invocation_id: str,
+        identity: IdentityContext,
+        outcome: str,
+        details: Mapping[str, object],
+    ) -> None:
+        """Record a terminal event without letting its failure mask an interrupt.
+
+        Used only on the interrupt path. A second Ctrl-C or a busy database
+        while writing this row must not replace the operator's interrupt with a
+        database error, which would both hide the interrupt and look like
+        corruption. If the write cannot happen the invocation stays unmatched,
+        which is the state the threat model already documents and which
+        `doctor`'s `unfinished_assistance` notice already reports.
+        """
+
+        try:
+            self._record_terminal(
+                preview=preview,
+                invocation_id=invocation_id,
+                identity=identity,
+                outcome=outcome,
+                details=details,
+            )
+        except BaseException:
+            return
 
     def _record_terminal(
         self,

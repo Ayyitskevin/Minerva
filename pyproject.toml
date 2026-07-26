@@ -77,7 +77,12 @@ addopts = [
   "--cov=minerva",
   "--cov=scripts",
   "--cov-report=term-missing:skip-covered",
-  "--cov-fail-under=85",
+  # Ratcheted 85 -> 88 (F-TEST-3). The suite measures 90.00% on 3.12 and 3.13,
+  # identically, so 88 leaves two points of headroom: enough that an ordinary
+  # change cannot make the gate flap, tight enough that five points of coverage
+  # can no longer disappear unnoticed. Raise it again only after the measured
+  # figure has held above the new floor plus that margin.
+  "--cov-fail-under=88",
 ]
 testpaths = ["tests"]
 markers = [
