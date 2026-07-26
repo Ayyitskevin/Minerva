@@ -296,3 +296,35 @@
   not prove behaviour across a real crash, and SECURITY.md states the limits:
   no multi-file export atomicity, no coverage of SQLite's own write path, and
   no defence against hardware that acknowledges `fsync` without persisting.
+
+## Backup refuses only what it should (plan 2, issue 6)
+
+- `backup_to` gated on the whole `DoctorReport` and mapped every failure to
+  `database_invalid` ("The database failed validation and cannot be backed
+  up"). Measured, that one message covered three different situations: a
+  genuinely corrupt database, an intact one whose schema was merely out of
+  date, and an intact one with loose permissions or a non-WAL journal mode.
+  Only the first is a reason to refuse a copy.
+- **Outdated schema now reports `database_migration_required`**, matching what
+  `restore_from` already did. Permitting the backup outright would be the more
+  operator-friendly answer, but running deep doctor against an older schema is
+  not meaningful — the required-trigger set is derived from the packaged
+  migrations, so a schema-3 database legitimately lacks migration 0004's
+  triggers — and a weaker "raw copy" validation tier belongs with decision gate
+  D-11, which already covers restoring pre-upgrade backups. The honest refusal
+  ships now; the capability stays gated.
+- **Configuration problems no longer block a backup.** `permissions` and `wal`
+  are listed in `doctor.BACKUP_ADVISORY_CHECKS`: a loose-permission or
+  delete-journal database is exactly the one an operator most wants to copy
+  before touching anything, and `doctor` reports both conditions on the copy
+  too, so proceeding conceals nothing. Membership is a short allowlist, so a
+  future check blocks backups until someone decides otherwise.
+- **This slice also repairs a regression slice 9 introduced.** Making doctor
+  report the real journal mode meant a delete-journal database began failing
+  the `wal` check, which `backup_to` then turned into `database_invalid`.
+  Before slice 9 that database was silently converted to WAL and backed up.
+  Neither behaviour was right; a backup now succeeds and alters nothing.
+- **A backup no longer rewrites its own source.** `backup_to` read through a
+  write connection, which forced `journal_mode = WAL` and rewrote the header of
+  the database being copied. It now reads through the same non-mutating
+  connection every other read path uses.

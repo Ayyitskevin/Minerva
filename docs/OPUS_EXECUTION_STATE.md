@@ -630,6 +630,64 @@ claim.
 
 **Rollback.** Pure code, tests, and docs; revert the commit.
 
+### Slice 11 — backup refuses only what it should (plan 2, issue 6, COMPLETE)
+
+**User outcome.** An intact database can be backed up, and a refusal says what
+is actually wrong.
+
+**Reproduced first, and wider than the finding described.** `backup_to` gated
+on the whole `DoctorReport`, so one message covered three situations:
+
+| Source database | Before | After |
+| --- | --- | --- |
+| intact, schema 3 (the pre-upgrade state) | `database_invalid` "failed validation" | `database_migration_required` |
+| intact, group-readable (0644) | `database_invalid` | backs up; `doctor` still reports the permissions |
+| intact, delete-journal | `database_invalid` | backs up; source left byte-identical |
+| dropped `audit_no_update` trigger | `database_invalid` | `database_invalid` (unchanged) |
+
+`restore_from` already distinguished the outdated-schema case, so this was the
+Phase 0 wave-A masking fix (F-OPS-2) surviving in the sibling path.
+
+**Slice 9 regression found and repaired.** Making doctor report the real
+journal mode meant a delete-journal database started failing the `wal` check,
+which `backup_to` turned into `database_invalid`. Before slice 9 that database
+was silently converted to WAL and backed up. Neither behaviour was right;
+recorded in DECISIONS rather than quietly folded in.
+
+**Second defect found while fixing it.** `backup_to` read its source through a
+write connection, so copying a delete-journal database rewrote that database's
+header. It now reads through the same non-mutating connection every other read
+path uses, and a regression asserts the source is byte-identical afterwards.
+
+**Design.** `doctor.BACKUP_ADVISORY_CHECKS = {"permissions", "wal"}` names the
+checks that describe configuration rather than trustworthy data; everything
+else blocks, so a future check fails closed until someone decides otherwise.
+`_require_backupable` applies it to both the pre-copy and post-copy reports.
+
+**Scope held.** Permitting an outdated database to be backed up outright would
+be more useful, but deep doctor is not meaningful against an older schema (the
+required-trigger set is derived from the packaged migrations, so a schema-3
+database legitimately lacks migration 0004's triggers), and a weaker "raw copy"
+validation tier belongs with decision gate **D-11**. The honest refusal ships
+now; the capability stays gated.
+
+**Tests.** Five new regressions; four verified to fail on the pre-fix source.
+The fifth (`test_backup_still_refuses_a_database_whose_data_cannot_be_trusted`)
+passes before and after by design — it guards the relaxation from going too
+far, so it is a guard rather than a defect witness.
+
+**Files changed.** `src/minerva/core/db.py`, `src/minerva/core/doctor.py`,
+`tests/test_database.py`, `docs/DECISIONS.md`.
+
+**Migration status.** None.
+
+**Security impact.** No integrity check weakened — the advisory allowlist has
+exactly two members, both configuration, and the blocking default is
+fail-closed. Removes a false corruption report and stops a backup from
+mutating its source.
+
+**Rollback.** Pure code and tests; revert the commit.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -752,29 +810,28 @@ blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
 traceable to a reproduced finding. Slice 7 completed issues 1-2; slice 8
 completed issue 3.
 
-Slices 7-10 completed issues 1-5. The next slice is **issue 6** — `backup_to`
-must stop masking an outdated schema (F2-CORE-4). It gates on
-`run_doctor(deep=True)` and maps *any* not-ok report to
-`IntegrityError('database_invalid', 'The database failed validation and
-cannot be backed up.')`. Doctor fails for an outdated schema, so an intact
-schema-3 database — the exact state an operator holds immediately before
-upgrading — cannot be backed up at all, and the refusal implies corruption.
-Reproduced by building a legitimate v3 database with correct recorded
-checksums and a passing `PRAGMA integrity_check`. This inverts safe upgrade
-ordering: migrate first, then back up, leaving no pre-migration snapshot.
-It is the same masking defect fixed in `restore_from` during Phase 0 wave A
-(F-OPS-2), surviving in the sibling path. Fix: determine outdated schema
-separately and either permit backing up an intact outdated database (the
-operator-friendly answer, and the one that restores safe upgrade ordering)
-or refuse with the honest `database_migration_required`; reserve
-`database_invalid` for genuine validation failure. Note slice 9 changed
-doctor's `wal` check to report the real journal mode, so re-check what a
-delete-journal source now does to this path.
+Slices 7-11 completed issues 1-6. The next slice is **issue 7** — the
+mission-wide preflight has no text-storage accounting (F2-SYNTHESIS-2).
+`_preflight_synthesis`'s mission-wide branch bounds record counts (50k),
+reference counts (20k), and snapshot bytes (20MiB), but never accounts for
+quote or statement text, unlike the claim-scoped branch. Evidence quotes may
+be 100,000 bytes each and may repeat the same snapshot range, so aggregate
+packet text is effectively unbounded while snapshot bytes stay small.
+Assembly then materializes everything, and when canonical JSON exceeds
+`MAX_RESEARCH_PACKET_BYTES` the size `ValueError` is swallowed by a blanket
+`except ValueError` and reported as `packet_integrity_invalid` — a tamper
+alarm for a completely intact database, and one that wedges mission-wide
+export permanently. Reproduced in the plan sweep with 215 cards quoting the
+same 99,001-byte range: 21.3 MB of aggregate quote text against 99 KB of
+snapshots; the claim-scoped path refuses the same data honestly with
+`brief_work_limit`. Fix: add mission-scoped materialized-text accounting to
+the mission-wide branch mirroring `_preflight_claim_synthesis`, and
+distinguish the size error from validation errors so oversized-but-intact
+never reports as tampering.
 
-Then issue 7 (mission-wide preflight text accounting), issues 8-10 (scope
-pinning, honest web pagination, test-suite honesty gaps), issue 11 (the low
-sweep), issue 12 (interrupt audit, helper consolidation, release tag,
-coverage ratchet).
+Then issues 8-10 (scope pinning, honest web pagination, test-suite honesty
+gaps), issue 11 (the low sweep), issue 12 (interrupt audit, helper
+consolidation, release tag, coverage ratchet).
 
 Still awaiting Kevin, and not to be started without a recorded decision:
 

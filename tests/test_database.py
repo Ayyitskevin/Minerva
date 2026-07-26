@@ -6,6 +6,7 @@ import stat
 import threading
 from collections.abc import Mapping
 from contextlib import closing
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ import minerva.core.db as db_module
 from conftest import SequenceIds, fixed_clock
 from minerva.core.audit import AuditRecorder, list_audit_events
 from minerva.core.db import Database, Migration, latest_schema_version
+from minerva.core.doctor import run_doctor
 from minerva.core.errors import ConflictError, IntegrityError, MinervaError, NotFoundError
 from minerva.core.operations import OperationsService
 from minerva.core.types import ActorKind, IdentityContext
@@ -190,6 +192,115 @@ def test_malformed_database_is_reported_as_a_safe_domain_error(tmp_path: Path) -
         Database(path).initialize()
 
     assert path.read_bytes() == malformed
+
+
+def _build_outdated_database(path: Path, upto: int) -> None:
+    """Apply packaged migrations 1..upto with their real recorded checksums."""
+
+    from importlib import resources
+
+    root = resources.files("minerva.core.migrations")
+    names = sorted(item.name for item in root.iterdir() if item.name.endswith(".sql"))
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA foreign_keys = ON")
+        for name in names:
+            version = int(name.split("_", 1)[0])
+            if version > upto:
+                break
+            sql = root.joinpath(name).read_text(encoding="utf-8")
+            connection.executescript(sql)
+            connection.execute(
+                "INSERT INTO schema_migrations(version, name, checksum) VALUES (?, ?, ?)",
+                (version, name, sha256(sql.encode("utf-8")).hexdigest()),
+            )
+        connection.commit()
+
+
+def test_backup_names_an_outdated_schema_instead_of_calling_it_invalid(
+    tmp_path: Path,
+) -> None:
+    """An intact pre-upgrade database is not a corrupt one.
+
+    `backup_to` used to map every doctor failure to `database_invalid`, so the
+    exact state an operator holds before upgrading was reported as having
+    "failed validation". That inverts safe upgrade ordering and implies damage
+    that is not there. `restore_from` already distinguished this case.
+    """
+
+    outdated = tmp_path / "outdated.db"
+    _build_outdated_database(outdated, latest_schema_version() - 1)
+
+    with pytest.raises(IntegrityError) as caught:
+        Database(outdated).backup_to(tmp_path / "outdated-backup.db")
+
+    assert caught.value.code == "database_migration_required"
+    assert not (tmp_path / "outdated-backup.db").exists()
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        pytest.param("permissions", id="group_readable_file"),
+        pytest.param("journal", id="delete_journal_mode"),
+    ],
+)
+def test_backup_proceeds_despite_configuration_problems(tmp_path: Path, damage: str) -> None:
+    """Hygiene problems must not block a snapshot of intact data.
+
+    A loose-permission or non-WAL database is exactly the one an operator most
+    wants to copy before changing anything, and `doctor` reports both conditions
+    on the copy too, so proceeding conceals nothing.
+    """
+
+    source = tmp_path / "source.db"
+    Database(source).initialize()
+    if damage == "permissions":
+        os.chmod(source, 0o644)
+    else:
+        with closing(sqlite3.connect(source)) as connection:
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            connection.execute("PRAGMA journal_mode = delete")
+            connection.commit()
+
+    target = tmp_path / "backup.db"
+    Database(source).backup_to(target)
+
+    assert target.is_file()
+    assert run_doctor(Database(source)).ok is False, "the reported condition is still reported"
+
+
+def test_backup_still_refuses_a_database_whose_data_cannot_be_trusted(tmp_path: Path) -> None:
+    """Relaxing the configuration checks must not relax the integrity checks."""
+
+    source = tmp_path / "source.db"
+    Database(source).initialize()
+    with closing(sqlite3.connect(source)) as connection:
+        connection.execute("DROP TRIGGER audit_no_update")
+        connection.commit()
+
+    with pytest.raises(IntegrityError) as caught:
+        Database(source).backup_to(tmp_path / "backup.db")
+
+    assert caught.value.code == "database_invalid"
+    assert not (tmp_path / "backup.db").exists()
+
+
+@pytest.mark.security
+def test_backup_does_not_rewrite_the_database_it_copies(tmp_path: Path) -> None:
+    """Copying a database must leave the original byte-identical."""
+
+    source = tmp_path / "source.db"
+    Database(source).initialize()
+    with closing(sqlite3.connect(source)) as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        connection.execute("PRAGMA journal_mode = delete")
+        connection.commit()
+    before = source.read_bytes()
+
+    Database(source).backup_to(tmp_path / "backup.db")
+
+    assert source.read_bytes() == before
 
 
 @pytest.mark.security
