@@ -386,3 +386,24 @@
   0007's retraction-in-packet deferral: it needs a consumer that actually wants
   mission-level context in a claim-scoped packet, and a selection rule that
   survives the citation-closure requirement. No consumer exists today.
+
+## The review surface says what it is showing (plan 2, issue 9)
+
+- `/missions` called `list_missions()` with no argument, taking its default
+  `limit=100`, and `missions.html` had no count, banner, or pagination
+  affordance. Measured with 105 missions: 100 cards rendered, "Mission 104"
+  absent, and no string anywhere disclosing that anything was hidden — while
+  the REST route on the same data returned a `next_cursor`. A human review
+  surface silently presenting a capped list as the whole set is the same
+  false-completeness class as the retraction and oversize slices.
+- The route now uses `page_missions`, which fetches one extra row and reports
+  whether it existed. That makes "more exist" **exact**. A
+  `len(missions) == limit` heuristic would have claimed more missions existed
+  whenever a count landed exactly on the page size, and a surface built to stop
+  overstating completeness must not start overstating truncation instead.
+- **The page stays single-page on purpose.** Cursor navigation would mean
+  either coupling the review surface to the REST layer's cursor encoding or
+  growing a second one, and this is a deliberately restrained GET-only surface.
+  What it owed the reviewer was honesty about the cap, not navigation. The
+  banner names `minerva mission list` and `/api/v1/missions` as the surfaces
+  that do page, so nothing is unreachable — only differently reached.

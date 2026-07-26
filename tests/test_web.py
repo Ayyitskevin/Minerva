@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+import minerva.web.app as app_module
 from minerva.core.db import Database
 from minerva.core.types import local_identity
 from minerva.evidence.service import EvidenceService
@@ -224,6 +225,62 @@ def test_retracted_finding_is_marked_retracted_in_web(
     assert "RETRACTED" in response.text
     assert "no longer asserted" in response.text
     assert "Synthetic review withdrew this assertion." in response.text
+
+
+def test_mission_list_says_when_it_is_showing_only_part_of_the_set(
+    web_client: TestClient,
+) -> None:
+    """A capped list must never be presented as the whole set.
+
+    The route rendered exactly 100 of any number of missions with no count,
+    banner, or pagination affordance, while the REST route on the same data
+    returned a continuation cursor. A reviewer had no way to know newer missions
+    existed and were being hidden.
+    """
+
+    research = ResearchService(web_client.app.state.database)
+    identity = local_identity(purpose="web pagination regression")
+    for index in range(app_module.WEB_MISSION_PAGE_SIZE + 5):
+        research.create_mission(
+            title=f"Mission {index:03d}",
+            objective="Objective recorded for the pagination regression.",
+            identity=identity,
+        )
+
+    response = web_client.get("/missions")
+
+    assert response.status_code == 200
+    assert f"Showing the first {app_module.WEB_MISSION_PAGE_SIZE} missions" in response.text
+    assert "More exist than this page displays" in response.text
+    assert "minerva mission list" in response.text
+    assert response.text.count('<li class="card">') == app_module.WEB_MISSION_PAGE_SIZE
+
+
+def test_mission_list_does_not_claim_truncation_when_it_shows_everything(
+    web_client: TestClient,
+) -> None:
+    """The exact-count signal must not over-warn on a full-but-complete page.
+
+    A `len(missions) == limit` heuristic would claim more missions existed
+    whenever the count landed exactly on the page size, so the route asks for one
+    extra row instead and reports what it actually found.
+    """
+
+    research = ResearchService(web_client.app.state.database)
+    identity = local_identity(purpose="web pagination boundary regression")
+    for index in range(app_module.WEB_MISSION_PAGE_SIZE):
+        research.create_mission(
+            title=f"Mission {index:03d}",
+            objective="Objective recorded for the pagination boundary regression.",
+            identity=identity,
+        )
+
+    response = web_client.get("/missions")
+
+    assert response.status_code == 200
+    assert f"Showing all {app_module.WEB_MISSION_PAGE_SIZE} recorded missions" in response.text
+    assert "More exist than this page displays" not in response.text
+    assert response.text.count('<li class="card">') == app_module.WEB_MISSION_PAGE_SIZE
 
 
 def test_web_surface_is_review_only(web_client: TestClient) -> None:

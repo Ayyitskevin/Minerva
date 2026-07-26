@@ -6,6 +6,11 @@
   <p>This surface reviews research already recorded through Minerva's shared services.</p>
 </section>
 {% if missions %}
+{% if more_missions_exist %}
+<p class="uncertainty"><strong>Showing the first {{ missions | length }} missions.</strong> More exist than this page displays. This review surface does not paginate; use <code>minerva mission list</code> or the <code>/api/v1/missions</code> endpoint to page through all of them.</p>
+{% else %}
+<p class="list-summary">Showing all {{ missions | length }} recorded {{ "mission" if missions | length == 1 else "missions" }}.</p>
+{% endif %}
 <ul class="card-list">
   {% for mission in missions %}
   <li class="card">
