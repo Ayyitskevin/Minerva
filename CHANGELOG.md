@@ -8,10 +8,10 @@ release here is a tag plus this record.
 
 ## Unreleased
 
-Prepared for `v0.2.0a1`; not yet tagged. `pyproject.toml` declares version
-`0.2.0a1`, so the tag must be `v0.2.0a1` unless the pre-release period is
-deliberately declared over and the version bumped to `0.2.0` first. See the
-release runbook in `CONTRIBUTING.md`.
+Prepared for `v0.2.0a1`; the tag is created on `main` once this work merges.
+`v0.2.0a1` was chosen over `v0.2.0` deliberately: it matches the declared version
+and makes no claim that the pre-release period is over. See the release runbook in
+`CONTRIBUTING.md`.
 
 ### Research record
 

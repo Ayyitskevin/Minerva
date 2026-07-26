@@ -1293,16 +1293,16 @@ the last of them: F-AI-4 (interrupt-safe assist audit), F-DUP-2 (canonical-helpe
 consolidation), F-TEST-3 (coverage floor 85 -> 88), and the documentation half of
 F-REL-1/2.
 
-**One ungated item is left, and it needs Kevin, not code.** The release tag was
-deliberately not created. `pyproject.toml` declares `0.2.0a1`; plan 2 asks for
-`v0.2.0`. Dropping the `a1` is a product decision that says the pre-release period
-is over, a published tag is never moved, and the tag has to point at a commit on
-`main` anyway. `CONTRIBUTING.md` carries the runbook and `CHANGELOG.md` carries the
-observed gate evidence, so tagging is a single step once the version question is
-answered:
+**Kevin answered the tag question: tag `v0.2.0a1` as-is.** Plan 2 asked for
+`v0.2.0` while `pyproject.toml` declares `0.2.0a1`; rather than bump the version
+(which would declare the pre-release period over) the tag matches the declared
+version and makes no product claim. `v0.2.0` remains available later, once a gated
+milestone such as D-1 lands.
 
-- tag `v0.2.0a1` as-is, or
-- bump `version` to `0.2.0` and tag `v0.2.0`.
+The tag is created on `main` after PR #25 merges, following the runbook in
+`CONTRIBUTING.md`: annotated, message carrying the gate evidence from
+`CHANGELOG.md`, then verified by building from a clean checkout of the tag. It is
+the last ungated item; nothing depends on it.
 
 Still awaiting Kevin, and not to be started without a recorded decision:
 
