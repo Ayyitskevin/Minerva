@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -8,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from minerva.cli.main import main
+from minerva.cli.main import build_parser, main
 from minerva.core.db import Database
 
 
@@ -439,3 +440,59 @@ def test_cli_composed_show_commands_each_use_one_read_transaction(
     read_count = 0
     _invoke(capsys, "mission", "show", "--db", str(database_path), "--mission", mission_id)
     assert read_count == 1
+
+
+def _leaf_commands(
+    parser: argparse.ArgumentParser,
+    prefix: str = "",
+) -> Iterator[tuple[str, str | None]]:
+    """Yield every invocable command path and the help text argparse shows for it."""
+
+    for action in parser._actions:
+        if not isinstance(action, argparse._SubParsersAction):
+            continue
+        described = {choice.dest: choice.help for choice in action._choices_actions}
+        for name, subparser in action.choices.items():
+            path = f"{prefix} {name}".strip()
+            has_children = any(
+                isinstance(child, argparse._SubParsersAction) for child in subparser._actions
+            )
+            if not has_children:
+                yield path, described.get(name)
+            yield from _leaf_commands(subparser, path)
+
+
+def test_readme_command_reference_covers_every_cli_verb() -> None:
+    """The README must list every verb, with the same purpose `--help` gives.
+
+    Nine verbs were absent or mentioned only in passing prose before this table
+    existed. Comparing against the parser rather than a hand-written list is the
+    point: a new subcommand fails here until it is documented, so the reference
+    cannot quietly fall behind the CLI again.
+    """
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    commands = dict(_leaf_commands(build_parser()))
+
+    assert commands, "the parser exposes no commands, so this test would prove nothing"
+    undescribed = sorted(path for path, help_text in commands.items() if not help_text)
+    assert not undescribed, f"these verbs have no --help description: {undescribed}"
+
+    missing = sorted(
+        path
+        for path, help_text in commands.items()
+        if f"| `minerva {path}` | {help_text} |" not in readme
+    )
+    assert not missing, f"README command reference is missing or disagrees on: {missing}"
+
+
+def test_cli_exposes_no_delete_verb() -> None:
+    """The README states deletion is absent by contract; this holds it to that."""
+
+    paths = [path for path, _ in _leaf_commands(build_parser())]
+
+    assert not [
+        path
+        for path in paths
+        if any(word in path.split() for word in ("delete", "remove", "purge", "destroy"))
+    ]

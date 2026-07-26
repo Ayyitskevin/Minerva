@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import email.parser
 import importlib.util
+import json
 import socket
 import sys
 from contextlib import closing
@@ -28,6 +29,7 @@ def _load_script(name: str) -> Any:
 
 
 installed_smoke = _load_script("installed_smoke")
+regenerate_golden_fixtures = _load_script("regenerate_golden_fixtures")
 static_security_check = _load_script("static_security_check")
 verify_dist = _load_script("verify_dist")
 
@@ -321,8 +323,101 @@ def test_installed_smoke_covers_each_provider_extra_boundary() -> None:
 def test_loaded_gate_scripts_are_modules() -> None:
     assert all(
         isinstance(module, ModuleType)
-        for module in (installed_smoke, static_security_check, verify_dist)
+        for module in (
+            installed_smoke,
+            regenerate_golden_fixtures,
+            static_security_check,
+            verify_dist,
+        )
     )
+
+
+def test_golden_fixtures_are_reproducible_by_the_script() -> None:
+    """The regeneration script must rebuild the checked-in fixtures exactly.
+
+    This is what keeps the script honest. It re-declares its scenario instead of
+    importing the suite's, so this comparison is the only thing tying the two
+    together: if either drifts, the bytes stop matching here rather than the day
+    someone reaches for `--write` and silently adopts whatever the code now
+    emits.
+    """
+
+    assert regenerate_golden_fixtures.BRIEF_FIXTURE.read_bytes() == (
+        regenerate_golden_fixtures.build_brief_fixture()
+    )
+    assert regenerate_golden_fixtures.REQUEST_FIXTURE.read_bytes() == (
+        regenerate_golden_fixtures.build_request_fixture()
+    )
+
+
+def test_golden_regeneration_defaults_to_reporting_and_never_writes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Check mode must be the default, and must not touch the fixtures."""
+
+    before = {
+        path: path.read_bytes()
+        for path in (
+            regenerate_golden_fixtures.BRIEF_FIXTURE,
+            regenerate_golden_fixtures.REQUEST_FIXTURE,
+        )
+    }
+
+    assert regenerate_golden_fixtures.main([]) == 0
+
+    assert "unchanged" in capsys.readouterr().out
+    assert all(path.read_bytes() == data for path, data in before.items())
+
+
+def test_golden_regeneration_reports_a_difference_instead_of_adopting_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A drifted fixture must fail loudly and show the field that moved.
+
+    Without this, `--check` passing would be indistinguishable from `--check`
+    being unable to detect anything at all.
+    """
+
+    drifted = tmp_path / "minerva.research-request.v1.golden.json"
+    document = json.loads(regenerate_golden_fixtures.build_request_fixture())
+    document["request"]["claim_id"] = f"clm_{'f' * 32}"
+    drifted.write_bytes(
+        json.dumps(document, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )
+        + b"\n"
+    )
+    monkeypatch.setattr(regenerate_golden_fixtures, "REQUEST_FIXTURE", drifted)
+
+    assert regenerate_golden_fixtures.main([]) == 1
+
+    captured = capsys.readouterr()
+    assert "DIFFERS" in captured.out
+    assert f'-    "claim_id": "clm_{"f" * 32}"' in captured.out
+    assert (
+        drifted.read_bytes()
+        == json.dumps(document, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )
+        + b"\n"
+    ), "check mode must not write"
+
+
+def test_golden_regeneration_write_mode_restores_a_drifted_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--write` must produce exactly the canonical bytes, not merely something."""
+
+    drifted = tmp_path / "minerva.research-request.v1.golden.json"
+    drifted.write_bytes(b'{"schema_version":"minerva.research-request.v1"}\n')
+    monkeypatch.setattr(regenerate_golden_fixtures, "REQUEST_FIXTURE", drifted)
+
+    assert regenerate_golden_fixtures.main(["--write"]) == 0
+
+    assert drifted.read_bytes() == regenerate_golden_fixtures.build_request_fixture()
 
 
 @pytest.mark.security

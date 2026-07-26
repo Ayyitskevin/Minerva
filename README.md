@@ -120,6 +120,48 @@ statement is never presented as a live one. `doctor` verifies the retraction rec
 themselves: their append-only triggers are required, and every retraction row is
 reconciled against its `research.finding.retracted` audit event.
 
+## Command reference
+
+Every verb the CLI exposes. `--help` on any of them lists its arguments, and the
+sections below cover the packet, request, assistance, and operations verbs in
+depth. A test asserts this table stays complete, so a new verb cannot ship
+undocumented.
+
+| Command | Purpose |
+| --- | --- |
+| `minerva init` | initialize or migrate a database |
+| `minerva mission create` | create a research mission |
+| `minerva mission list` | list missions, newest first |
+| `minerva mission show` | show one mission and its questions |
+| `minerva question add` | add a research question to a mission |
+| `minerva claim add` | add a falsifiable claim under a question |
+| `minerva claim show` | show one claim, its status, and its findings |
+| `minerva claim ledger` | show a claim's complete evidence ledger, withdrawals included |
+| `minerva claim status` | append a claim status, never overwriting one |
+| `minerva source import` | import one file as an immutable snapshot |
+| `minerva source show` | show snapshot metadata, or its stored bytes |
+| `minerva evidence add` | cite an exact byte span of a snapshot |
+| `minerva evidence withdraw` | mark evidence as no longer standing, keeping it in the ledger |
+| `minerva finding add` | record a labeled finding, assumption, or open question |
+| `minerva finding retract` | record that a finding is no longer asserted, keeping its history |
+| `minerva brief preview` | render a mission brief without writing files |
+| `minerva brief export` | write a mission's canonical brief to a new directory |
+| `minerva packet verify` | verify one canonical research packet without a database |
+| `minerva packet inspect` | show bounded metadata for one verified research packet |
+| `minerva request verify` | verify one canonical research request without a database |
+| `minerva request fulfill` | write a claim-scoped canonical brief without mutating research state |
+| `minerva audit list` | list append-only audit events |
+| `minerva doctor` | validate local database integrity |
+| `minerva backup` | create a non-overwriting backup |
+| `minerva restore` | restore into a new database |
+| `minerva assist finding-candidates` | draft candidate agent inferences from one claim's active evidence |
+| `minerva serve` | start the loopback review server |
+
+There is no verb that deletes a mission, claim, snapshot, citation, finding, or
+audit event. Corrections extend the record: `claim status` appends, `evidence
+withdraw` and `finding retract` mark without removing, and `backup` refuses to
+overwrite. That absence is the contract, not an unfinished surface.
+
 ## Canonical research packet
 
 `research-brief.json` is the single canonical agent-facing artifact; Milestone 1.1

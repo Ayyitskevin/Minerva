@@ -506,3 +506,74 @@ being changed, and each regression was checked to fail on the pre-fix source.
 Three issue 11 items are **not** done and are not implied by the above:
 migration-runner TOCTOU (F2-CORE-5), a golden-fixture regeneration script
 (F2-TESTS-4), and the README CLI verb reference (F4-CLI-UNDOC).
+
+## Finishing the low sweep (plan 2, issue 11, items 8-10)
+
+The three items slice 16 left open. Each was reproduced before being changed.
+
+- **A concurrent upgrade reported a broken migration.** Two processes opening
+  the same out-of-date database both compute the pending set, one wins the write
+  lock and commits, and the loser replays migrations that are already durable —
+  failing on an already-existing table and surfacing as `migration_failed`. That
+  reads as database corruption for what is a benign race with the intended end
+  state. Measured on a v3 database with migration 0004 packaged: one upgrader
+  succeeded, the other raised `migration_failed`, and the database was fine at
+  v4 the whole time.
+
+  The lock cannot be taken any earlier. `executescript` implicitly commits, so
+  the `BEGIN IMMEDIATE` guarding the migrations has to live *inside* the script
+  — the pre-lock classification is unavoidable. What changed is what happens
+  when the replay fails: the pending set is derived again with the lock actually
+  held, and an empty result means another writer did the work and there is
+  nothing left to do.
+
+- **The loser of a mixed-version race was blamed on the migration.** Found while
+  building the reproduction above, not from the plan. When the winner is a
+  *newer* build, the older one's replay fails and the honest code is
+  `database_too_new` — the database really is newer than that installation
+  understands. It was reporting `migration_failed`. Deriving the pending set
+  again runs the whole classification rather than a bespoke equality check, so
+  the accurate code comes out on its own. The pre-lock and post-failure paths
+  now share `_classify_migrations`, which is why they cannot disagree.
+
+  A **partial** concurrent upgrade — another writer applying some of several
+  pending migrations — deliberately still reports `migration_failed`. Applying
+  the remainder is impossible without releasing the lock, and retrying inside
+  the call would be a loop whose bound depends on other processes. The
+  operator's next attempt sees the smaller pending set and succeeds; that is
+  pinned by a test so the narrowness is a decision rather than an oversight.
+
+- **Golden fixtures had no regeneration procedure.**
+  `scripts/regenerate_golden_fixtures.py` rebuilds both from a deterministic
+  scenario. It **defaults to checking**, not writing: it reports whether the
+  checked-in bytes still match and exits non-zero with a field-level diff if
+  they do not. `--write` is explicit and prints the diff first.
+
+  The script re-declares its scenario instead of importing the suite's. Sharing
+  the code would make the two equal by construction and prove nothing; a test
+  compares the script's output against the checked-in bytes, so the script, the
+  suite's `_populate_brief`, and the fixtures are pinned to each other and
+  cannot diverge silently. It is not added to the gate list — the byte equality
+  it would assert is already asserted by the suite, and a gate that can rewrite
+  its own expectation is the wrong shape for a gate.
+
+  The standing rule is restated in the module docstring: regenerating is never
+  how a failing golden gets fixed. A fixture that stops matching means either
+  the contract changed on purpose or something broke, and rewriting it makes
+  that question unanswerable.
+
+- **The README had no complete verb list.** Three verbs — `mission list`,
+  `claim ledger`, `brief preview` — appeared nowhere, and six more existed only
+  in passing prose. Correcting slice 16's PR note: `packet verify` and `packet
+  inspect` were *not* among the undocumented ones; both had worked examples.
+  Sixteen subcommands also had no `help=` at all, so `minerva mission --help`
+  listed bare names. Both are fixed, and the README table quotes the same
+  sentences `--help` prints.
+
+  `test_readme_command_reference_covers_every_cli_verb` compares the table
+  against the parser rather than a hand-written list, so a new subcommand fails
+  the suite until it is documented. The reference also states what is absent by
+  contract — no verb deletes a mission, claim, snapshot, citation, finding, or
+  audit event — with a test holding that claim.
+
+Issue 11 is now complete. Issue 12 is the last Phase 0C item.

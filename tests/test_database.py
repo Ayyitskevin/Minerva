@@ -157,6 +157,162 @@ def test_failed_migration_rolls_back_every_statement(
     assert not Path(f"{path}-shm").exists()
 
 
+def _stale_history_once(
+    monkeypatch: pytest.MonkeyPatch,
+    stale: Mapping[int, tuple[str, str]],
+) -> None:
+    """Make only the first (pre-write-lock) history read see an older database.
+
+    This is the loser's view in a concurrent upgrade: it decided what to apply
+    before another writer took the lock, so its pending set is already stale by
+    the time the migrations run. Later reads -- the ones under the lock -- see
+    the real committed history.
+    """
+
+    real = db_module._read_migration_history
+    calls = {"count": 0}
+
+    def read(connection: sqlite3.Connection) -> dict[int, tuple[str, str]]:
+        calls["count"] += 1
+        return dict(stale) if calls["count"] == 1 else real(connection)
+
+    monkeypatch.setattr(db_module, "_read_migration_history", read)
+
+
+def _history_of(path: Path) -> dict[int, tuple[str, str]]:
+    with closing(Database(path)._connect(validate_schema=False)) as connection:
+        return db_module._read_migration_history(connection)
+
+
+def test_concurrent_upgrade_resolves_as_a_no_op(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two upgraders racing to apply the same migration must both succeed.
+
+    The loser replays migrations another writer already committed, which fails
+    on the schema objects that now exist. That is a benign race, not a broken
+    migration, so it must not surface as `migration_failed`.
+    """
+
+    migrations = db_module._migration_files()
+    path = tmp_path / "race.db"
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:-1])
+    Database(path).initialize()
+    stale = _history_of(path)
+
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations)
+    Database(path).initialize()
+
+    _stale_history_once(monkeypatch, stale)
+    assert Database(path).initialize() == len(migrations)
+    assert Database(path).schema_version() == len(migrations)
+
+
+def test_concurrent_upgrade_by_a_newer_installation_is_not_blamed_on_the_migration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Losing to a newer build is `database_too_new`, not `migration_failed`.
+
+    Deriving the pending set again under the write lock re-runs the whole
+    classification, so an unreconcilable history reports the code that describes
+    it rather than the code for a migration that could not be applied.
+    """
+
+    migrations = db_module._migration_files()
+    path = tmp_path / "mixed.db"
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:-1])
+    Database(path).initialize()
+    stale = _history_of(path)
+
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations)
+    Database(path).initialize()
+
+    # The loser is the older installation: it does not ship the last migration.
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:-1])
+    _stale_history_once(monkeypatch, stale)
+    with pytest.raises(IntegrityError) as caught:
+        Database(path).initialize()
+
+    assert caught.value.code == "database_too_new"
+
+
+def test_partial_concurrent_upgrade_still_reports_migration_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Work genuinely left over is still a failure, and the retry then succeeds.
+
+    The no-op path is deliberately narrow: it accepts only an empty pending set
+    under the lock. When another writer applied some of several pending
+    migrations, the remainder cannot be applied without releasing the lock, so
+    this reports `migration_failed` rather than looping.
+    """
+
+    migrations = db_module._migration_files()
+    assert len(migrations) >= 3, "this test needs at least two migrations to leave pending"
+    path = tmp_path / "partial.db"
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:-2])
+    Database(path).initialize()
+    stale = _history_of(path)
+
+    # Another writer applies only the first of the two migrations this caller
+    # believes are pending.
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:-1])
+    Database(path).initialize()
+
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations)
+    _stale_history_once(monkeypatch, stale)
+    with pytest.raises(IntegrityError) as caught:
+        Database(path).initialize()
+
+    assert caught.value.code == "migration_failed"
+    assert Database(path).initialize() == len(migrations)
+
+
+def test_concurrent_upgraders_racing_on_one_database_both_succeed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real race, driven by threads rather than a stale-view fixture."""
+
+    migrations = db_module._migration_files()
+    path = tmp_path / "threads.db"
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:-1])
+    Database(path).initialize()
+
+    barrier = threading.Barrier(2)
+    state = threading.local()
+    outcomes: dict[int, object] = {}
+
+    def staggered() -> tuple[Migration, ...]:
+        # Wait once per thread, at the read whose result the pending set comes
+        # from, so both upgraders hold a pre-lock view of the database.
+        if not getattr(state, "waited", False):
+            state.waited = True
+            barrier.wait(timeout=30)
+        return migrations
+
+    monkeypatch.setattr(db_module, "_migration_files", staggered)
+
+    def upgrade(index: int) -> None:
+        try:
+            outcomes[index] = Database(path).initialize()
+        except Exception as error:
+            outcomes[index] = error
+
+    threads = [threading.Thread(target=upgrade, args=(index,)) for index in (0, 1)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations)
+    assert outcomes == {0: len(migrations), 1: len(migrations)}
+    assert Database(path).schema_version() == len(migrations)
+
+
 def test_unmanaged_existing_database_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "unmanaged.db"
     with closing(sqlite3.connect(path, isolation_level=None)) as connection:

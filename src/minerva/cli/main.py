@@ -417,23 +417,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     mission_parser = commands.add_parser("mission", help="manage research missions")
     mission_commands = mission_parser.add_subparsers(dest="mission_command", required=True)
-    mission_create = mission_commands.add_parser("create")
+    mission_create = mission_commands.add_parser("create", help="create a research mission")
     _add_database(mission_create)
     mission_create.add_argument("--title", required=True)
     mission_create.add_argument("--objective", required=True)
     _set_handler(mission_create, _cmd_mission_create)
-    mission_list = mission_commands.add_parser("list")
+    mission_list = mission_commands.add_parser("list", help="list missions, newest first")
     _add_database(mission_list)
     mission_list.add_argument("--limit", type=int, default=100)
     _set_handler(mission_list, _cmd_mission_list)
-    mission_show = mission_commands.add_parser("show")
+    mission_show = mission_commands.add_parser("show", help="show one mission and its questions")
     _add_database(mission_show)
     mission_show.add_argument("--mission", required=True)
     _set_handler(mission_show, _cmd_mission_show)
 
     question_parser = commands.add_parser("question", help="manage research questions")
     question_commands = question_parser.add_subparsers(dest="question_command", required=True)
-    question_add = question_commands.add_parser("add")
+    question_add = question_commands.add_parser("add", help="add a research question to a mission")
     _add_database(question_add)
     question_add.add_argument("--mission", required=True)
     question_add.add_argument("--text", required=True)
@@ -441,16 +441,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     claim_parser = commands.add_parser("claim", help="manage falsifiable claims")
     claim_commands = claim_parser.add_subparsers(dest="claim_command", required=True)
-    claim_add = claim_commands.add_parser("add")
+    claim_add = claim_commands.add_parser("add", help="add a falsifiable claim under a question")
     _add_database(claim_add)
     claim_add.add_argument("--mission", required=True)
     claim_add.add_argument("--question", required=True)
     claim_add.add_argument("--statement", required=True)
     claim_add.add_argument("--falsification-criteria", required=True)
     _set_handler(claim_add, _cmd_claim_add)
-    _add_claim_lookup(claim_commands.add_parser("show"))
-    _add_claim_lookup(claim_commands.add_parser("ledger"))
-    claim_status = claim_commands.add_parser("status")
+    _add_claim_lookup(
+        claim_commands.add_parser("show", help="show one claim, its status, and its findings")
+    )
+    _add_claim_lookup(
+        claim_commands.add_parser(
+            "ledger", help="show a claim's complete evidence ledger, withdrawals included"
+        )
+    )
+    claim_status = claim_commands.add_parser(
+        "status", help="append a claim status, never overwriting one"
+    )
     _add_database(claim_status)
     claim_status.add_argument("--claim", required=True)
     claim_status.add_argument(
@@ -462,7 +470,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     source_parser = commands.add_parser("source", help="import and inspect immutable snapshots")
     source_commands = source_parser.add_subparsers(dest="source_command", required=True)
-    source_import = source_commands.add_parser("import")
+    source_import = source_commands.add_parser(
+        "import", help="import one file as an immutable snapshot"
+    )
     _add_database(source_import)
     source_import.add_argument("--mission", required=True)
     source_import.add_argument("--root", required=True, type=Path)
@@ -470,7 +480,9 @@ def build_parser() -> argparse.ArgumentParser:
     source_import.add_argument("--media-type", default="text/plain")
     source_import.add_argument("--url-metadata")
     _set_handler(source_import, _cmd_source_import)
-    source_show = source_commands.add_parser("show")
+    source_show = source_commands.add_parser(
+        "show", help="show snapshot metadata, or its stored bytes"
+    )
     _add_database(source_show)
     source_show.add_argument("--snapshot", required=True)
     source_show.add_argument("--metadata-only", action="store_true")
@@ -478,7 +490,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     evidence_parser = commands.add_parser("evidence", help="manage exact evidence cards")
     evidence_commands = evidence_parser.add_subparsers(dest="evidence_command", required=True)
-    evidence_add = evidence_commands.add_parser("add")
+    evidence_add = evidence_commands.add_parser("add", help="cite an exact byte span of a snapshot")
     _add_database(evidence_add)
     evidence_add.add_argument("--mission", required=True)
     evidence_add.add_argument("--claim", required=True)
@@ -493,7 +505,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evidence_add.add_argument("--supersedes")
     _set_handler(evidence_add, _cmd_evidence_add)
-    evidence_withdraw = evidence_commands.add_parser("withdraw")
+    evidence_withdraw = evidence_commands.add_parser(
+        "withdraw", help="mark evidence as no longer standing, keeping it in the ledger"
+    )
     _add_database(evidence_withdraw)
     evidence_withdraw.add_argument("--evidence", required=True)
     evidence_withdraw.add_argument("--reason", required=True)
@@ -501,7 +515,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     finding_parser = commands.add_parser("finding", help="record labeled findings")
     finding_commands = finding_parser.add_subparsers(dest="finding_command", required=True)
-    finding_add = finding_commands.add_parser("add")
+    finding_add = finding_commands.add_parser(
+        "add", help="record a labeled finding, assumption, or open question"
+    )
     _add_database(finding_add)
     finding_add.add_argument("--mission", required=True)
     finding_add.add_argument("--claim")
@@ -522,7 +538,9 @@ def build_parser() -> argparse.ArgumentParser:
     finding_add.add_argument("--evidence", action="append", default=[])
     _set_handler(finding_add, _cmd_finding_add)
 
-    finding_retract = finding_commands.add_parser("retract")
+    finding_retract = finding_commands.add_parser(
+        "retract", help="record that a finding is no longer asserted, keeping its history"
+    )
     _add_database(finding_retract)
     finding_retract.add_argument("--finding", required=True)
     finding_retract.add_argument("--reason", required=True)
@@ -530,11 +548,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     brief_parser = commands.add_parser("brief", help="preview or export a research brief")
     brief_commands = brief_parser.add_subparsers(dest="brief_command", required=True)
-    brief_preview = brief_commands.add_parser("preview")
+    brief_preview = brief_commands.add_parser(
+        "preview", help="render a mission brief without writing files"
+    )
     _add_database(brief_preview)
     brief_preview.add_argument("--mission", required=True)
     _set_handler(brief_preview, _cmd_brief_preview)
-    brief_export = brief_commands.add_parser("export")
+    brief_export = brief_commands.add_parser(
+        "export", help="write a mission's canonical brief to a new directory"
+    )
     _add_database(brief_export)
     brief_export.add_argument("--mission", required=True)
     brief_export.add_argument("--output-dir", required=True, type=Path)
@@ -580,7 +602,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit_parser = commands.add_parser("audit", help="inspect append-only audit events")
     audit_commands = audit_parser.add_subparsers(dest="audit_command", required=True)
-    audit_list = audit_commands.add_parser("list")
+    audit_list = audit_commands.add_parser("list", help="list append-only audit events")
     _add_database(audit_list)
     audit_list.add_argument("--mission")
     audit_list.add_argument("--limit", type=int, default=100)
