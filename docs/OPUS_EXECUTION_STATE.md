@@ -991,6 +991,90 @@ prefixes are now rejected.
 visible contract change and reverting it removes two names a consumer may have
 started reading.
 
+### Slice 17 — finishing the low sweep (plan 2, issue 11, items 8-10, COMPLETE)
+
+**User outcome.** A concurrent upgrade no longer looks like a corrupt database,
+golden fixtures have a regeneration procedure that cannot quietly launder a
+failure, and the README lists every CLI verb with a test keeping it that way.
+
+**Reproduced against real code, then re-run after:**
+
+| | Before | After |
+| --- | --- | --- |
+| two upgraders racing on one v3 database | **one `migration_failed`, one success** | both succeed at v4 |
+| loser of a race whose winner is a newer build | **`migration_failed`** | `database_too_new` |
+| loser of a *partial* upgrade (some migrations left) | `migration_failed` | `migration_failed`, retry succeeds |
+| genuinely invalid migration SQL | `migration_failed`, database untouched | `migration_failed`, database untouched |
+| `scripts/regenerate_golden_fixtures.py` | **did not exist** | check mode default, `--write` explicit |
+| verbs absent from the README | **3 absent, 6 prose-only** | all 27 in one table, test-enforced |
+| subcommands with no `--help` text | **16** | 0 |
+
+**F2-CORE-5: the lock genuinely cannot move earlier.** `executescript`
+implicitly commits, so the `BEGIN IMMEDIATE` guarding the migrations must live
+inside the script and the classification before it is unavoidably lock-free.
+The fix is therefore not "take the lock first" but "derive the answer again once
+the lock is held": on a failed replay, `_reclassify_under_write_lock` rolls back,
+takes the lock, and re-runs the same `_classify_migrations` the pre-lock path
+uses. Empty pending means another writer did the work.
+
+**A second defect surfaced while building the reproduction.** When the race
+winner is a *newer* build, the truthful code is `database_too_new`, not
+`migration_failed` — the loser's database really is ahead of what it ships.
+Re-running the whole classification rather than a bespoke "is it finished?"
+equality check produces that code for free. This was not in plan 2; it was found
+by reading the probe output rather than only the assertion.
+
+**The narrowness is deliberate and pinned.** A partial concurrent upgrade still
+reports `migration_failed`. Applying the remainder needs the lock released, and
+retrying inside the call is a loop bounded by other processes' behaviour.
+`test_partial_concurrent_upgrade_still_reports_migration_failed` asserts both the
+failure and that the operator's next attempt succeeds, so this is a decision on
+the record rather than an untested edge.
+
+**F2-TESTS-4: the script defaults to checking.** A regeneration tool that writes
+by default is how a golden gets rewritten to make a failure pass — the exact
+thing plan 1 named as a standing rule. `--check` is the default and exits
+non-zero with a field-level diff; `--write` is explicit and prints the diff
+first. The script re-declares its scenario instead of importing the suite's,
+because sharing the code would make them equal by construction and prove
+nothing; a test compares its output to the checked-in bytes, pinning script,
+suite scenario, and fixtures to each other. It is **not** added to the gate list:
+the equality it would assert is already asserted by the suite, and a gate that
+can rewrite its own expectation is the wrong shape for a gate.
+
+**F4-CLI-UNDOC corrected a claim from slice 16.** The PR #23 body said `packet
+verify` and `packet inspect` were undocumented in the README. They were not —
+both had worked examples. The verbs actually absent were `mission list`, `claim
+ledger`, and `brief preview`, with six more mentioned only in passing prose.
+Sixteen subcommands also carried no `help=`, so `minerva mission --help` printed
+bare names. Both are fixed and the README quotes the same sentences `--help`
+does, compared against the parser by test rather than by hand.
+
+**Tests.** One genuine defect witness: the threaded race test, which fails on
+pre-fix source with `migration_failed` and passes after. The three stale-view
+migration tests fail on pre-fix source only because they patch
+`_read_migration_history`, which did not exist — they are **pins on the new
+boundary, not witnesses**, and are recorded as such. The golden-script and
+README tests are new coverage for behaviour introduced by this slice; each was
+checked against a deliberately perturbed input (a mutated fixture, a deleted
+README row) to prove it can fail. 686 tests, 208 security-marked, 90.04% branch
+coverage.
+
+**Files changed.** `src/minerva/core/db.py`, `src/minerva/cli/main.py`,
+`scripts/regenerate_golden_fixtures.py` (new), `README.md`, `docs/DECISIONS.md`,
+`tests/test_database.py`, `tests/test_gate_scripts.py`, `tests/test_cli.py`.
+
+**Migration status.** No new migration; the migration *runner* changed, which is
+a review-gated surface under AGENTS.md. **Security impact.** No prohibition
+relaxed and no contract weakened. The append-only, forward-only, checksum-pinned
+migration semantics are untouched: the no-op path accepts only a history that
+matches this installation version, name, and checksum for checksum, and a
+genuinely failed migration still leaves the database at its previous version
+with nothing recorded.
+
+**Rollback.** Revert the commit. The new script is additive and unreferenced by
+any gate.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -1113,27 +1197,28 @@ blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
 traceable to a reproduced finding. Slice 7 completed issues 1-2; slice 8
 completed issue 3.
 
-Slices 7-15 completed issues 1-10. Slice 16 completed **seven of the ten**
-items in issue 11 — the low sweep from plan 2 section 27: `F2-CORE-6`,
-`F2-RES-2`, `F2-EVD-1`, `F2-INTEGRATIONS-1`, `F2-SURFACES-3`,
-`F3-MILESTONE-TITLES`, and `F5-CAP-PACKET-CLI`.
+Slices 7-17 completed **issues 1-11**. Slice 16 took seven of issue 11's ten
+items and slice 17 took the last three (`F2-CORE-5`, `F2-TESTS-4`,
+`F4-CLI-UNDOC`), plus one defect neither slice's plan entry named: the loser of a
+mixed-version migration race reporting `migration_failed` where the truth was
+`database_too_new`.
 
-**Issue 11 is not finished.** Three items remain and are the next slice:
+The next and final Phase 0C slice is **issue 12**:
 
-- `F2-CORE-5` — recompute pending migrations inside the write transaction so a
-  concurrent upgrade resolves as a no-op instead of a spurious
-  `migration_failed`. The only one of the three that touches migration history,
-  so it needs a reproduction that actually races two upgraders, not a mocked
-  one.
-- `F2-TESTS-4` — a deterministic golden-fixture regeneration procedure. Today
-  a contract change means hand-editing fixtures, which is how a fixture and the
-  code it pins drift apart without either looking wrong.
-- `F4-CLI-UNDOC` — the README does not list every CLI verb. `packet verify` and
-  `packet inspect` were undocumented there even while slice 16 was adding them
-  to the capability manifest.
+- **F-AI-4** — interrupt-safe assist audit. Process death between the requested
+  and terminal events leaves an unmatched record; the threat model already says
+  so, and this is about whether doctor can *see* it rather than about making the
+  external call atomic, which it cannot be.
+- **F-DUP-2** — canonical-helper consolidation. Several modules carry their own
+  canonical-JSON byte writer; they agree today, which is exactly why the drift
+  would be silent.
+- **F-REL-1/2** — release tag `v0.2.0`. The distribution builds as
+  `0.2.0a1` and nothing has ever been tagged.
+- **F-TEST-3** — coverage ratchet. The floor is 85% while the suite sits at
+  90.04%, so a change could delete five points of coverage without the gate
+  noticing.
 
-Then issue 12 (interrupt audit, helper consolidation, release tag, coverage
-ratchet).
+Nothing in issue 12 is gated, so it can start without a decision from Kevin.
 
 
 Still awaiting Kevin, and not to be started without a recorded decision:

@@ -6,7 +6,7 @@ import os
 import sqlite3
 import stat
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from hashlib import sha256
@@ -111,6 +111,83 @@ def _validate_migration_state(
             "The database requires an explicit Minerva migration.",
         )
     return len(rows)
+
+
+def _read_migration_history(connection: sqlite3.Connection) -> dict[int, tuple[str, str]]:
+    return {
+        int(row[0]): (str(row[1]), str(row[2]))
+        for row in connection.execute(
+            "SELECT version, name, checksum FROM schema_migrations ORDER BY version"
+        )
+    }
+
+
+def _classify_migrations(
+    applied: Mapping[int, tuple[str, str]],
+    migrations: tuple[Migration, ...],
+) -> list[Migration]:
+    """Return the packaged migrations this history has not recorded.
+
+    Raises rather than returning a gap when the history cannot be reconciled
+    with this installation at all: a version this build does not ship is
+    `database_too_new`, and a recorded version whose name or checksum differs
+    is `migration_checksum_mismatch`.
+    """
+
+    if set(applied) - {migration.version for migration in migrations}:
+        raise IntegrityError(
+            "database_too_new", "The database was created by a newer Minerva version."
+        )
+    pending: list[Migration] = []
+    for migration in migrations:
+        recorded = applied.get(migration.version)
+        if recorded is None:
+            pending.append(migration)
+        elif recorded != (migration.name, migration.checksum):
+            raise IntegrityError(
+                "migration_checksum_mismatch",
+                "A recorded migration does not match this Minerva installation.",
+            )
+    return pending
+
+
+def _reclassify_under_write_lock(
+    connection: sqlite3.Connection,
+    migrations: tuple[Migration, ...],
+) -> bool:
+    """Re-derive the pending set with the write lock held, after a failed replay.
+
+    Discards this connection's partial work, takes the lock, and classifies the
+    committed history again. Returns True when nothing is pending any more,
+    which means another writer applied these exact migrations first and there is
+    no work left; the lock is still held, so the caller continues as if it had
+    won the race. Returns False when work genuinely remains, and re-raises the
+    accurate code when the history cannot be reconciled at all -- a mixed-version
+    race whose winner is newer reports `database_too_new` rather than blaming the
+    migration.
+
+    A *partial* concurrent upgrade -- another writer applying some of several
+    pending migrations -- still returns False and so still reports
+    `migration_failed`. Applying the remainder here is not possible without
+    releasing the lock, because `executescript` implicitly commits; retrying is a
+    loop whose bound depends on other processes. The operator's next attempt sees
+    the smaller pending set and succeeds.
+    """
+
+    if connection.in_transaction:
+        connection.rollback()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        applied = _read_migration_history(connection)
+    except sqlite3.Error as error:
+        if _is_busy_error(error):
+            raise MinervaError(
+                "database_busy",
+                "The database is busy; retry the operation.",
+                http_status=503,
+            ) from error
+        return False
+    return not _classify_migrations(applied, migrations)
 
 
 def _is_busy_error(error: sqlite3.Error) -> bool:
@@ -505,28 +582,16 @@ class Database:
 
             applied: dict[int, tuple[str, str]] = {}
             if "schema_migrations" in existing:
-                for row in connection.execute(
-                    "SELECT version, name, checksum FROM schema_migrations ORDER BY version"
-                ):
-                    applied[int(row[0])] = (str(row[1]), str(row[2]))
+                applied = _read_migration_history(connection)
 
             migrations = _migration_files()
-            known_versions = {migration.version for migration in migrations}
-            if set(applied) - known_versions:
-                raise IntegrityError(
-                    "database_too_new", "The database was created by a newer Minerva version."
-                )
-
-            pending: list[Migration] = []
-            for migration in migrations:
-                recorded = applied.get(migration.version)
-                if recorded is None:
-                    pending.append(migration)
-                elif recorded != (migration.name, migration.checksum):
-                    raise IntegrityError(
-                        "migration_checksum_mismatch",
-                        "A recorded migration does not match this Minerva installation.",
-                    )
+            # This classification is provisional: no write lock is held yet, and
+            # none can be, because `executescript` implicitly commits and so the
+            # migrations' `BEGIN IMMEDIATE` has to live inside the script. If a
+            # concurrent upgrader wins the lock the replay below fails, and
+            # `_reclassify_under_write_lock` derives the answer again with the
+            # lock actually held.
+            pending = _classify_migrations(applied, migrations)
 
             try:
                 if pending:
@@ -550,9 +615,16 @@ class Database:
                         "The database is busy; retry the operation.",
                         http_status=503,
                     ) from error
-                raise IntegrityError(
-                    "migration_failed", "A database migration could not be applied."
-                ) from error
+                # A concurrent upgrader that won the lock commits the same
+                # packaged migrations while this one is still deciding, so the
+                # replay fails on, for example, an already-existing table. That
+                # is a benign race whose end state is the intended one, and it
+                # resolves as a no-op once the pending set is derived again with
+                # the lock held. Anything still outstanding is a real failure.
+                if not _reclassify_under_write_lock(connection, migrations):
+                    raise IntegrityError(
+                        "migration_failed", "A database migration could not be applied."
+                    ) from error
 
             _validate_migration_state(connection, require_latest=True)
             version = len(migrations)
