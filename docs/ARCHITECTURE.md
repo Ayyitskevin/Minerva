@@ -226,8 +226,14 @@ The selected synthesis path constructs a fresh claim-scoped v2 payload before pa
 serialization. It includes the mission, target question and claim, complete active and
 withdrawn ledger, supersession and status provenance, referenced sources, claim-linked
 findings/assumptions/unresolved questions and uncertainty, and exact audit/run closure.
-Unrelated mission entities and mission-global findings are omitted. Existing
-full-mission packet contracts and output bytes remain unchanged. The claim-scoped result
+Unrelated mission entities and mission-global findings are omitted — including a
+mission-global finding that cites the target claim's own evidence, so the packet can
+carry an evidence card while carrying nothing that rests on it. Including such
+statements would force the other claims' cards they cite into the packet, because the
+canonical verifier requires every finding's citations to be present; that is recorded
+in `docs/DECISIONS.md` as a v3 question rather than done here, and
+`test_claim_scoped_packet_omits_mission_level_statements_by_design` pins the current
+boundary. Existing full-mission packet contracts and output bytes remain unchanged. The claim-scoped result
 is revalidated by the existing canonical v2 builder; request/scope/result metadata
 never enters v2.
 

@@ -356,3 +356,33 @@
 - The UTF-8/UTF-16 storage factor is now one shared helper
   (`_storage_bytes_per_output_byte`) instead of being spelled out in the
   claim-scoped branch only, so the two branches cannot drift on it.
+
+## The claim-scoped boundary is documented, not changed (plan 2, issue 8)
+
+- Reproduced: a mission-level finding (`claim_id` NULL) that cites the target
+  claim's own evidence is omitted from a claim-scoped packet, along with its
+  uncertainty and any mission-level unresolved question, while the packet still
+  carries the cited card. Mission-wide: 2 findings + 1 unresolved question + 2
+  uncertainties; claim-scoped: 1 + 0 + 1, with the card present either way.
+- **This is the documented rule, not a defect.** ADR 0002 already says a
+  claim-scoped packet retains the closure the canonical verifier requires and
+  that "unrelated mission entities are omitted", and PRD invariant 16 already
+  says the packet carries no selection marker, with the request/result binding
+  supplying that meaning. PRD invariant 16 now states the finding-scope rule
+  explicitly, because the behaviour reads like a bug: an empty statement array
+  means "none for this claim", not "none in this mission".
+- `test_claim_scoped_packet_omits_mission_level_statements_by_design` pins it,
+  so the boundary cannot move silently in either direction.
+- **Including intersecting mission-level statements was considered and
+  rejected, on a technical blocker rather than taste.** `_validate_findings`
+  requires every finding's citations to be present in the packet. A
+  mission-level finding may cite cards from several claims, so including it
+  would force those other claims' cards into a claim-scoped packet —
+  contradicting "unrelated mission entities are omitted" and dragging the
+  packet toward mission-wide. Restricting inclusion to findings whose citations
+  lie entirely within the target ledger would still silently drop the rest,
+  which moves the ambiguity rather than removing it.
+- Recorded as a `minerva.research-brief.v3` question, on the same terms as ADR
+  0007's retraction-in-packet deferral: it needs a consumer that actually wants
+  mission-level context in a claim-scoped packet, and a selection rule that
+  survives the citation-closure requirement. No consumer exists today.

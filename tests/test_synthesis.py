@@ -718,6 +718,81 @@ def test_packet_size_overflow_is_a_work_limit_not_an_integrity_failure(
     assert caught.value.code == "brief_work_limit"
 
 
+def test_claim_scoped_packet_omits_mission_level_statements_by_design(lab: Lab) -> None:
+    """Pin the claim-scoped boundary, including the case that looks like a bug.
+
+    A mission-level finding (`claim_id` NULL) may cite the target claim's own
+    evidence, and `add_finding` deliberately allows that. The claim-scoped packet
+    still carries the cited card while omitting the finding, its uncertainty, and
+    any mission-level unresolved question, so the arrays a consumer receives are
+    empty rather than partial.
+
+    That is ADR 0002's rule — "unrelated mission entities are omitted" — and PRD
+    invariant 16's statement that the packet carries no selection marker, with the
+    request/result binding supplying that meaning. It is pinned here because it
+    reads like a defect and must not be "fixed" without deciding the contract
+    question recorded in DECISIONS.md: the verifier requires every finding's
+    citations to be present in the packet, so including mission-level findings
+    that cite out-of-scope cards would drag a claim-scoped packet toward
+    mission-wide.
+    """
+
+    seed = lab.seed_claim()
+    card = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    scoped_finding = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="A claim-scoped finding.",
+        statement_kind=StatementKind.OBSERVED_FACT,
+        status=FindingStatus.SUPPORTED,
+        uncertainty="Scoped uncertainty.",
+        evidence_ids=(card.id,),
+        identity=lab.identity,
+    )
+    mission_level = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=None,
+        statement="A mission-level inference resting on the very same card.",
+        statement_kind=StatementKind.AGENT_INFERENCE,
+        status=FindingStatus.SUPPORTED,
+        uncertainty="Mission-level uncertainty.",
+        evidence_ids=(card.id,),
+        identity=lab.identity,
+    )
+    mission_question = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=None,
+        statement="A mission-level unresolved question.",
+        statement_kind=StatementKind.UNRESOLVED_QUESTION,
+        status=FindingStatus.INCONCLUSIVE,
+        uncertainty="",
+        evidence_ids=(),
+        identity=lab.identity,
+    )
+
+    wide = parse_research_packet(lab.synthesis.build_research_packet_json(seed.mission.id))
+    scoped = parse_research_packet(
+        lab.synthesis.build_research_packet_json(seed.mission.id, claim_id=seed.claim.id)
+    )
+
+    wide_ids = {item.id for item in wide.brief.findings} | {
+        item.id for item in wide.brief.unresolved_questions
+    }
+    assert {scoped_finding.id, mission_level.id, mission_question.id} <= wide_ids
+
+    scoped_ids = {item.id for item in scoped.brief.findings} | {
+        item.id for item in scoped.brief.unresolved_questions
+    }
+    assert scoped_ids == {scoped_finding.id}, "the claim-scoped boundary moved"
+    assert mission_level.id not in scoped_ids
+    assert mission_question.id not in scoped_ids
+
+    # The card the omitted finding rested on IS carried, which is what makes the
+    # omission look like a defect rather than a scope decision.
+    assert card.id in {citation.citation_id for citation in scoped.brief.citations}
+    assert [entry.finding_id for entry in scoped.brief.uncertainties] == [scoped_finding.id]
+
+
 def test_claim_materialization_lower_bound_never_exceeds_canonical_json(lab: Lab) -> None:
     scenario = _populate_brief(lab)
 
