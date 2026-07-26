@@ -750,6 +750,57 @@ simply happens earlier and under an honest code.
 
 **Rollback.** Pure code and tests; revert the commit.
 
+### Slice 13 — the claim-scoped boundary is documented, not changed (plan 2, issue 8, COMPLETE)
+
+**Outcome.** The behaviour that reads like a bug is now stated where a reader
+looks, pinned by a test, and its alternative recorded with the reason it was
+rejected. No product behaviour changed.
+
+**Reproduced.** A mission-level finding (`claim_id` NULL) citing the target
+claim's own evidence, plus a mission-level unresolved question:
+
+| | mission-wide | claim-scoped |
+| --- | --- | --- |
+| findings | 2 | 1 |
+| unresolved questions | 1 | 0 |
+| uncertainties | 2 | 1 |
+| the cited card | present | **present** |
+
+So the packet carries an evidence card while carrying nothing that rests on it,
+and the empty arrays are indistinguishable from "this mission recorded none".
+
+**Why this is documentation rather than a fix.** ADR 0002 already says a
+claim-scoped packet retains the closure the canonical verifier requires and that
+"unrelated mission entities are omitted"; PRD invariant 16 already says the
+packet carries no selection marker, with the request/result binding supplying
+that meaning. The rule existed; it just was not stated precisely enough for the
+behaviour to look intentional.
+
+**Inclusion was rejected on a technical blocker, not on taste.**
+`_validate_findings` requires every finding's citations to be present in the
+packet. A mission-level finding may cite cards from several claims, so including
+it would force those other claims' cards into a claim-scoped packet —
+contradicting "unrelated mission entities are omitted" and dragging the packet
+toward mission-wide. Restricting inclusion to findings whose citations lie
+entirely inside the target ledger would still silently drop the rest, moving the
+ambiguity rather than removing it. Recorded as a v3 question on the same terms
+as ADR 0007's retraction-in-packet deferral: it needs a consumer and a selection
+rule that survives citation closure.
+
+**No decision gate was needed.** Documenting the boundary does not touch the
+frozen `research-brief.v2` contract; only the inclusion option would have, and
+that option is deferred rather than taken.
+
+**Files changed.** `docs/PRD.md` (invariant 16), `docs/ARCHITECTURE.md`,
+`docs/DECISIONS.md`, `tests/test_synthesis.py`. No product code.
+
+**Tests.** `test_claim_scoped_packet_omits_mission_level_statements_by_design`
+pins the boundary in both directions. This is a pin, not a defect witness —
+there is no pre-fix source to fail against, because nothing was broken.
+648 tests, 90.28% branch coverage.
+
+**Migration status.** None. **Rollback.** Docs and one test.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -872,30 +923,26 @@ blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
 traceable to a reproduced finding. Slice 7 completed issues 1-2; slice 8
 completed issue 3.
 
-Slices 7-12 completed issues 1-7. The next slice is **issue 8** —
-F2-SYNTHESIS-1 (F-SYN-1), the claim-scoped scope boundary. The claim-scoped
-findings query filters `claim_id = ?`, so a mission-level finding
-(`claim_id` NULL) never matches even when it cites the target claim's own
-evidence. The scoped packet then carries the cited card while dropping the
-finding, its unresolved question, and its uncertainty, emitting empty arrays
-that a consumer cannot distinguish from "none exist". Both the finder and its
-verifier reproduced this. `add_finding` deliberately allows a mission-level
-finding to cite any claim's evidence, so the state is reachable through
-supported use.
+Slices 7-13 completed issues 1-8. The next slice is **issue 9** —
+F2-SURFACES-1 (F-PAR-3), honest web pagination. The `/missions` route calls
+`research.list_missions()` with no argument, which defaults to `limit=100`, and
+`missions.html` has no count, banner, or pagination affordance. Reproduced in
+the plan sweep with 150 seeded missions: exactly 100 cards render, "Mission 100"
+and "Mission 149" absent, no truncation indicator anywhere, while the REST route
+on the same data returns a `next_cursor`. A human review surface silently
+presenting a capped list as the whole set is the same false-completeness class
+as slices 7 and 12. Fix: cursor pagination like the REST route, or at minimum an
+explicit "showing first N" banner when `len(missions) == limit`. The service
+already has `page_missions` with validated cursors, so the web route can use it
+rather than growing new query logic.
 
-Two options, and this one needs a judgement rather than a mechanical fix:
-document the boundary and pin it with a regression, or include mission-level
-findings whose citation set intersects the target ledger. The scoped audit CTE
-already applies the same `claim_id` filter, so the packet is internally
-consistent either way. Inclusion is the more honest output but changes what a
-claim-scoped packet contains, which touches the `research-brief.v2` consumer
-contract — assess that carefully before choosing, and if the boundary stays,
-the emptiness must be made distinguishable from absence rather than left
-ambiguous.
+Then issue 10 (test-suite honesty gaps: the network guard misses `connect_ex`
+and UDP while its docstring claims to fail any non-loopback socket; `scripts/`
+sits outside the coverage floor at 39% with MIN003 unwitnessed; tuple/list/
+starred alias unpacking evades the static gate untested), issue 11 (the low
+sweep), issue 12 (interrupt audit, helper consolidation, release tag, coverage
+ratchet).
 
-Then issues 9-10 (honest web pagination, test-suite honesty gaps), issue 11
-(the low sweep), issue 12 (interrupt audit, helper consolidation, release tag,
-coverage ratchet).
 
 Still awaiting Kevin, and not to be started without a recorded decision:
 

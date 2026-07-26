@@ -196,6 +196,13 @@ unresolved question under the same citation rules as human-authored material.
 16. A claim-scoped v2 packet preserves exact target-claim evidence/provenance closure
     but carries no selection marker. Its request/result binding supplies that external
     meaning; standalone packet verification does not prove database completeness.
+    Scope is by claim: only findings, unresolved questions, assumptions, and
+    uncertainties recorded against the target claim appear. A mission-level statement
+    (one with no claim) is omitted **even when it cites the target claim's own
+    evidence**, so the packet can carry an evidence card while carrying nothing that
+    rests on it, and an empty statement array means "none for this claim" rather than
+    "none in this mission". A consumer that needs mission-level statements requests a
+    mission-wide brief.
 
 17. Request fulfillment caps cumulative SQLite virtual-machine work across its query-only
     snapshot. Exhaustion is a stable `brief_work_limit` refusal before output; this is an
