@@ -244,3 +244,29 @@
   higher would refuse to open with `migration_checksum_mismatch`. Correcting a
   comment is not worth breaking every existing installation. ADR 0005 carries
   the correction of record and says so explicitly.
+
+## Reads no longer alter what they read (plan 2, issue 4)
+
+- `PRAGMA journal_mode = WAL` rewrites the database header, and it ran on every
+  connection including reads. Inspecting a delete-journal artifact with
+  `doctor` therefore changed its bytes and its SHA-256, breaking the
+  byte-stable-artifact provenance the product rests on. Write-path pragmas
+  (`journal_mode`, `synchronous`) now run only on write paths.
+- **`mode=ro` was measured and rejected.** It is the obvious fix and it breaks
+  backup and restore. A read-only connection attaches the WAL index but cannot
+  checkpoint or unlink `-wal`/`-shm` on close, so it leaves sidecars beside the
+  database; the restore and backup guards refuse to publish over live sidecars,
+  and seven tests failed accordingly. The mutation came from the pragma, not
+  from the open mode, so dropping the pragma fixes the defect without weakening
+  a guard. `read()` documents this so the next reader does not "improve" it
+  back.
+- Doctor's `wal` check now reports the journal mode stored in the file instead
+  of the value the connection had just forced. A delete-journal artifact is
+  honestly reported as not being in WAL, which is a real deviation worth
+  surfacing rather than one doctor silently repaired.
+- Doctor's `foreign_keys` check reported whether the inspection connection had
+  enforcement switched on — always true, because `_connect` had just set it.
+  `Database.integrity_check` now returns page integrity and foreign-key
+  satisfaction separately, so `foreign_keys` means "the recorded references
+  resolve", a property of the database. Both pragmas were already being run;
+  only one of them was being reported.

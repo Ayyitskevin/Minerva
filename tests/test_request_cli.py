@@ -1012,8 +1012,12 @@ def test_claim_scoped_audit_query_does_not_materialize_unrelated_mission_rows(
     original_connect = lab.database.connect
     returned_audit_rows = 0
 
-    def counting_connect(*, validate_schema: bool = True) -> sqlite3.Connection:
-        connection = original_connect(validate_schema=validate_schema)
+    def counting_connect(
+        *,
+        validate_schema: bool = True,
+        read_only: bool = False,
+    ) -> sqlite3.Connection:
+        connection = original_connect(validate_schema=validate_schema, read_only=read_only)
 
         def counting_factory(
             cursor: sqlite3.Cursor,

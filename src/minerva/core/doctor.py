@@ -133,23 +133,31 @@ def run_doctor(database: Database, *, deep: bool = False) -> DoctorReport:
         )
     )
 
-    integrity_ok, integrity_message = database.integrity_check()
-    checks.append(DoctorCheck("sqlite_integrity", integrity_ok, integrity_message))
-    if not integrity_ok:
+    pages_ok, references_ok = database.integrity_check()
+    checks.append(
+        DoctorCheck(
+            "sqlite_integrity",
+            pages_ok,
+            "ok" if pages_ok else "SQLite integrity validation failed.",
+        )
+    )
+    if not pages_ok:
         return DoctorReport(False, tuple(checks), tuple(notices))
 
     try:
         with database.read() as connection:
+            # The journal mode read here is the one stored in the file. Doctor
+            # opens read-only, so it no longer forces WAL and then reports the
+            # value it just forced.
             journal = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
-            foreign_keys = int(connection.execute("PRAGMA foreign_keys").fetchone()[0])
             checks.append(DoctorCheck("wal", journal == "wal", f"journal mode is {journal}"))
             checks.append(
                 DoctorCheck(
                     "foreign_keys",
-                    foreign_keys == 1,
-                    "foreign-key enforcement enabled"
-                    if foreign_keys == 1
-                    else "foreign-key enforcement disabled",
+                    references_ok,
+                    "recorded references resolve"
+                    if references_ok
+                    else "foreign-key references are unsatisfied",
                 )
             )
             trigger_sql = {

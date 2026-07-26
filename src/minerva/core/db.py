@@ -127,6 +127,14 @@ def _read_write_uri(path: Path) -> str:
     return Path(os.path.abspath(path)).as_uri() + "?mode=rw"
 
 
+# A read path opens `mode=rw` like every other connection but sets none of the
+# write-path pragmas. `mode=ro` was measured and rejected: a read-only connection
+# attaches the WAL index and then cannot checkpoint or unlink `-wal`/`-shm` on
+# close, leaving sidecars beside the database. The restore and backup guards
+# refuse to publish over live sidecars, so read-only reads would have broken
+# backup and restore to buy a guarantee the pragma change already provides.
+
+
 def _reject_unsafe_database_path(path: Path) -> None:
     absolute = Path(os.path.abspath(path))
     current = Path(absolute.anchor)
@@ -287,9 +295,14 @@ class Database:
     def exists(self) -> bool:
         return self.path.is_file() and not self.path.is_symlink()
 
-    def connect(self, *, validate_schema: bool = True) -> sqlite3.Connection:
+    def connect(
+        self,
+        *,
+        validate_schema: bool = True,
+        read_only: bool = False,
+    ) -> sqlite3.Connection:
         try:
-            return self._connect(validate_schema=validate_schema)
+            return self._connect(validate_schema=validate_schema, read_only=read_only)
         except sqlite3.Error as error:
             if _is_missing_database_error(error):
                 raise MinervaError(
@@ -308,7 +321,7 @@ class Database:
                 "The database could not be opened safely.",
             ) from error
 
-    def _connect(self, *, validate_schema: bool) -> sqlite3.Connection:
+    def _connect(self, *, validate_schema: bool, read_only: bool = False) -> sqlite3.Connection:
         _reject_unsafe_database_path(self.path)
         connection = sqlite3.connect(
             _read_write_uri(self.path), uri=True, isolation_level=None, timeout=5.0
@@ -322,10 +335,17 @@ class Database:
             # deleting the existing row without firing the BEFORE DELETE triggers
             # that make audit, snapshot, evidence, and migration rows append-only.
             connection.execute("PRAGMA recursive_triggers = ON")
-            journal_mode = str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0])
-            if journal_mode.lower() != "wal":
-                raise IntegrityError("database_wal_unavailable", "SQLite WAL mode is unavailable.")
-            connection.execute("PRAGMA synchronous = FULL")
+            if not read_only:
+                # `PRAGMA journal_mode = WAL` rewrites the database header, so it
+                # belongs only on write paths. Running it on reads changed the
+                # bytes — and therefore the recorded digest — of any non-WAL
+                # database an operator inspected with `doctor`.
+                journal_mode = str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0])
+                if journal_mode.lower() != "wal":
+                    raise IntegrityError(
+                        "database_wal_unavailable", "SQLite WAL mode is unavailable."
+                    )
+                connection.execute("PRAGMA synchronous = FULL")
             if validate_schema:
                 _validate_migration_state(connection, require_latest=True)
             return connection
@@ -359,11 +379,18 @@ class Database:
 
     @contextmanager
     def read(self) -> Iterator[sqlite3.Connection]:
+        """Open a snapshot that leaves the database's bytes untouched.
+
+        Reads set none of the write-path pragmas, so inspecting an artifact no
+        longer rewrites its journal-mode header and invalidates its recorded
+        digest. See `_connect` for why the connection is not `mode=ro`.
+        """
+
         if not self.exists():
             raise MinervaError(
                 "database_missing", "The Minerva database does not exist.", http_status=503
             )
-        connection = self.connect()
+        connection = self.connect(read_only=True)
         try:
             connection.execute("BEGIN")
             yield connection
@@ -503,13 +530,19 @@ class Database:
                 ) from error
             return int(row[0] or 0)
 
-    def integrity_check(self) -> tuple[bool, str]:
+    def integrity_check(self) -> tuple[bool, bool]:
+        """Report page integrity and foreign-key satisfaction separately.
+
+        Both are properties of the stored database. Doctor reports them as two
+        checks so `foreign_keys` means "the recorded references resolve" rather
+        than "this connection happens to have enforcement switched on", which
+        was only ever a statement about the connection doctor had just opened.
+        """
+
         with self.read() as connection:
-            result = str(connection.execute("PRAGMA integrity_check").fetchone()[0])
-            foreign_keys = list(connection.execute("PRAGMA foreign_key_check"))
-        if result != "ok" or foreign_keys:
-            return False, "SQLite integrity validation failed."
-        return True, "ok"
+            pages_ok = str(connection.execute("PRAGMA integrity_check").fetchone()[0]) == "ok"
+            references_ok = not list(connection.execute("PRAGMA foreign_key_check"))
+        return pages_ok, references_ok
 
     def backup_to(self, target: Path) -> None:
         _reject_unsafe_database_path(target)

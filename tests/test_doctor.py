@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
 
@@ -43,6 +44,48 @@ def test_doctor_reports_missing_database_without_creating_it(tmp_path: Path) -> 
     assert report.checks[0].name == "database"
     assert not report.checks[0].ok
     assert not database.path.exists()
+
+
+@pytest.mark.security
+def test_doctor_leaves_the_bytes_of_what_it_inspects_unchanged(lab: Lab, tmp_path: Path) -> None:
+    """Inspecting an artifact must not invalidate its recorded digest.
+
+    Opening a database read-write used to force `journal_mode = WAL`, rewriting
+    the header of anything not already in WAL. An operator who recorded a
+    backup's SHA-256 and then health-checked it got a different file back, which
+    breaks the byte-stable-artifact provenance the whole product rests on.
+    """
+
+    seed = lab.seed_claim()
+    lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    artifact = tmp_path / "artifact.db"
+    lab.database.backup_to(artifact)
+
+    # A standalone delete-journal copy is the shape an operator inspects: an
+    # archived artifact with no live sidecars.
+    with closing(sqlite3.connect(artifact)) as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        connection.execute("PRAGMA journal_mode = delete")
+        connection.commit()
+    before = artifact.read_bytes()
+    before_digest = sha256(before).hexdigest()
+
+    report = run_doctor(Database(artifact), deep=True)
+
+    after = artifact.read_bytes()
+    assert sha256(after).hexdigest() == before_digest, (
+        "doctor rewrote the database it was asked to inspect"
+    )
+    assert after == before
+    assert not sorted(tmp_path.glob("artifact.db-*")), "doctor left SQLite sidecars behind"
+    # The journal-mode check now reports what the file actually holds rather
+    # than the value the connection had just forced, so a delete-journal
+    # artifact is honestly reported as not being in WAL.
+    checks = _checks_by_name(report)
+    assert checks["wal"].message == "journal mode is delete"
+    assert not checks["wal"].ok
+    assert checks["foreign_keys"].ok
+    assert checks["foreign_keys"].message == "recorded references resolve"
 
 
 def test_fresh_database_passes_shallow_and_deep_doctor_checks(lab: Lab) -> None:
