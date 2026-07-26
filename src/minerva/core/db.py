@@ -12,8 +12,15 @@ from dataclasses import dataclass
 from hashlib import sha256
 from importlib import resources
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from minerva.core.durability import fsync_directory
 from minerva.core.errors import ConflictError, IntegrityError, MinervaError
+
+if TYPE_CHECKING:
+    # `doctor` imports this module, so the runtime import stays inside the
+    # functions that need it and only the annotation is resolved here.
+    from minerva.core.doctor import DoctorReport
 
 BUSY_TIMEOUT_MS = 5_000
 
@@ -233,6 +240,41 @@ def _publish_private_database(
             "database_path_invalid",
             "The database staging file could not be published safely.",
         ) from error
+    # The link created a new directory entry. Persist it before any caller
+    # records the publication, so an audit row can never survive a crash that
+    # the database it describes did not.
+    fsync_directory(target)
+
+
+def _require_backupable(
+    report: DoctorReport,
+    *,
+    invalid_code: str = "database_invalid",
+    invalid_message: str = "The database failed validation and cannot be backed up.",
+) -> None:
+    """Refuse a backup only for problems that make the data untrustworthy.
+
+    Gating on the whole report conflated three different situations under one
+    "failed validation" message: a genuinely corrupt database, an intact one
+    whose schema is merely out of date, and an intact one with loose permissions
+    or a non-WAL journal mode. Only the first is a reason to refuse a copy, and
+    the second deserves a code that says what to do about it.
+    """
+
+    from minerva.core.doctor import BACKUP_ADVISORY_CHECKS
+
+    failures = [
+        check
+        for check in report.checks
+        if not check.ok and check.name not in BACKUP_ADVISORY_CHECKS
+    ]
+    if any(check.name == "schema" for check in failures):
+        raise IntegrityError(
+            "database_migration_required",
+            "The database requires an explicit Minerva migration.",
+        )
+    if failures:
+        raise IntegrityError(invalid_code, invalid_message)
 
 
 def _require_standalone_backup(backup: Path) -> None:
@@ -551,14 +593,12 @@ class Database:
 
         from minerva.core.doctor import run_doctor
 
-        source_report = run_doctor(self, deep=True)
-        if not source_report.ok:
-            raise IntegrityError(
-                "database_invalid",
-                "The database failed validation and cannot be backed up.",
-            )
+        _require_backupable(run_doctor(self, deep=True))
 
-        source = self.connect()
+        # Reading through a write connection would force `journal_mode = WAL` and
+        # rewrite the header of the database being backed up, so a backup would
+        # alter its own source.
+        source = self.connect(read_only=True)
         destination: sqlite3.Connection | None = None
         staged = _create_private_database_file(target)
         try:
@@ -567,12 +607,11 @@ class Database:
             destination.commit()
             destination.close()
             destination = None
-            backup_report = run_doctor(Database(staged.path), deep=True)
-            if not backup_report.ok:
-                raise IntegrityError(
-                    "backup_invalid",
-                    "The backup failed post-copy validation.",
-                )
+            _require_backupable(
+                run_doctor(Database(staged.path), deep=True),
+                invalid_code="backup_invalid",
+                invalid_message="The backup failed post-copy validation.",
+            )
             _reject_destination_sidecars(target, code="backup_destination_sidecar_exists")
             _publish_private_database(staged, target, conflict_code="backup_exists")
         finally:

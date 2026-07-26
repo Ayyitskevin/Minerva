@@ -844,6 +844,80 @@ def test_concurrent_mutation_during_export_fails_and_cleans_files(
         )
 
 
+@pytest.mark.security
+def test_export_persists_directory_entries_before_recording_the_export(
+    lab: Lab,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A durable `brief_exports` row must never outlive the files it names.
+
+    Each artifact is fsynced, but its directory entry lives in the parent
+    directory and stays in the page cache until that directory is synced. If the
+    export were recorded first, a crash in between would leave an audited export
+    pointing at files that no longer exist.
+    """
+
+    scenario = _populate_brief(lab)
+    output_dir = tmp_path / "export"
+    order: list[str] = []
+    original_fsync = synthesis_module.os.fsync
+    original_transaction = lab.database.transaction
+
+    def recording_fsync(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            order.append("fsync_directory")
+        original_fsync(descriptor)
+
+    def recording_transaction() -> object:
+        order.append("record_export")
+        return original_transaction()
+
+    monkeypatch.setattr(synthesis_module.os, "fsync", recording_fsync)
+    monkeypatch.setattr(lab.database, "transaction", recording_transaction)
+
+    lab.synthesis.export_brief(
+        mission_id=scenario.seed.mission.id,
+        output_dir=output_dir,
+        identity=lab.identity,
+    )
+
+    assert "fsync_directory" in order, "the output directory was never fsynced"
+    assert order.index("fsync_directory") < order.index("record_export"), (
+        "the export was recorded before its directory entries were made durable"
+    )
+
+
+@pytest.mark.security
+def test_fulfillment_persists_directory_entries_before_reporting_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fulfillment reports success by its files existing, so they must be durable."""
+
+    output_dir = tmp_path / "fulfilled"
+    synced_directories = 0
+    original_fsync = synthesis_module.os.fsync
+
+    def counting_fsync(descriptor: int) -> None:
+        nonlocal synced_directories
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            synced_directories += 1
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(synthesis_module.os, "fsync", counting_fsync)
+
+    synthesis_module.write_research_request_artifacts(
+        output_dir=output_dir,
+        brief_json=b'{"brief":true}\n',
+        result_json=b'{"result":true}\n',
+    )
+
+    assert synced_directories == 1
+    assert (output_dir / "research-brief.json").is_file()
+    assert (output_dir / "research-result.json").is_file()
+
+
 def test_failed_exclusive_write_preserves_path_replacement(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

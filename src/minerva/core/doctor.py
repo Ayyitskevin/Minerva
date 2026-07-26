@@ -97,6 +97,20 @@ healthy after those triggers were dropped and the retraction row deleted.
 """
 
 
+BACKUP_ADVISORY_CHECKS = frozenset({"permissions", "wal"})
+"""Checks that describe configuration rather than the trustworthiness of data.
+
+A backup is refused when the data cannot be trusted, never because the file's
+permissions are loose or its journal mode is unusual. Those are precisely the
+databases an operator most wants a snapshot of before changing anything, and
+both conditions are reported again by `doctor` on the copy, so nothing is
+concealed by proceeding.
+
+Membership is deliberately a short allowlist: any check not named here blocks a
+backup, so a future check fails closed until someone decides otherwise.
+"""
+
+
 def run_doctor(database: Database, *, deep: bool = False) -> DoctorReport:
     checks: list[DoctorCheck] = []
     notices: list[DoctorNotice] = [_staging_remnant_notice(database)]

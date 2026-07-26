@@ -573,6 +573,121 @@ was asked to inspect". 637 tests, 90.21% branch coverage.
 
 **Rollback.** Pure code and tests; revert the commit.
 
+### Slice 10 — publication durability (plan 2, issue 5, COMPLETE)
+
+**User outcome.** A file Minerva reports as published survives a crash that
+immediately follows the report.
+
+**The gap.** Publishing makes a file's *contents* durable but not the directory
+entry naming it. There was exactly one `fsync` in the whole source tree (the
+export file descriptor in `synthesis/service.py`) and none in `core/`, so a
+crash right after a successful `minerva backup` could leave a committed
+`database.backup.created` audit row describing a file that no longer existed.
+
+**Fix.** `minerva/core/durability.py` (new) provides `fsync_directory`, called
+from `_publish_private_database` — one place, covering initialization, backup,
+and restore, so the guarantee is structural rather than something each new
+caller must remember. The two export paths sync their already-open directory
+descriptor directly.
+
+**Ordering is the substance of the fix.** The directory is synced *before* the
+operation records that it happened: before the `brief_exports` transaction on
+export, before returning success on fulfillment, before any caller of
+`_publish_private_database` audits the publication. The regressions assert that
+ordering, not merely that an fsync occurred.
+
+**Tests.** Three new security-marked regressions, all verified to fail on the
+pre-fix source:
+
+| Test | Pre-fix failure |
+| --- | --- |
+| `test_export_persists_directory_entries_before_recording_the_export` | `the output directory was never fsynced` / `assert 'fsync_directory' in ['record_export']` |
+| `test_fulfillment_persists_directory_entries_before_reporting_success` | `assert 0 == 1` |
+| `test_publication_persists_the_new_directory_entry` | `fresh initialization did not persist its directory entry` |
+
+640 tests, 90.23% branch coverage, 181 security-marked. The static gate now
+scans 50 files.
+
+**Honest limit, stated in SECURITY.md and DECISIONS.md.** This was verified
+structurally, not by simulating power loss — the same caveat plan 2 section 28
+recorded for the original finding. The tests prove the sync happens and happens
+before success is recorded; they do not prove behaviour across a real crash.
+SECURITY.md states what is still not covered: no multi-file export atomicity,
+nothing about SQLite's own write path (`synchronous = FULL` is SQLite's
+contract), and no defence against hardware that acknowledges `fsync` without
+persisting.
+
+**`fsync` failures propagate** rather than being suppressed: a filesystem that
+cannot sync a directory cannot support the durability the operation is about to
+claim.
+
+**Files changed.** `src/minerva/core/durability.py` (new),
+`src/minerva/core/db.py`, `src/minerva/synthesis/service.py`,
+`tests/test_database.py`, `tests/test_synthesis.py`, `SECURITY.md`,
+`docs/DECISIONS.md`.
+
+**Migration status.** None.
+
+**Rollback.** Pure code, tests, and docs; revert the commit.
+
+### Slice 11 — backup refuses only what it should (plan 2, issue 6, COMPLETE)
+
+**User outcome.** An intact database can be backed up, and a refusal says what
+is actually wrong.
+
+**Reproduced first, and wider than the finding described.** `backup_to` gated
+on the whole `DoctorReport`, so one message covered three situations:
+
+| Source database | Before | After |
+| --- | --- | --- |
+| intact, schema 3 (the pre-upgrade state) | `database_invalid` "failed validation" | `database_migration_required` |
+| intact, group-readable (0644) | `database_invalid` | backs up; `doctor` still reports the permissions |
+| intact, delete-journal | `database_invalid` | backs up; source left byte-identical |
+| dropped `audit_no_update` trigger | `database_invalid` | `database_invalid` (unchanged) |
+
+`restore_from` already distinguished the outdated-schema case, so this was the
+Phase 0 wave-A masking fix (F-OPS-2) surviving in the sibling path.
+
+**Slice 9 regression found and repaired.** Making doctor report the real
+journal mode meant a delete-journal database started failing the `wal` check,
+which `backup_to` turned into `database_invalid`. Before slice 9 that database
+was silently converted to WAL and backed up. Neither behaviour was right;
+recorded in DECISIONS rather than quietly folded in.
+
+**Second defect found while fixing it.** `backup_to` read its source through a
+write connection, so copying a delete-journal database rewrote that database's
+header. It now reads through the same non-mutating connection every other read
+path uses, and a regression asserts the source is byte-identical afterwards.
+
+**Design.** `doctor.BACKUP_ADVISORY_CHECKS = {"permissions", "wal"}` names the
+checks that describe configuration rather than trustworthy data; everything
+else blocks, so a future check fails closed until someone decides otherwise.
+`_require_backupable` applies it to both the pre-copy and post-copy reports.
+
+**Scope held.** Permitting an outdated database to be backed up outright would
+be more useful, but deep doctor is not meaningful against an older schema (the
+required-trigger set is derived from the packaged migrations, so a schema-3
+database legitimately lacks migration 0004's triggers), and a weaker "raw copy"
+validation tier belongs with decision gate **D-11**. The honest refusal ships
+now; the capability stays gated.
+
+**Tests.** Five new regressions; four verified to fail on the pre-fix source.
+The fifth (`test_backup_still_refuses_a_database_whose_data_cannot_be_trusted`)
+passes before and after by design — it guards the relaxation from going too
+far, so it is a guard rather than a defect witness.
+
+**Files changed.** `src/minerva/core/db.py`, `src/minerva/core/doctor.py`,
+`tests/test_database.py`, `docs/DECISIONS.md`.
+
+**Migration status.** None.
+
+**Security impact.** No integrity check weakened — the advisory allowlist has
+exactly two members, both configuration, and the blocking default is
+fail-closed. Removes a false corruption report and stops a backup from
+mutating its source.
+
+**Rollback.** Pure code and tests; revert the commit.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
@@ -695,26 +810,27 @@ blocked: plan 2 section 19 lists twelve ordered Phase 0C issues, every one
 traceable to a reproduced finding. Slice 7 completed issues 1-2; slice 8
 completed issue 3.
 
-Slices 7-9 completed issues 1-4. The next slice is **issue 5** — directory
-fsync after every exclusive publication (F2-CORE-3 / F-OPS-6). There is
-exactly one `fsync` in the whole source tree (the export file descriptor,
-`synthesis/service.py`) and none in `core/`, so the directory entry created
-by `os.link` at publication lives only in the page cache: a crash right
-after `minerva backup`, `restore`, or `init` reports success can lose the
-published file. Backup's ordering makes it worse — the
-`database.backup.created` audit event is committed durably to the source
-database after the non-durably published target. Fix: fsync the parent
-directory after each `_publish_private_database`, plus the export and
-fulfillment output directories; state the resulting durability contract in
-SECURITY.md, including what it still does not cover (a crash inside
-SQLite's own WAL window is SQLite's contract, not Minerva's). Regression:
-fault injection at the publication boundary. Note this is the one finding
-verified structurally rather than by simulating power loss, and the slice
-should say so rather than claim more.
+Slices 7-11 completed issues 1-6. The next slice is **issue 7** — the
+mission-wide preflight has no text-storage accounting (F2-SYNTHESIS-2).
+`_preflight_synthesis`'s mission-wide branch bounds record counts (50k),
+reference counts (20k), and snapshot bytes (20MiB), but never accounts for
+quote or statement text, unlike the claim-scoped branch. Evidence quotes may
+be 100,000 bytes each and may repeat the same snapshot range, so aggregate
+packet text is effectively unbounded while snapshot bytes stay small.
+Assembly then materializes everything, and when canonical JSON exceeds
+`MAX_RESEARCH_PACKET_BYTES` the size `ValueError` is swallowed by a blanket
+`except ValueError` and reported as `packet_integrity_invalid` — a tamper
+alarm for a completely intact database, and one that wedges mission-wide
+export permanently. Reproduced in the plan sweep with 215 cards quoting the
+same 99,001-byte range: 21.3 MB of aggregate quote text against 99 KB of
+snapshots; the claim-scoped path refuses the same data honestly with
+`brief_work_limit`. Fix: add mission-scoped materialized-text accounting to
+the mission-wide branch mirroring `_preflight_claim_synthesis`, and
+distinguish the size error from validation errors so oversized-but-intact
+never reports as tampering.
 
-Then issues 6-7 (backup schema honesty, mission-wide preflight text
-accounting), issues 8-10 (scope pinning, honest web pagination, test-suite
-honesty gaps), issue 11 (the low sweep), issue 12 (interrupt audit, helper
+Then issues 8-10 (scope pinning, honest web pagination, test-suite honesty
+gaps), issue 11 (the low sweep), issue 12 (interrupt audit, helper
 consolidation, release tag, coverage ratchet).
 
 Still awaiting Kevin, and not to be started without a recorded decision:

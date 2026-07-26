@@ -270,3 +270,61 @@
   satisfaction separately, so `foreign_keys` means "the recorded references
   resolve", a property of the database. Both pragmas were already being run;
   only one of them was being reported.
+
+## Publication durability (plan 2, issue 5)
+
+- Publishing a file makes its contents durable but not the directory entry
+  that names it: that entry stays in the page cache until the directory is
+  synced. There was exactly one `fsync` in the whole source tree (the export
+  file descriptor) and none in `core/`, so a crash right after a successful
+  `minerva backup` could leave a committed `database.backup.created` audit row
+  describing a file that no longer existed.
+- The barrier lives in `_publish_private_database`, not at its three call
+  sites. Initialization, backup, and restore all publish through that one
+  `os.link`, so putting it there makes the guarantee structural rather than
+  something each new caller must remember.
+- **Ordering is the point.** The directory is synced before the operation
+  records that it happened — before the `brief_exports` transaction on export,
+  before returning success on fulfillment. A durable audit row can then never
+  outlive the artifact it describes. The regressions assert that ordering, not
+  merely that an fsync occurred.
+- `fsync` failures propagate rather than being suppressed. A filesystem that
+  cannot sync a directory cannot support the durability the operation is about
+  to claim, and Minerva does not report a success it cannot stand behind.
+- **This was verified structurally, not by simulating power loss.** The tests
+  prove the sync happens and happens before the success is recorded; they do
+  not prove behaviour across a real crash, and SECURITY.md states the limits:
+  no multi-file export atomicity, no coverage of SQLite's own write path, and
+  no defence against hardware that acknowledges `fsync` without persisting.
+
+## Backup refuses only what it should (plan 2, issue 6)
+
+- `backup_to` gated on the whole `DoctorReport` and mapped every failure to
+  `database_invalid` ("The database failed validation and cannot be backed
+  up"). Measured, that one message covered three different situations: a
+  genuinely corrupt database, an intact one whose schema was merely out of
+  date, and an intact one with loose permissions or a non-WAL journal mode.
+  Only the first is a reason to refuse a copy.
+- **Outdated schema now reports `database_migration_required`**, matching what
+  `restore_from` already did. Permitting the backup outright would be the more
+  operator-friendly answer, but running deep doctor against an older schema is
+  not meaningful — the required-trigger set is derived from the packaged
+  migrations, so a schema-3 database legitimately lacks migration 0004's
+  triggers — and a weaker "raw copy" validation tier belongs with decision gate
+  D-11, which already covers restoring pre-upgrade backups. The honest refusal
+  ships now; the capability stays gated.
+- **Configuration problems no longer block a backup.** `permissions` and `wal`
+  are listed in `doctor.BACKUP_ADVISORY_CHECKS`: a loose-permission or
+  delete-journal database is exactly the one an operator most wants to copy
+  before touching anything, and `doctor` reports both conditions on the copy
+  too, so proceeding conceals nothing. Membership is a short allowlist, so a
+  future check blocks backups until someone decides otherwise.
+- **This slice also repairs a regression slice 9 introduced.** Making doctor
+  report the real journal mode meant a delete-journal database began failing
+  the `wal` check, which `backup_to` then turned into `database_invalid`.
+  Before slice 9 that database was silently converted to WAL and backed up.
+  Neither behaviour was right; a backup now succeeds and alters nothing.
+- **A backup no longer rewrites its own source.** `backup_to` read through a
+  write connection, which forced `journal_mode = WAL` and rewrote the header of
+  the database being copied. It now reads through the same non-mutating
+  connection every other read path uses.
