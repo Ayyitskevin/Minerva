@@ -648,3 +648,44 @@ Issue 11 is now complete. Issue 12 is the last Phase 0C item.
   effect on 3.14 for the first time in CI, not here.
 
 Phase 0C is complete. Everything remaining is gated on a decision from Kevin.
+
+## Two claims nothing enforced (post-Phase-0C verification)
+
+Phase 0C closed every issue plan 2 named, and everything beyond it is gated. So
+rather than start gated work, the tree was checked against its own claims the way
+plan 2 checked the state file before trusting it. Structure held — schema 4, 15
+tables, 14 indexes, 30 triggers, exactly as documented; the demo builds and
+`doctor --deep` passes all eleven checks with zero notices. Two claims did not.
+
+- **Two contract constants were wired to nothing.** `SOURCE_DIGEST_ALGORITHM` and
+  `EXPORT_DIGEST_ALGORITHM` sat beside `CITATION_SCHEME` in `research_packet.py`
+  looking like the source of truth for the packet's integrity block, while the
+  emitter in `synthesis/service.py` carried its own string literals — and
+  imported `CITATION_SCHEME` from that same module, which is what made the
+  inconsistency easy to miss. Measured: corrupting both constants to obvious
+  nonsense left all 689 tests passing. A maintainer changing them would have
+  believed they changed the contract, and nothing would have happened.
+
+  They are now `Literal`-annotated, matching the pattern
+  `RESEARCH_REQUEST_SCHEMA_VERSION` already established, and the emitter
+  references them. Both layers now catch a wrong value: corrupting them fails 40
+  tests at runtime, and mypy rejects the assignment outright. The golden fixtures
+  are byte-identical, so this changed no output.
+
+- **The manifest test named truthfulness and checked a dict.**
+  `test_capability_manifest_is_versioned_and_truthful` pins the whole document,
+  which catches an unintended change but not an untrue one. Measured: advertising
+  `research.nonexistent.v9.teleport.cli` — a capability naming a verb that does
+  not exist — passed it. `minerva.capabilities.v2` is what a consumer reads to
+  decide what Minerva can do, so an entry naming nothing is a false statement to
+  that consumer, and this was the surface slice 16 had just added two entries to.
+
+  A second test now holds the `.cli` entries to a declared correspondence
+  between capability and CLI verb. Both directions fail: a `.cli` capability
+  missing from the table, and a table entry naming a verb absent from the parser.
+  Both branches were verified by breaking each in turn.
+
+All six CLI-backed capabilities were confirmed to map to real verbs before the
+test was written, so this enforces a property that already held rather than
+fixing a live falsehood. That distinction is the point — the manifest was true
+and unguarded, and it is the guard that was missing.

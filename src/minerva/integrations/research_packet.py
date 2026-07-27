@@ -23,8 +23,14 @@ from minerva.integrations.canonical_json import (
 
 RESEARCH_PACKET_SCHEMA_VERSION: Literal["minerva.research-brief.v2"] = "minerva.research-brief.v2"
 CITATION_SCHEME = "utf8-byte-offset-v1"
-SOURCE_DIGEST_ALGORITHM = "sha256"
-EXPORT_DIGEST_ALGORITHM = "sha256-canonical-json-v1"
+# Annotated `Literal` so the constant and the `IntegrityRecord` field below are
+# checked against each other by mypy, and used by the emitter in
+# `synthesis.service` so a wrong value fails packet validation rather than
+# shipping. Both were previously plain strings that nothing referenced while the
+# emitter carried its own copies: they read as the contract's source of truth and
+# were wired to nothing, so changing one would have silently done nothing at all.
+SOURCE_DIGEST_ALGORITHM: Literal["sha256"] = "sha256"
+EXPORT_DIGEST_ALGORITHM: Literal["sha256-canonical-json-v1"] = "sha256-canonical-json-v1"
 # Shared with the file adapter, which classifies this exact envelope failure.
 EXPORT_DIGEST_MISMATCH_MESSAGE = "packet export digest does not match the canonical brief"
 MAX_RESEARCH_PACKET_BYTES = 20_971_520

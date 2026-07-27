@@ -19,7 +19,9 @@ from minerva.core.types import Clock, IdentityContext, IdFactory, new_id, utc_no
 from minerva.evidence.integrity import new_snapshot_cache, verify_evidence_references
 from minerva.integrations.research_packet import (
     CITATION_SCHEME,
+    EXPORT_DIGEST_ALGORITHM,
     RESEARCH_PACKET_SCHEMA_VERSION,
+    SOURCE_DIGEST_ALGORITHM,
     ResearchPacketTooLargeError,
     build_research_packet,
     serialize_research_packet,
@@ -1383,8 +1385,8 @@ def _assemble_brief(
         "audit_references": audit_references,
         "integrity": {
             "citation_scheme": CITATION_SCHEME,
-            "source_digest_algorithm": "sha256",
-            "export_digest_algorithm": "sha256-canonical-json-v1",
+            "source_digest_algorithm": SOURCE_DIGEST_ALGORITHM,
+            "export_digest_algorithm": EXPORT_DIGEST_ALGORITHM,
             "material_statement_policy": (
                 "Findings, calculations, and recommendations require exact citations; "
                 "claims are labeled propositions under evaluation; assumptions and "

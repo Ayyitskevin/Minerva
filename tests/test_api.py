@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
@@ -10,6 +11,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from minerva.cli.main import build_parser
 from minerva.core.db import Database
 from minerva.core.types import local_identity
 from minerva.evidence.service import EvidenceService
@@ -245,6 +247,66 @@ def test_capability_manifest_is_versioned_and_truthful(client: TestClient) -> No
             "assistant_candidates": 3,
         },
     }
+
+
+# Every capability the manifest advertises as CLI-backed, and the verb that has
+# to exist for that advertisement to be true. This table is the declared
+# correspondence: the test below fails both when a `.cli` capability is missing
+# from it and when a verb named here is absent from the parser, so neither side
+# can move alone.
+_CLI_BACKED_CAPABILITIES = {
+    "research.packet.v2.verify.cli": "packet verify",
+    "research.packet.v2.inspect.cli": "packet inspect",
+    "research.request.v1.verify.cli": "request verify",
+    "research.request.v1.fulfill.cli": "request fulfill",
+    "assist.finding_candidates.preview.cli": "assist finding-candidates",
+    "assist.finding_candidates.invoke.cli.byok.optional": "assist finding-candidates",
+}
+
+
+def _cli_verbs(parser: argparse.ArgumentParser, prefix: str = "") -> set[str]:
+    found: set[str] = set()
+    for action in parser._actions:
+        if not isinstance(action, argparse._SubParsersAction):
+            continue
+        for name, subparser in action.choices.items():
+            path = f"{prefix} {name}".strip()
+            if not any(
+                isinstance(child, argparse._SubParsersAction) for child in subparser._actions
+            ):
+                found.add(path)
+            found |= _cli_verbs(subparser, path)
+    return found
+
+
+def test_capability_manifest_cli_entries_name_verbs_that_exist(client: TestClient) -> None:
+    """A `.cli` capability must be backed by a CLI verb that actually exists.
+
+    The manifest test above pins the document, which catches an unintended
+    change but not an untrue one: advertising
+    `research.nonexistent.v9.teleport.cli` passed it, because pinning a string
+    says nothing about whether the surface behind it is real. `capabilities.v2`
+    is what a consumer reads to decide what Minerva can do, so an entry that
+    names nothing is a false statement to that consumer.
+    """
+
+    advertised = {
+        entry
+        for entry in client.get("/api/v1/capabilities").json()["capabilities"]
+        if ".cli" in entry
+    }
+    verbs = _cli_verbs(build_parser())
+
+    assert verbs, "the parser exposes no verbs, so this test would prove nothing"
+    assert advertised == set(_CLI_BACKED_CAPABILITIES), (
+        "a CLI-backed capability was added or removed without updating the declared correspondence"
+    )
+    missing = sorted(
+        f"{capability} -> minerva {verb}"
+        for capability, verb in _CLI_BACKED_CAPABILITIES.items()
+        if verb not in verbs
+    )
+    assert not missing, f"manifest advertises CLI surfaces that do not exist: {missing}"
 
 
 def test_strict_dto_rejects_unknown_fields_and_never_reflects_input(client: TestClient) -> None:
