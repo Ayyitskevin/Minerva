@@ -1171,6 +1171,60 @@ weakened, and the golden fixtures prove the wire bytes are unchanged.
 **Rollback.** Revert the commit. The consolidation is the only structural change
 and it is behaviour-preserving by fixture equality.
 
+### Slice 19 — post-Phase-0C verification (unplanned, COMPLETE)
+
+**Why this exists.** Phase 0C closed every issue plan 2 named and everything
+beyond it is gated, so there was no planned ungated work left. Rather than start
+gated work or stop, the tree was checked against its own claims — the same move
+plan 2 made before trusting this file. Twelve slices had just landed; everything
+gated builds on them.
+
+**What held.** Schema 4, 15 tables, 14 indexes, 30 triggers, matching the
+documented figures exactly. The demo builds end to end and `doctor --deep`
+returns all eleven checks green with zero notices. All six CLI-backed manifest
+capabilities map to real verbs.
+
+**What did not, measured before and after:**
+
+| | Before | After |
+| --- | --- | --- |
+| corrupt both digest-algorithm constants | **689 passed — provably dead** | 40 tests fail |
+| the same, under mypy | **no error** | `Incompatible types in assignment` |
+| advertise a `.cli` capability for a nonexistent verb | **test passed** | test fails |
+| declare a capability whose verb is later removed | **test passed** | test fails |
+
+**The constants looked authoritative and were wired to nothing.**
+`SOURCE_DIGEST_ALGORITHM` and `EXPORT_DIGEST_ALGORITHM` sat next to
+`CITATION_SCHEME` in `research_packet.py` while the emitter kept its own string
+literals — and imported `CITATION_SCHEME` from that same module, which is exactly
+what made the gap invisible. They are now `Literal`-annotated per the
+`RESEARCH_REQUEST_SCHEMA_VERSION` pattern and referenced by the emitter, so a
+wrong value fails at both the type and runtime layers. Golden fixtures
+byte-identical: no output changed.
+
+**The manifest test named a property it did not check.** It pinned the document,
+which catches an unintended change but not an untrue one. A capability naming a
+verb that does not exist passed it — on the surface slice 16 had just added two
+entries to. The new test holds `.cli` entries to a declared correspondence and
+fails in both directions.
+
+**Evidence quality.** Neither finding was a live falsehood: the constants agreed
+with the emitter and every advertised verb existed. These are **guards for
+properties that already held**, and are recorded as such rather than counted as
+defect fixes. What was defective was the absence of the guard — the same class as
+slice 15's "the suite asserts more than it delivers" and slice 17's
+test-enforced README table.
+
+**Tests.** 690 tests, 90.00% branch coverage. All eleven gates green.
+
+**Files changed.** `src/minerva/integrations/research_packet.py`,
+`src/minerva/synthesis/service.py`, `tests/test_api.py`, `docs/DECISIONS.md`.
+
+**Migration status.** None. **Security impact.** None directly; the manifest is a
+consumer-facing truthfulness surface and is now enforced rather than asserted.
+
+**Rollback.** Revert the commit; both changes are additive guards.
+
 ## Deviations from Fable's plan
 
 Each was verified against the code before deviating; none discards the
