@@ -631,21 +631,19 @@ Issue 11 is now complete. Issue 12 is the last Phase 0C item.
   five points can no longer disappear unnoticed. `CONTRIBUTING.md` records the
   rule that the floor is never lowered to make a red gate green.
 
-- **The release runbook exists; the tag does not.** `CONTRIBUTING.md` now carries
-  the release procedure and the commit-attribution convention, and `CHANGELOG.md`
-  records the observed gate evidence including one open verification. No tag was
-  created: `pyproject.toml` declares `0.2.0a1`, and plan 2 asks for `v0.2.0`.
-  Those disagree, and reconciling them is a product decision — dropping the `a1`
-  says the pre-release period is over. Tagging is also outward-facing and a tag
-  is never moved once published, so it waits for Kevin rather than being resolved
-  by picking the version that makes the plan text true.
+- **The release runbook and `v0.2.0a1` tag both exist.** Kevin chose the
+  pre-release tag that exactly matches `pyproject.toml`, preserving `v0.2.0` for
+  a later product decision. `CONTRIBUTING.md` carries the release procedure and
+  commit-attribution convention, and `CHANGELOG.md` records the observed gate
+  evidence. The annotated GitHub tag peels to merge commit `b162573`; it is never
+  moved or deleted.
 
-- **Python 3.14 is unverified locally, and is recorded that way.** Only
-  `3.14.0rc2` is available here, and the pinned pydantic fails on it with
-  `_eval_type() got an unexpected keyword argument 'prefer_fwd_module'`. CI
-  installs a released 3.14.x where the suite passes. This is an environment
-  limitation rather than a known defect, and the coverage ratchet therefore takes
-  effect on 3.14 for the first time in CI, not here.
+- **Python 3.14 is verified on a released interpreter.** The original development
+  machine exposed only `3.14.0rc2`, where the pinned pydantic failed before the
+  suite could run. CI later passed on released 3.14.6, and the clean release-tag
+  verification repeated all eleven gates locally on Python 3.14.6: 689 tests and
+  90.00% branch coverage. The rc-only failure remains an environment mismatch,
+  not a Minerva defect.
 
 Phase 0C is complete. Everything remaining is gated on a decision from Kevin.
 
