@@ -39,8 +39,9 @@ migration race reporting `migration_failed` where the truth was
 interrupt handling entirely.
 
 The release tag is published. No ungated implementation work remains. The
-only Phase 0C integration hold is mandatory human review and merge of PR #29
-at exact green head `4373cd3`; see **Next task**.
+only Phase 0C integration hold is mandatory human review and merge of ready,
+CI-green PR #29. Its live PR/check record, rather than this versioned file, is
+authoritative for the current exact head; see **Next task**.
 
 No decision gate beyond D-9 has been entered; none may be until Kevin
 records it.
