@@ -11,7 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TextIO
 
-from minerva.core.errors import MinervaError
+from minerva.core.errors import MinervaError, OperationalError
 
 EXIT_OK = 0
 EXIT_INTERNAL = 1
@@ -66,6 +66,9 @@ def run_safely(action: Callable[[], Outcome]) -> int:
         outcome = action()
         emit_json(outcome.payload)
         return outcome.exit_code
+    except OperationalError as error:
+        emit_error(error.code, error.public_message)
+        return EXIT_OPERATIONAL
     except MinervaError as error:
         emit_error(error.code, error.public_message)
         return EXIT_DOMAIN

@@ -16,7 +16,13 @@ from conftest import SequenceIds, fixed_clock
 from minerva.core.audit import AuditRecorder, list_audit_events
 from minerva.core.db import Database, Migration, latest_schema_version
 from minerva.core.doctor import run_doctor
-from minerva.core.errors import ConflictError, IntegrityError, MinervaError, NotFoundError
+from minerva.core.errors import (
+    ConflictError,
+    IntegrityError,
+    MinervaError,
+    NotFoundError,
+    OperationalError,
+)
 from minerva.core.operations import OperationsService
 from minerva.core.types import ActorKind, IdentityContext
 from minerva.research.service import ResearchService
@@ -494,6 +500,78 @@ def test_publication_persists_the_new_directory_entry(
     Database.restore_from(tmp_path / "backup.db", tmp_path / "restored.db")
     assert synced == ["directory"], "restore did not persist its directory entry"
     assert (tmp_path / "restored.db").is_file()
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("operation", ["initialize", "backup", "restore"])
+def test_publication_sync_failure_reports_unknown_and_preserves_valid_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    target = tmp_path / "published.db"
+    source = tmp_path / "source.db"
+    archive = tmp_path / "archive.db"
+    if operation != "initialize":
+        Database(source).initialize()
+    if operation == "restore":
+        Database(source).backup_to(archive)
+
+    def fail_directory_sync(_: Path) -> None:
+        raise OSError("synthetic publication-directory fsync failure")
+
+    monkeypatch.setattr(db_module, "fsync_directory", fail_directory_sync)
+
+    with pytest.raises(OperationalError) as caught:
+        if operation == "initialize":
+            Database(target).initialize()
+        elif operation == "backup":
+            Database(source).backup_to(target)
+        else:
+            Database.restore_from(archive, target)
+
+    assert caught.value.code == "database_publication_durability_unknown"
+    assert caught.value.http_status == 503
+    assert caught.value.public_message == (
+        "The database target may have been created, but its directory entry could not be "
+        "confirmed durable. Inspect the target before retrying."
+    )
+    assert target.is_file()
+    assert run_doctor(Database(target), deep=True).ok
+    assert list(tmp_path.glob(f".{target.name}.minerva-*.tmp*")) == []
+
+
+@pytest.mark.security
+def test_backup_publication_sync_failure_records_no_success_event(
+    database: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "backup.db"
+    identity = IdentityContext(
+        actor_id="os-user:publication-test",
+        actor_kind=ActorKind.OS_USER,
+        run_id="run_" + "7" * 32,
+        purpose="publication failure audit ordering",
+    )
+
+    def fail_directory_sync(_: Path) -> None:
+        raise OSError("synthetic publication-directory fsync failure")
+
+    monkeypatch.setattr(db_module, "fsync_directory", fail_directory_sync)
+
+    with pytest.raises(OperationalError) as caught:
+        OperationsService(database).backup(target=target, identity=identity)
+
+    assert caught.value.code == "database_publication_durability_unknown"
+    assert target.is_file()
+    with database.read() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM audit_events WHERE event_type = 'database.backup.created'"
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_backup_restore_preserves_state_and_owner_only_permissions(

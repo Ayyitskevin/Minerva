@@ -15,7 +15,7 @@ import minerva.integrations.research_packet as packet_module
 import minerva.synthesis.service as synthesis_module
 from conftest import ClaimSeed, Lab, SequenceIds, fixed_clock
 from minerva.core.audit import AuditRecorder
-from minerva.core.errors import ConflictError, IntegrityError, NotFoundError
+from minerva.core.errors import ConflictError, IntegrityError, NotFoundError, OperationalError
 from minerva.core.types import IdentityContext
 from minerva.evidence.models import EvidenceCard, EvidenceStance
 from minerva.integrations.research_packet import (
@@ -1020,13 +1020,22 @@ def test_export_persists_directory_entries_before_recording_the_export(
 
     scenario = _populate_brief(lab)
     output_dir = tmp_path / "export"
+    parent_metadata = os.stat(tmp_path, follow_symlinks=False)
+    parent_identity = (parent_metadata.st_dev, parent_metadata.st_ino)
     order: list[str] = []
     original_fsync = synthesis_module.os.fsync
     original_transaction = lab.database.transaction
 
     def recording_fsync(descriptor: int) -> None:
-        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
-            order.append("fsync_directory")
+        metadata = os.fstat(descriptor)
+        if stat.S_ISDIR(metadata.st_mode):
+            identity = (metadata.st_dev, metadata.st_ino)
+            if identity == parent_identity:
+                order.append("fsync_output_parent")
+            else:
+                output_metadata = os.stat(output_dir, follow_symlinks=False)
+                assert identity == (output_metadata.st_dev, output_metadata.st_ino)
+                order.append("fsync_output_directory")
         original_fsync(descriptor)
 
     def recording_transaction() -> object:
@@ -1042,27 +1051,33 @@ def test_export_persists_directory_entries_before_recording_the_export(
         identity=lab.identity,
     )
 
-    assert "fsync_directory" in order, "the output directory was never fsynced"
-    assert order.index("fsync_directory") < order.index("record_export"), (
+    assert order[:2] == ["fsync_output_parent", "fsync_output_directory"]
+    assert order.index("fsync_output_directory") < order.index("record_export"), (
         "the export was recorded before its directory entries were made durable"
     )
 
 
 @pytest.mark.security
+@pytest.mark.parametrize("precreate_output", [False, True])
 def test_fulfillment_persists_directory_entries_before_reporting_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    precreate_output: bool,
 ) -> None:
     """Fulfillment reports success by its files existing, so they must be durable."""
 
     output_dir = tmp_path / "fulfilled"
-    synced_directories = 0
+    if precreate_output:
+        output_dir.mkdir()
+    parent_metadata = os.stat(tmp_path, follow_symlinks=False)
+    parent_identity = (parent_metadata.st_dev, parent_metadata.st_ino)
+    synced_directories: list[tuple[int, int]] = []
     original_fsync = synthesis_module.os.fsync
 
     def counting_fsync(descriptor: int) -> None:
-        nonlocal synced_directories
-        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
-            synced_directories += 1
+        metadata = os.fstat(descriptor)
+        if stat.S_ISDIR(metadata.st_mode):
+            synced_directories.append((metadata.st_dev, metadata.st_ino))
         original_fsync(descriptor)
 
     monkeypatch.setattr(synthesis_module.os, "fsync", counting_fsync)
@@ -1073,9 +1088,194 @@ def test_fulfillment_persists_directory_entries_before_reporting_success(
         result_json=b'{"result":true}\n',
     )
 
-    assert synced_directories == 1
+    output_metadata = os.stat(output_dir, follow_symlinks=False)
+    output_identity = (output_metadata.st_dev, output_metadata.st_ino)
+    assert synced_directories == [parent_identity, output_identity]
     assert (output_dir / "research-brief.json").is_file()
     assert (output_dir / "research-result.json").is_file()
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("precreate_output", [False, True])
+def test_output_parent_sync_failure_reports_unknown_before_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    precreate_output: bool,
+) -> None:
+    output_dir = tmp_path / "fulfilled"
+    if precreate_output:
+        output_dir.mkdir()
+    parent_metadata = os.stat(tmp_path, follow_symlinks=False)
+    parent_identity = (parent_metadata.st_dev, parent_metadata.st_ino)
+    original_fsync = synthesis_module.os.fsync
+
+    def fail_parent_fsync(descriptor: int) -> None:
+        metadata = os.fstat(descriptor)
+        if (
+            stat.S_ISDIR(metadata.st_mode)
+            and (
+                metadata.st_dev,
+                metadata.st_ino,
+            )
+            == parent_identity
+        ):
+            raise OSError("synthetic parent-directory fsync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(synthesis_module.os, "fsync", fail_parent_fsync)
+
+    with pytest.raises(OperationalError) as caught:
+        synthesis_module.write_research_request_artifacts(
+            output_dir=output_dir,
+            brief_json=b'{"brief":true}\n',
+            result_json=b'{"result":true}\n',
+        )
+
+    assert caught.value.code == "output_publication_durability_unknown"
+    assert output_dir.is_dir()
+    assert list(output_dir.iterdir()) == []
+
+
+@pytest.mark.security
+def test_export_parent_sync_failure_writes_nothing_and_records_no_audit(
+    lab: Lab,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = _populate_brief(lab)
+    output_dir = tmp_path / "export"
+    parent_metadata = os.stat(tmp_path, follow_symlinks=False)
+    parent_identity = (parent_metadata.st_dev, parent_metadata.st_ino)
+    original_fsync = synthesis_module.os.fsync
+
+    def fail_parent_fsync(descriptor: int) -> None:
+        metadata = os.fstat(descriptor)
+        identity = (metadata.st_dev, metadata.st_ino)
+        if stat.S_ISDIR(metadata.st_mode) and identity == parent_identity:
+            raise OSError("synthetic parent-directory fsync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(synthesis_module.os, "fsync", fail_parent_fsync)
+
+    with pytest.raises(OperationalError) as caught:
+        lab.synthesis.export_brief(
+            mission_id=scenario.seed.mission.id,
+            output_dir=output_dir,
+            identity=lab.identity,
+        )
+
+    assert caught.value.code == "output_publication_durability_unknown"
+    assert output_dir.is_dir()
+    assert list(output_dir.iterdir()) == []
+    with lab.database.read() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM brief_exports").fetchone()[0] == 0
+
+
+@pytest.mark.security
+def test_new_output_directory_parent_sync_failure_preserves_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "fulfilled"
+    displaced = tmp_path / "displaced-created-directory"
+    marker = output_dir / "operator-owned.txt"
+    parent_metadata = os.stat(tmp_path, follow_symlinks=False)
+    parent_identity = (parent_metadata.st_dev, parent_metadata.st_ino)
+    original_fsync = synthesis_module.os.fsync
+
+    def replace_then_fail(descriptor: int) -> None:
+        metadata = os.fstat(descriptor)
+        identity = (metadata.st_dev, metadata.st_ino)
+        if stat.S_ISDIR(metadata.st_mode) and identity == parent_identity:
+            output_dir.rename(displaced)
+            output_dir.mkdir()
+            marker.write_text("must remain unchanged", encoding="utf-8")
+            raise OSError("synthetic parent-directory fsync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(synthesis_module.os, "fsync", replace_then_fail)
+
+    with pytest.raises(OperationalError) as caught:
+        synthesis_module.write_research_request_artifacts(
+            output_dir=output_dir,
+            brief_json=b'{"brief":true}\n',
+            result_json=b'{"result":true}\n',
+        )
+
+    assert caught.value.code == "output_publication_durability_unknown"
+    assert marker.read_text(encoding="utf-8") == "must remain unchanged"
+    assert displaced.is_dir()
+    assert list(displaced.iterdir()) == []
+
+
+@pytest.mark.security
+def test_output_directory_sync_failure_cleans_export_files_and_audit(
+    lab: Lab,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = _populate_brief(lab)
+    output_dir = tmp_path / "export"
+    original_fsync = synthesis_module.os.fsync
+
+    def fail_output_fsync(descriptor: int) -> None:
+        metadata = os.fstat(descriptor)
+        if stat.S_ISDIR(metadata.st_mode) and output_dir.exists():
+            output_metadata = os.stat(output_dir, follow_symlinks=False)
+            if (metadata.st_dev, metadata.st_ino) == (
+                output_metadata.st_dev,
+                output_metadata.st_ino,
+            ):
+                raise OSError("synthetic output-directory fsync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(synthesis_module.os, "fsync", fail_output_fsync)
+
+    with pytest.raises(OperationalError) as caught:
+        lab.synthesis.export_brief(
+            mission_id=scenario.seed.mission.id,
+            output_dir=output_dir,
+            identity=lab.identity,
+        )
+
+    assert caught.value.code == "output_publication_durability_unknown"
+    assert output_dir.is_dir()
+    assert list(output_dir.iterdir()) == []
+    with lab.database.read() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM brief_exports").fetchone()[0] == 0
+
+
+@pytest.mark.security
+def test_output_directory_sync_failure_cleans_fulfillment_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "fulfilled"
+    original_fsync = synthesis_module.os.fsync
+
+    def fail_output_fsync(descriptor: int) -> None:
+        metadata = os.fstat(descriptor)
+        if stat.S_ISDIR(metadata.st_mode) and output_dir.exists():
+            output_metadata = os.stat(output_dir, follow_symlinks=False)
+            if (metadata.st_dev, metadata.st_ino) == (
+                output_metadata.st_dev,
+                output_metadata.st_ino,
+            ):
+                raise OSError("synthetic output-directory fsync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(synthesis_module.os, "fsync", fail_output_fsync)
+
+    with pytest.raises(OperationalError) as caught:
+        synthesis_module.write_research_request_artifacts(
+            output_dir=output_dir,
+            brief_json=b'{"brief":true}\n',
+            result_json=b'{"result":true}\n',
+        )
+
+    assert caught.value.code == "output_publication_durability_unknown"
+    assert output_dir.is_dir()
+    assert list(output_dir.iterdir()) == []
 
 
 def test_failed_exclusive_write_preserves_path_replacement(

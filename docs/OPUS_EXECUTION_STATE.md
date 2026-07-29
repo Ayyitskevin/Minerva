@@ -1342,10 +1342,25 @@ None. Slice 1 required no human decision.
 
 ## Next task
 
-**Phase 0C is complete.** Slices 7-18 closed plan 2 issues 1-12. Slice 18 took
-the last of them: F-AI-4 (interrupt-safe assist audit), F-DUP-2 (canonical-helper
-consolidation), F-TEST-3 (coverage floor 85 -> 88), and the documentation half of
-F-REL-1/2.
+**Phase 0C is complete after post-plan audit corrections.** Slices 7-18 were
+originally recorded as closing plan 2 issues 1-12, with slice 18 taking F-AI-4
+(interrupt-safe assist audit), F-DUP-2 (canonical-helper consolidation), F-TEST-3
+(coverage floor 85 -> 88), and the documentation half of F-REL-1/2. A later
+requirement-by-requirement Codex audit found three closure gaps behind that claim:
+
+- the release tag and durable release record still needed to be published and
+  reconciled (PR #28);
+- issue 1 lacked a direct CLI retraction-rendering witness and issue 10 lacked a
+  direct `sendmsg` network-guard witness (PR #30); and
+- issue 5 synced files inside a newly created output directory without first
+  making the directory name durable, and publication-barrier failures had no
+  explicit unknown-outcome contract (the final durability correction).
+
+Those follow-ups close the gaps rather than retroactively crediting slices 7-18
+with work they did not contain. On the combined tree all eleven gates pass: 703
+tests at 90.06% branch coverage, both distributions verified, installed-wheel
+smoke passed, static security passed over 51 files, 41 packages are compatible,
+and the diff is clean.
 
 **Kevin answered the tag question: tag `v0.2.0a1` as-is.** Plan 2 asked for
 `v0.2.0` while `pyproject.toml` declares `0.2.0a1`; rather than bump the version

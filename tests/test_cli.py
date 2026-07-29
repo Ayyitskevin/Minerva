@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+import minerva.core.db as db_module
+from minerva.cli._common import EXIT_OPERATIONAL
 from minerva.cli.main import build_parser, main
 from minerva.core.db import Database
 
@@ -31,6 +33,34 @@ def _identifier(result: dict[str, object], section: str, field: str = "id") -> s
     identifier = value[field]
     assert isinstance(identifier, str)
     return identifier
+
+
+@pytest.mark.security
+def test_cli_reports_unknown_database_publication_durability(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "research.db"
+
+    def fail_directory_sync(_: Path) -> None:
+        raise OSError("synthetic publication-directory fsync failure")
+
+    monkeypatch.setattr(db_module, "fsync_directory", fail_directory_sync)
+
+    assert main(("init", "--db", str(database), "--refuse-existing")) == EXIT_OPERATIONAL
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert json.loads(captured.err) == {
+        "error": {
+            "code": "database_publication_durability_unknown",
+            "message": (
+                "The database target may have been created, but its directory entry could not "
+                "be confirmed durable. Inspect the target before retrying."
+            ),
+        }
+    }
+    assert database.is_file()
 
 
 def _add_evidence(
