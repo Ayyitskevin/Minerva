@@ -235,7 +235,8 @@ def test_cli_vertical_slice_and_lifecycle(
         "--evidence",
         opposing,
     )
-    assert _identifier(finding, "finding").startswith("fnd_")
+    finding_id = _identifier(finding, "finding")
+    assert finding_id.startswith("fnd_")
 
     claim_show = _invoke(capsys, "claim", "show", "--db", str(database), "--claim", claim_id)
     claim_ledger = _invoke(capsys, "claim", "ledger", "--db", str(database), "--claim", claim_id)
@@ -278,6 +279,19 @@ def test_cli_vertical_slice_and_lifecycle(
 
     mission_list = _invoke(capsys, "mission", "list", "--db", str(database))
     assert len(mission_list["missions"]) == 1  # type: ignore[arg-type]
+    retraction_reason = "Superseded by a corrected analysis."
+    retracted = _invoke(
+        capsys,
+        "finding",
+        "retract",
+        "--db",
+        str(database),
+        "--finding",
+        finding_id,
+        "--reason",
+        retraction_reason,
+    )
+    assert retracted["status"] == "retracted"
     mission_show = _invoke(
         capsys,
         "mission",
@@ -288,6 +302,14 @@ def test_cli_vertical_slice_and_lifecycle(
         mission_id,
     )
     assert len(mission_show["source_snapshots"]) == 1  # type: ignore[arg-type]
+    rendered_findings = mission_show["findings"]
+    assert isinstance(rendered_findings, list)
+    rendered = next(item for item in rendered_findings if item["id"] == finding_id)
+    assert rendered["retracted"] is True
+    assert rendered["retraction_reason"] == retraction_reason
+    assert isinstance(rendered["retracted_at"], str)
+    assert rendered["retracted_at"].endswith("Z")
+    assert rendered["retracted_by"] == finding["finding"]["creator_id"]  # type: ignore[index]
 
     backup = tmp_path / "research.backup.db"
     _invoke(capsys, "backup", "--db", str(database), "--output", str(backup))
