@@ -1353,9 +1353,8 @@ F-REL-1/2.
 version and makes no product claim. `v0.2.0` remains available later, once a gated
 milestone such as D-1 lands.
 
-**The tag is created and verified, but could not be pushed from this session.**
-After PR #25 merged, the runbook in `CONTRIBUTING.md` was followed on the merge
-commit `b162573`:
+**The tag is created, verified, and published.** After PR #25 merged, the runbook
+in `CONTRIBUTING.md` was followed on the merge commit `b162573`:
 
 1. Clean tree, even with `main`. Confirmed.
 2. All eleven gates re-run on `b162573`: 689 passed, 90.00% branch coverage
@@ -1364,26 +1363,16 @@ commit `b162573`:
 3. `CHANGELOG.md` records that evidence.
 4. `version` is `0.2.0a1` and the tag matches it. No bump.
 5. Annotated tag `v0.2.0a1` created on `b162573`, message carrying the gate
-   evidence. **`git push origin v0.2.0a1` fails with HTTP 403 from the session's
-   git proxy.** Branch pushes from the same remote succeed, so this is a
-   ref-scope policy on tags, not a network fault or a bad tag. The proxy
-   documentation says to report a 403 rather than retry it, so it was retried
-   three times, diagnosed, and stopped rather than worked around.
-6. Verification done anyway, locally: a fresh clone checked out at `v0.2.0a1`
-   builds `minerva_research-0.2.0a1`, and both `verify_dist.py` and
-   `installed_smoke.py` pass against those artifacts.
+   evidence. The original session's HTTPS proxy refused tag refs with HTTP 403,
+   so that session stopped rather than routing around the policy.
+6. On 2026-07-28, a fresh detached checkout at `b162573` repeated all eleven
+   gates on released Python 3.14.6: 689 tests passed at 90.00% branch coverage,
+   both distributions verified, and installed-wheel smoke passed.
+7. The authorized SSH push then published `v0.2.0a1`. A remote-ref check returned
+   annotated tag object `ceb995a750644c561a3da20388badc345621b0ce`, peeling to
+   exact commit `b1625737345a8d3d017678d1f26ab11eedf9ff57`.
 
-**What Kevin needs to do.** From a checkout with push rights:
-
-```
-git fetch origin main
-git tag -a v0.2.0a1 b162573 -m "Minerva v0.2.0a1"   # or cherry-pick the message below
-git push origin v0.2.0a1
-```
-
-The full annotated message is reproduced in `CHANGELOG.md`'s gate-evidence table;
-the tag must point at `b162573`. Nothing depends on the tag existing — it is a
-record, and Phase 0C is complete without it.
+The release record is therefore complete. Nothing in Phase 0C remains open.
 
 Still awaiting Kevin, and not to be started without a recorded decision:
 

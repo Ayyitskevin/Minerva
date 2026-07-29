@@ -8,14 +8,21 @@ release here is a tag plus this record.
 
 ## Unreleased
 
+- Digest-algorithm constants now drive packet emission, and CLI capability claims
+  are checked against actual parser verbs.
+- Release records now reflect the published `v0.2.0a1` tag.
+
+## v0.2.0a1 — 2026-07-28
+
 `v0.2.0a1`, tagging commit `b162573`. `v0.2.0a1` was chosen over `v0.2.0`
 deliberately: it matches the declared version and makes no claim that the
 pre-release period is over.
 
-The annotated tag exists and was verified by building from a clean checkout of it,
-but **it has not been pushed**: the session that created it gets HTTP 403 from its
-git proxy on tag refs. Until someone with push rights publishes it, this entry is
-the release record and `b162573` is the commit it describes.
+The annotated tag is published on GitHub and peels to
+`b1625737345a8d3d017678d1f26ab11eedf9ff57`. Before publication, a fresh detached
+checkout of that exact commit repeated all eleven repository gates on Linux with
+Python 3.14.6: 689 tests passed at 90.00% branch coverage, the distributions
+verified, and installed-wheel smoke passed.
 
 ### Research record
 
