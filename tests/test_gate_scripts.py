@@ -428,6 +428,7 @@ def test_golden_regeneration_write_mode_restores_a_drifted_fixture(
         pytest.param("connect_ex", id="tcp_connect_ex"),
         pytest.param("create_connection", id="create_connection"),
         pytest.param("sendto", id="udp_sendto"),
+        pytest.param("sendmsg", id="udp_sendmsg"),
     ],
 )
 def test_outbound_network_guard_covers_every_entry_point(attempt: str) -> None:
@@ -449,11 +450,13 @@ def test_outbound_network_guard_covers_every_entry_point(attempt: str) -> None:
         if attempt == "create_connection":
             socket.create_connection(destination, timeout=0.2)
         else:
-            kind = socket.SOCK_DGRAM if attempt == "sendto" else socket.SOCK_STREAM
+            kind = socket.SOCK_DGRAM if attempt in {"sendto", "sendmsg"} else socket.SOCK_STREAM
             with closing(socket.socket(socket.AF_INET, kind)) as probe:
                 probe.settimeout(0.2)
                 if attempt == "sendto":
                     probe.sendto(b"probe", destination)
+                elif attempt == "sendmsg":
+                    probe.sendmsg([b"probe"], [], 0, destination)
                 else:
                     getattr(probe, attempt)(destination)
 
