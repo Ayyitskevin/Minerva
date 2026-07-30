@@ -18,6 +18,7 @@ from minerva import __version__
 from minerva.api.errors import install_exception_handlers
 from minerva.api.models import HealthRead, ReadinessRead, ReadyCheckRead
 from minerva.api.routes import MAX_REQUEST_BODY_BYTES, create_api_router
+from minerva.assist.adoption import AdoptionService
 from minerva.core.db import Database
 from minerva.core.doctor import run_doctor
 from minerva.core.errors import MinervaError
@@ -62,6 +63,7 @@ def create_app(db_path: str | Path, testing: bool = False) -> FastAPI:
     sources = SourceService(database)
     evidence = EvidenceService(database)
     synthesis = SynthesisService(database)
+    adoption = AdoptionService(database)
     templates = _templates()
 
     app = FastAPI(
@@ -147,6 +149,7 @@ def create_app(db_path: str | Path, testing: bool = False) -> FastAPI:
                 "claims": research.list_claims(mission_id, connection=connection),
                 "sources": sources.list_snapshots(mission_id, connection=connection),
                 "findings": research.list_findings(mission_id, connection=connection),
+                "agent_inferences": adoption.list_inferences(mission_id, connection=connection),
                 "page_title": "Mission review",
             }
         return templates.TemplateResponse(
@@ -160,6 +163,7 @@ def create_app(db_path: str | Path, testing: bool = False) -> FastAPI:
         with database.read() as connection:
             claim = research.get_claim(claim_id, connection=connection)
             ledger = evidence.ledger_for_claim(claim_id, connection=connection)
+            inferences = adoption.list_inferences_for_claim(claim_id, connection=connection)
             snapshots = {
                 entry.evidence.snapshot_id: sources.get_snapshot(
                     entry.evidence.snapshot_id,
@@ -174,6 +178,7 @@ def create_app(db_path: str | Path, testing: bool = False) -> FastAPI:
                 "claim": claim,
                 "ledger": ledger,
                 "snapshots": snapshots,
+                "agent_inferences": inferences,
                 "page_title": "Claim evidence ledger",
             },
         )

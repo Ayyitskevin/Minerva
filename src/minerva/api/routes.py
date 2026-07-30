@@ -35,6 +35,7 @@ from minerva.api.models import (
     SourceCollection,
     SourceImport,
     SourceSnapshotRead,
+    agent_inference_read,
     claim_read,
     evidence_read,
     finding_read,
@@ -42,6 +43,7 @@ from minerva.api.models import (
     question_read,
     snapshot_read,
 )
+from minerva.assist.adoption import AdoptionService
 from minerva.assist.service import (
     MAX_ASSISTANCE_CANDIDATES,
     MAX_ASSISTANCE_CONTEXT_BYTES,
@@ -286,6 +288,7 @@ def create_api_router(database: Database) -> APIRouter:
     sources = SourceService(database)
     evidence = EvidenceService(database)
     synthesis = SynthesisService(database)
+    adoption = AdoptionService(database)
     router = APIRouter(
         prefix="/api/v1",
         dependencies=[
@@ -314,7 +317,9 @@ def create_api_router(database: Database) -> APIRouter:
                 "claim.status.append",
                 "source.utf8_bytes.import",
                 "evidence.exact_byte_span.create",
+                "evidence.withdraw.cli",
                 "finding.create",
+                "finding.retract.cli",
                 "claim.evidence_ledger.read",
                 "brief.preview.markdown_json",
                 "brief.export.markdown_json",
@@ -328,6 +333,9 @@ def create_api_router(database: Database) -> APIRouter:
                 "web.review",
                 "assist.finding_candidates.preview.cli",
                 "assist.finding_candidates.invoke.cli.byok.optional",
+                "assist.inference.adopt.cli",
+                "assist.inference.retract.cli",
+                "finding.create.from_inference.cli",
             ],
             unavailable=[
                 "network.fetch",
@@ -640,13 +648,19 @@ def create_api_router(database: Database) -> APIRouter:
         cursor: _PageCursor = None,
     ) -> FindingCollection:
         after = _decode_cursor(cursor, kind="findings", scope=mission_id)
-        items, next_position = research.page_findings(
-            mission_id,
-            limit=limit,
-            after=after,
-        )
+        with database.read() as connection:
+            items, next_position = research.page_findings(
+                mission_id,
+                limit=limit,
+                after=after,
+                connection=connection,
+            )
+            # Adopted inferences are a distinctly-typed sibling array: they are
+            # never merged into the findings the page iterates over.
+            inferences = adoption.list_inferences(mission_id, connection=connection)
         return FindingCollection(
             items=[finding_read(item) for item in items],
+            agent_inferences=[agent_inference_read(item) for item in inferences],
             next_cursor=_encode_cursor(
                 kind="findings",
                 scope=mission_id,

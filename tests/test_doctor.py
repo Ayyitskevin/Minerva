@@ -10,10 +10,13 @@ import pytest
 
 import minerva.assist.service as assist_service_module
 import minerva.core.doctor as doctor_module
-from conftest import Lab, fixed_clock
+from conftest import ClaimSeed, Lab, fixed_clock
+from minerva.assist.adoption import AdoptionService
+from minerva.assist.models import FindingCandidate, ModelProvider, ProviderSelection
+from minerva.assist.service import AssistanceService
 from minerva.core.db import Database
 from minerva.core.doctor import DoctorCheck, DoctorReport, run_doctor
-from minerva.evidence.models import EvidenceStance
+from minerva.evidence.models import EvidenceCard, EvidenceStance
 from minerva.research.models import FindingStatus, StatementKind
 
 
@@ -520,3 +523,145 @@ def test_doctor_assistance_notice_tracks_the_recorded_event_name(lab: Lab) -> No
     report = run_doctor(lab.database, deep=True)
     notice = next(item for item in report.notices if item.name == "unfinished_assistance")
     assert notice.count == 1
+
+
+def _adopt_inference(
+    lab: Lab,
+    seed: ClaimSeed,
+    evidence: EvidenceCard,
+    *,
+    statement: str = "The bounded evidence supports a cautious adopted inference.",
+) -> str:
+    assistance = AssistanceService(lab.database, clock=fixed_clock, id_factory=lab.ids)
+    preview = assistance.preview_finding_candidates(
+        claim_id=seed.claim.id,
+        selection=ProviderSelection(ModelProvider.OPENAI, "test-model-1", "test"),
+        max_candidates=2,
+        max_output_tokens=512,
+    )
+    adoption = AdoptionService(lab.database, clock=fixed_clock, id_factory=lab.ids)
+    inference = adoption.adopt_inference(
+        preview=preview,
+        candidate_index=0,
+        candidate=FindingCandidate(
+            statement=statement,
+            statement_kind=StatementKind.AGENT_INFERENCE,
+            uncertainty="The evidence does not establish generality.",
+            evidence_ids=(evidence.id,),
+        ),
+        response_sha256=sha256(b"a fake provider response document").hexdigest(),
+        identity=lab.identity,
+    )
+    return inference.id
+
+
+def test_deep_doctor_verifies_adopted_inference_citations(lab: Lab) -> None:
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    _adopt_inference(lab, seed, evidence)
+
+    report = run_doctor(lab.database, deep=True)
+    checks = _checks_by_name(report)
+
+    assert report.ok
+    assert checks["inference_integrity"].ok
+    assert checks["inference_integrity"].message == "verified 1 agent inference(s)"
+
+
+def test_deep_doctor_detects_an_orphaned_inference_citation_after_trigger_drop(
+    lab: Lab,
+) -> None:
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    inference_id = _adopt_inference(lab, seed, evidence)
+    with lab.database.transaction() as connection:
+        connection.execute("DROP TRIGGER agent_inference_citations_no_delete")
+        connection.execute(
+            "DELETE FROM agent_inference_citations WHERE inference_id = ?",
+            (inference_id,),
+        )
+
+    report = run_doctor(lab.database, deep=True)
+    checks = _checks_by_name(report)
+
+    assert not report.ok
+    assert not checks["inference_integrity"].ok
+
+
+def test_deep_doctor_detects_a_wrong_claim_inference_citation_after_trigger_drop(
+    lab: Lab,
+) -> None:
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    inference_id = _adopt_inference(lab, seed, evidence)
+    other_claim = lab.research.add_claim(
+        mission_id=seed.mission.id,
+        question_id=seed.question.id,
+        statement="A second proposition in the same mission.",
+        falsification_criteria="An exact opposing observation would falsify it.",
+        identity=lab.identity,
+    )
+    foreign = lab.evidence.add_evidence(
+        mission_id=seed.mission.id,
+        claim_id=other_claim.id,
+        snapshot_id=seed.snapshot.snapshot_id,
+        start_byte=0,
+        end_byte=len("Evidence supports the claim."),
+        quote="Evidence supports the claim.",
+        stance=EvidenceStance.SUPPORTS,
+        identity=lab.identity,
+    )
+    with lab.database.transaction() as connection:
+        connection.execute("DROP TRIGGER agent_inference_citations_no_update")
+        connection.execute(
+            "UPDATE agent_inference_citations SET evidence_id = ? WHERE inference_id = ?",
+            (foreign.id, inference_id),
+        )
+
+    report = run_doctor(lab.database, deep=True)
+    checks = _checks_by_name(report)
+
+    assert not report.ok
+    assert not checks["inference_integrity"].ok
+
+
+def test_deep_doctor_detects_withdrawn_evidence_behind_an_asserted_inference(lab: Lab) -> None:
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    _adopt_inference(lab, seed, evidence)
+    lab.evidence.withdraw_evidence(
+        evidence_id=evidence.id,
+        reason="The observation was measured incorrectly.",
+        identity=lab.identity,
+    )
+
+    report = run_doctor(lab.database, deep=True)
+    checks = _checks_by_name(report)
+
+    assert not report.ok
+    assert not checks["inference_integrity"].ok
+
+
+def test_deep_doctor_skips_retracted_inferences_symmetric_with_findings(lab: Lab) -> None:
+    """A retracted inference, like a retracted finding, is out of the asserted record."""
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    inference_id = _adopt_inference(lab, seed, evidence)
+    AdoptionService(lab.database, clock=fixed_clock, id_factory=lab.ids).retract_inference(
+        inference_id=inference_id,
+        reason="Superseded by a corrected analysis.",
+        identity=lab.identity,
+    )
+    lab.evidence.withdraw_evidence(
+        evidence_id=evidence.id,
+        reason="The observation was measured incorrectly.",
+        identity=lab.identity,
+    )
+
+    report = run_doctor(lab.database, deep=True)
+    checks = _checks_by_name(report)
+
+    assert report.ok
+    assert checks["inference_integrity"].ok
+    assert checks["inference_integrity"].message == "verified 0 agent inference(s)"

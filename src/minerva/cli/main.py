@@ -7,14 +7,15 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
 
-from minerva.assist.models import ModelProvider
+from minerva.assist.adoption import AdoptionService
+from minerva.assist.models import FindingCandidate, ModelProvider
 from minerva.assist.service import AssistanceService
 from minerva.cli._common import EXIT_OPERATIONAL, Outcome, run_safely
 from minerva.cli.credentials import load_provider_credential, resolve_provider_selection
 from minerva.core.audit import list_audit_events
 from minerva.core.db import Database
 from minerva.core.doctor import run_doctor
-from minerva.core.errors import SecurityBoundaryError
+from minerva.core.errors import IntegrityError, SecurityBoundaryError
 from minerva.core.operations import OperationsService
 from minerva.core.types import IdentityContext, local_identity
 from minerva.evidence.models import EvidenceStance
@@ -52,10 +53,12 @@ def _command_result(name: str, value: object) -> Outcome:
 def _claim_with_ledger(database: Database, claim_id: str) -> Outcome:
     research = ResearchService(database)
     evidence = EvidenceService(database)
+    adoption = AdoptionService(database)
     with database.read() as connection:
         claim = research.get_claim(claim_id, connection=connection)
         ledger = evidence.ledger_for_claim(claim_id, connection=connection)
-    return Outcome({"claim": claim, "evidence_ledger": ledger})
+        inferences = adoption.list_inferences_for_claim(claim_id, connection=connection)
+    return Outcome({"claim": claim, "evidence_ledger": ledger, "agent_inferences": inferences})
 
 
 def _cmd_init(args: argparse.Namespace) -> Outcome:
@@ -86,6 +89,7 @@ def _cmd_mission_show(args: argparse.Namespace) -> Outcome:
     mission_id = cast(str, args.mission)
     research = ResearchService(database)
     sources = SourceService(database)
+    adoption = AdoptionService(database)
     with database.read() as connection:
         result = {
             "mission": research.get_mission(mission_id, connection=connection),
@@ -93,6 +97,7 @@ def _cmd_mission_show(args: argparse.Namespace) -> Outcome:
             "claims": research.list_claims(mission_id, connection=connection),
             "findings": research.list_findings(mission_id, connection=connection),
             "source_snapshots": sources.list_snapshots(mission_id, connection=connection),
+            "agent_inferences": adoption.list_inferences(mission_id, connection=connection),
         }
     return Outcome(result)
 
@@ -186,6 +191,33 @@ def _cmd_finding_retract(args: argparse.Namespace) -> Outcome:
 
 
 def _cmd_finding_add(args: argparse.Namespace) -> Outcome:
+    from_inference = cast(str | None, args.from_inference)
+    if from_inference is not None:
+        if (
+            args.mission is not None
+            or args.claim is not None
+            or args.statement is not None
+            or args.statement_kind is not None
+            or cast(str, args.uncertainty)
+            or cast(list[str], args.evidence)
+        ):
+            raise IntegrityError(
+                "finding_promotion_arguments_invalid",
+                "--from-inference supplies the mission, claim, statement, kind, "
+                "uncertainty, and citations from the adopted inference.",
+            )
+        promoted = AdoptionService(_database(args)).promote_inference_to_finding(
+            inference_id=from_inference,
+            status=FindingStatus(cast(str, args.status)),
+            identity=_identity("cli:finding-add"),
+        )
+        return _command_result("finding", promoted)
+    if args.mission is None or args.statement is None or args.statement_kind is None:
+        raise IntegrityError(
+            "finding_add_arguments_invalid",
+            "finding add requires --mission, --statement, and --kind "
+            "unless --from-inference is given.",
+        )
     finding = ResearchService(_database(args)).add_finding(
         mission_id=cast(str, args.mission),
         claim_id=cast(str | None, args.claim),
@@ -358,6 +390,45 @@ def _cmd_assist_finding_candidates(args: argparse.Namespace) -> Outcome:
     return Outcome({"mode": "completed", "network_called": True, "result": result})
 
 
+def _cmd_assist_adopt(args: argparse.Namespace) -> Outcome:
+    selection = resolve_provider_selection(
+        provider=cast(str | None, args.provider),
+        model=cast(str | None, args.model),
+    )
+    database = _database(args)
+    # The preview is regenerated locally and never leaves the machine; adoption
+    # re-supplies the reviewed candidate text and the provider response digest,
+    # and the service revalidates every citation against the live record.
+    preview = AssistanceService(database).preview_finding_candidates(
+        claim_id=cast(str, args.claim),
+        selection=selection,
+        max_candidates=cast(int, args.max_candidates),
+        max_output_tokens=cast(int, args.max_output_tokens),
+    )
+    inference = AdoptionService(database).adopt_inference(
+        preview=preview,
+        candidate_index=cast(int, args.candidate_index),
+        candidate=FindingCandidate(
+            statement=cast(str, args.statement),
+            statement_kind=StatementKind.AGENT_INFERENCE,
+            uncertainty=cast(str, args.uncertainty),
+            evidence_ids=tuple(cast(list[str], args.evidence)),
+        ),
+        response_sha256=cast(str, args.response_sha256),
+        identity=_identity("cli:assist-adopt"),
+    )
+    return _command_result("inference", inference)
+
+
+def _cmd_assist_retract_inference(args: argparse.Namespace) -> Outcome:
+    retraction_id = AdoptionService(_database(args)).retract_inference(
+        inference_id=cast(str, args.inference),
+        reason=cast(str, args.reason),
+        identity=_identity("cli:assist-retract-inference"),
+    )
+    return Outcome({"status": "retracted", "retraction_id": retraction_id})
+
+
 def _cmd_serve(args: argparse.Namespace) -> Outcome:
     database_path = cast(Path, args.db)
     Database(database_path).schema_version()
@@ -519,14 +590,13 @@ def build_parser() -> argparse.ArgumentParser:
         "add", help="record a labeled finding, assumption, or open question"
     )
     _add_database(finding_add)
-    finding_add.add_argument("--mission", required=True)
+    finding_add.add_argument("--mission")
     finding_add.add_argument("--claim")
-    finding_add.add_argument("--statement", required=True)
+    finding_add.add_argument("--statement")
     finding_add.add_argument(
         "--kind",
         "--statement-kind",
         dest="statement_kind",
-        required=True,
         choices=[item.value for item in StatementKind],
     )
     finding_add.add_argument(
@@ -536,6 +606,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     finding_add.add_argument("--uncertainty", default="")
     finding_add.add_argument("--evidence", action="append", default=[])
+    finding_add.add_argument(
+        "--from-inference",
+        help="promote one adopted agent inference into this human finding",
+    )
     _set_handler(finding_add, _cmd_finding_add)
 
     finding_retract = finding_commands.add_parser(
@@ -650,6 +724,39 @@ def build_parser() -> argparse.ArgumentParser:
     finding_candidates.add_argument("--confirm-external-send", action="store_true")
     finding_candidates.add_argument("--expected-request-sha256")
     _set_handler(finding_candidates, _cmd_assist_finding_candidates)
+
+    adopt = assist_commands.add_parser(
+        "adopt",
+        help="adopt one reviewed candidate as a persisted, labeled agent inference",
+    )
+    _add_database(adopt)
+    adopt.add_argument("--claim", required=True)
+    adopt.add_argument(
+        "--provider",
+        choices=[item.value for item in ModelProvider],
+        help="provider override; otherwise MINERVA_AI_PROVIDER is required",
+    )
+    adopt.add_argument(
+        "--model",
+        help="model override; otherwise MINERVA_AI_MODEL is required",
+    )
+    adopt.add_argument("--max-candidates", type=int, default=3)
+    adopt.add_argument("--max-output-tokens", type=int, default=1_200)
+    adopt.add_argument("--candidate-index", required=True, type=int)
+    adopt.add_argument("--response-sha256", required=True)
+    adopt.add_argument("--statement", required=True)
+    adopt.add_argument("--uncertainty", required=True)
+    adopt.add_argument("--evidence", action="append", default=[])
+    _set_handler(adopt, _cmd_assist_adopt)
+
+    retract_inference = assist_commands.add_parser(
+        "retract-inference",
+        help="record that an adopted inference is no longer asserted, keeping its history",
+    )
+    _add_database(retract_inference)
+    retract_inference.add_argument("--inference", required=True)
+    retract_inference.add_argument("--reason", required=True)
+    _set_handler(retract_inference, _cmd_assist_retract_inference)
 
     serve_parser = commands.add_parser("serve", help="start the loopback review server")
     _add_database(serve_parser)

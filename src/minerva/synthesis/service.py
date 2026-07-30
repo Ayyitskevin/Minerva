@@ -359,6 +359,7 @@ def _preflight_synthesis(
     mission_id: str,
     claim_id: str | None,
     max_export_bytes: int,
+    include_markdown: bool = True,
 ) -> None:
     if claim_id is not None:
         _preflight_claim_synthesis(
@@ -366,6 +367,7 @@ def _preflight_synthesis(
             mission_id=mission_id,
             claim_id=claim_id,
             max_export_bytes=max_export_bytes,
+            include_markdown=include_markdown,
         )
         return
 
@@ -437,12 +439,44 @@ def _preflight_synthesis(
     # columns and ignores identifiers, timestamps, and JSON structure. A lower
     # bound can only ever refuse a mission whose output genuinely exceeds the
     # cap, never one that would have fit.
-    _accumulate_materialized_text_storage_bytes(
+    text_storage_limit = max_export_bytes * _storage_bytes_per_output_byte(connection)
+    materialized_text_storage_bytes = _accumulate_materialized_text_storage_bytes(
         0,
         row,
         "text_storage_bytes",
-        limit=max_export_bytes * _storage_bytes_per_output_byte(connection),
+        limit=text_storage_limit,
     )
+
+    # Adopted inferences render only in the Markdown brief, so their text joins
+    # the bound only when Markdown will be emitted: counting it for a JSON-only
+    # build could refuse a packet that genuinely fits. The rows counted are
+    # exactly the ones the Markdown section renders — every non-retracted
+    # inference in the mission — at their exact Markdown multiplicity: the
+    # statement and the uncertainty once each, counted as finding text is above.
+    if include_markdown:
+        inference_row = connection.execute(
+            """
+            SELECT COALESCE(SUM(
+                       LENGTH(CAST(inference.statement AS BLOB)) +
+                       LENGTH(CAST(inference.uncertainty AS BLOB))
+                   ), 0) AS inference_text_storage_bytes
+            FROM agent_inferences AS inference INDEXED BY idx_agent_inferences_mission
+            WHERE inference.mission_id = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM agent_inference_retractions AS retraction
+                  WHERE retraction.inference_id = inference.id
+              )
+            """,
+            (mission_id,),
+        ).fetchone()
+        if inference_row is None:
+            raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+        _accumulate_materialized_text_storage_bytes(
+            materialized_text_storage_bytes,
+            inference_row,
+            "inference_text_storage_bytes",
+            limit=text_storage_limit,
+        )
 
 
 def _storage_bytes_per_output_byte(connection: sqlite3.Connection) -> int:
@@ -494,6 +528,7 @@ def _preflight_claim_synthesis(
     mission_id: str,
     claim_id: str,
     max_export_bytes: int,
+    include_markdown: bool = True,
 ) -> int:
     remaining_records = MAX_SYNTHESIS_RECORDS - 2
     if remaining_records < 0:
@@ -711,6 +746,37 @@ def _preflight_claim_synthesis(
             materialized_text_storage_bytes,
             row,
             "finding_text_storage_bytes",
+            limit=text_storage_limit,
+        )
+
+    # Adopted inferences render only in the Markdown brief, so their text joins
+    # the bound only when Markdown will be emitted: counting it for a JSON-only
+    # build could refuse a packet that genuinely fits. The rows counted are
+    # exactly the ones the Markdown section renders — non-retracted inferences
+    # of this claim — at their exact Markdown multiplicity: the statement and
+    # the uncertainty once each, the same way finding text is counted above.
+    if include_markdown:
+        inference_row = connection.execute(
+            """
+            SELECT COALESCE(SUM(
+                       LENGTH(CAST(inference.statement AS BLOB)) +
+                       LENGTH(CAST(inference.uncertainty AS BLOB))
+                   ), 0) AS inference_text_storage_bytes
+            FROM agent_inferences AS inference INDEXED BY idx_agent_inferences_claim
+            WHERE inference.mission_id = ? AND inference.claim_id = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM agent_inference_retractions AS retraction
+                  WHERE retraction.inference_id = inference.id
+              )
+            """,
+            (mission_id, claim_id),
+        ).fetchone()
+        if inference_row is None:
+            raise IntegrityError("brief_work_limit", "The research brief exceeds synthesis limits.")
+        materialized_text_storage_bytes = _accumulate_materialized_text_storage_bytes(
+            materialized_text_storage_bytes,
+            inference_row,
+            "inference_text_storage_bytes",
             limit=text_storage_limit,
         )
 
@@ -948,6 +1014,7 @@ def _assemble_brief(
         mission_id=mission_id,
         claim_id=claim_id,
         max_export_bytes=max_export_bytes,
+        include_markdown=include_markdown,
     )
 
     mission = connection.execute(
@@ -1344,6 +1411,85 @@ def _assemble_brief(
         if str(row["uncertainty"]):
             uncertainties.append({"finding_id": finding_id, "text": str(row["uncertainty"])})
 
+    # Adopted agent inferences appear only in the Markdown brief, in their own
+    # labeled section; the canonical v2 payload above never carries them.
+    # Retracted inferences leave the brief exactly as retracted findings do.
+    if claim_id is None:
+        inference_rows = list(
+            connection.execute(
+                """
+                SELECT inference.id, inference.claim_id, inference.statement,
+                       inference.uncertainty, inference.provider, inference.model,
+                       inference.created_at,
+                       promotion.finding_id AS promoted_finding_id
+                FROM agent_inferences AS inference
+                LEFT JOIN agent_inference_promotions AS promotion
+                  ON promotion.inference_id = inference.id
+                 AND promotion.mission_id = inference.mission_id
+                WHERE inference.mission_id = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM agent_inference_retractions AS retraction
+                      WHERE retraction.inference_id = inference.id
+                  )
+                ORDER BY inference.created_at, inference.id
+                """,
+                (mission_id,),
+            )
+        )
+    else:
+        inference_rows = list(
+            connection.execute(
+                """
+                SELECT inference.id, inference.claim_id, inference.statement,
+                       inference.uncertainty, inference.provider, inference.model,
+                       inference.created_at,
+                       promotion.finding_id AS promoted_finding_id
+                FROM agent_inferences AS inference
+                LEFT JOIN agent_inference_promotions AS promotion
+                  ON promotion.inference_id = inference.id
+                 AND promotion.mission_id = inference.mission_id
+                WHERE inference.mission_id = ? AND inference.claim_id = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM agent_inference_retractions AS retraction
+                      WHERE retraction.inference_id = inference.id
+                  )
+                ORDER BY inference.created_at, inference.id
+                """,
+                (mission_id, claim_id),
+            )
+        )
+    agent_inferences: list[dict[str, Any]] = []
+    for row in inference_rows:
+        evidence_ids = [
+            str(item["evidence_id"])
+            for item in connection.execute(
+                """
+                SELECT evidence_id FROM agent_inference_citations
+                WHERE inference_id = ? ORDER BY evidence_id
+                """,
+                (str(row["id"]),),
+            )
+        ]
+        for evidence_id in evidence_ids:
+            if verified_by_id.get(evidence_id) is None:
+                raise IntegrityError("citation_tampered", "Stored citation integrity failed.")
+        promoted_finding_id = row["promoted_finding_id"]
+        agent_inferences.append(
+            {
+                "id": str(row["id"]),
+                "claim_id": str(row["claim_id"]),
+                "statement": str(row["statement"]),
+                "uncertainty": str(row["uncertainty"]),
+                "provider": str(row["provider"]),
+                "model": str(row["model"]),
+                "citation_ids": evidence_ids,
+                "created_at": str(row["created_at"]),
+                "promoted_finding_id": (
+                    str(promoted_finding_id) if promoted_finding_id is not None else None
+                ),
+            }
+        )
+
     audit_references = _packet_audit_references(
         connection,
         mission_id=mission_id,
@@ -1418,6 +1564,7 @@ def _assemble_brief(
         _render_markdown(
             validated_payload,
             export_digest=export_digest,
+            agent_inferences=agent_inferences,
         ).encode("utf-8")
         if include_markdown
         else b""
@@ -1438,7 +1585,12 @@ def _assemble_brief(
     )
 
 
-def _render_markdown(payload: dict[str, Any], *, export_digest: str) -> str:
+def _render_markdown(
+    payload: dict[str, Any],
+    *,
+    export_digest: str,
+    agent_inferences: list[dict[str, Any]],
+) -> str:
     mission = payload["mission"]
     lines = [
         f"# Research brief: {_md_inline(mission['title'])}",
@@ -1520,6 +1672,40 @@ def _render_markdown(payload: dict[str, Any], *, export_digest: str) -> str:
                 f"- Citations: {citation_text}",
             ]
         )
+
+    lines.extend(["", "## Agent inferences (model-drafted, human-adopted)", ""])
+    lines.append(
+        "Adopted model output is labeled provenance, never evidence or a human finding, "
+        "and it does not influence claim status or counts. Retracted inferences leave "
+        "this brief exactly as retracted findings do."
+    )
+    lines.append("")
+    if not agent_inferences:
+        lines.append("_No agent inferences adopted._")
+    for inference in agent_inferences:
+        citation_text = " ".join(f"**[{item}]**" for item in inference["citation_ids"])
+        entry = [
+            f"### Agent inference **{inference['id']}**",
+            "",
+            f"- Claim: **{inference['claim_id']}**",
+            (
+                "- Provider / model: **"
+                + _md_inline(inference["provider"])
+                + " / "
+                + _md_inline(inference["model"])
+                + "**"
+            ),
+            (
+                "- Statement (adopted model output, not a human finding): "
+                + _md_inline(inference["statement"])
+            ),
+            f"- Citations: {citation_text}",
+        ]
+        if inference["uncertainty"]:
+            entry.append(f"- Uncertainty: {_md_inline(inference['uncertainty'])}")
+        if inference["promoted_finding_id"] is not None:
+            entry.append(f"- Promoted to human finding: **{inference['promoted_finding_id']}**")
+        lines.extend(entry)
 
     lines.extend(["", "## Assumptions (explicitly non-evidentiary)", ""])
     if not payload["assumptions"]:

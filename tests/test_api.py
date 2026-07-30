@@ -11,10 +11,14 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from minerva.assist.adoption import AdoptionService
+from minerva.assist.models import FindingCandidate, ModelProvider, ProviderSelection
+from minerva.assist.service import AssistanceService
 from minerva.cli.main import build_parser
 from minerva.core.db import Database
 from minerva.core.types import local_identity
 from minerva.evidence.service import EvidenceService
+from minerva.research.models import FindingStatus, StatementKind
 from minerva.research.service import ResearchService
 from minerva.web.app import create_app
 
@@ -206,7 +210,9 @@ def test_capability_manifest_is_versioned_and_truthful(client: TestClient) -> No
             "claim.status.append",
             "source.utf8_bytes.import",
             "evidence.exact_byte_span.create",
+            "evidence.withdraw.cli",
             "finding.create",
+            "finding.retract.cli",
             "claim.evidence_ledger.read",
             "brief.preview.markdown_json",
             "brief.export.markdown_json",
@@ -220,6 +226,9 @@ def test_capability_manifest_is_versioned_and_truthful(client: TestClient) -> No
             "web.review",
             "assist.finding_candidates.preview.cli",
             "assist.finding_candidates.invoke.cli.byok.optional",
+            "assist.inference.adopt.cli",
+            "assist.inference.retract.cli",
+            "finding.create.from_inference.cli",
         ],
         "unavailable": [
             "network.fetch",
@@ -255,12 +264,17 @@ def test_capability_manifest_is_versioned_and_truthful(client: TestClient) -> No
 # from it and when a verb named here is absent from the parser, so neither side
 # can move alone.
 _CLI_BACKED_CAPABILITIES = {
+    "evidence.withdraw.cli": "evidence withdraw",
+    "finding.retract.cli": "finding retract",
     "research.packet.v2.verify.cli": "packet verify",
     "research.packet.v2.inspect.cli": "packet inspect",
     "research.request.v1.verify.cli": "request verify",
     "research.request.v1.fulfill.cli": "request fulfill",
     "assist.finding_candidates.preview.cli": "assist finding-candidates",
     "assist.finding_candidates.invoke.cli.byok.optional": "assist finding-candidates",
+    "assist.inference.adopt.cli": "assist adopt",
+    "assist.inference.retract.cli": "assist retract-inference",
+    "finding.create.from_inference.cli": "finding add",
 }
 
 
@@ -775,3 +789,108 @@ def test_api_claim_and_ledger_each_use_one_read_transaction(
     ledger_response = client.get(f"/api/v1/claims/{claim_id}/evidence")
     assert ledger_response.status_code == 200
     assert read_count == 1
+
+
+def _adopt_inference(
+    client: TestClient,
+    created: dict[str, Any],
+    *,
+    statement: str = "The bounded evidence supports a cautious adopted inference.",
+    uncertainty: str = "The evidence does not establish generality.",
+) -> Any:
+    """Adopt one candidate through the service layer: adoption stays CLI-only over HTTP."""
+
+    database = client.app.state.database
+    preview = AssistanceService(database).preview_finding_candidates(
+        claim_id=created["claim"]["id"],
+        selection=ProviderSelection(ModelProvider.OPENAI, "test-model-1", "test"),
+        max_candidates=2,
+        max_output_tokens=512,
+    )
+    return AdoptionService(database).adopt_inference(
+        preview=preview,
+        candidate_index=0,
+        candidate=FindingCandidate(
+            statement=statement,
+            statement_kind=StatementKind.AGENT_INFERENCE,
+            uncertainty=uncertainty,
+            evidence_ids=(created["supporting"]["id"],),
+        ),
+        response_sha256=sha256(b"a fake provider response document").hexdigest(),
+        identity=local_identity(purpose="api inference adoption"),
+    )
+
+
+def test_findings_collection_carries_inferences_as_a_distinct_sibling(
+    client: TestClient,
+) -> None:
+    created = _create_vertical_slice(client)
+    findings_url = f"/api/v1/missions/{created['mission']['id']}/findings"
+
+    before = client.get(findings_url)
+    assert before.status_code == 200
+    assert _json(before)["agent_inferences"] == []
+
+    inference = _adopt_inference(client, created)
+    response = client.get(findings_url)
+
+    assert response.status_code == 200
+    document = _json(response)
+    # Never merged into the findings array: the page still holds only findings.
+    assert [item["id"] for item in document["items"]] == [created["finding"]["id"]]
+    assert all(str(item["id"]).startswith("fnd_") for item in document["items"])
+    inferences = document["agent_inferences"]
+    assert isinstance(inferences, list)
+    assert len(inferences) == 1
+    rendered = inferences[0]
+    assert rendered["id"] == inference.id
+    assert rendered["mission_id"] == created["mission"]["id"]
+    assert rendered["claim_id"] == created["claim"]["id"]
+    assert rendered["statement"] == "The bounded evidence supports a cautious adopted inference."
+    assert rendered["uncertainty"] == "The evidence does not establish generality."
+    assert rendered["provider"] == "openai"
+    assert rendered["model"] == "test-model-1"
+    assert rendered["candidate_index"] == 0
+    assert rendered["evidence_ids"] == [created["supporting"]["id"]]
+    assert len(rendered["request_sha256"]) == 64
+    assert len(rendered["response_sha256"]) == 64
+    assert rendered["system_prompt_version"]
+    assert rendered["retracted"] is False
+    assert rendered["retraction_reason"] is None
+    assert rendered["retracted_at"] is None
+    assert rendered["retracted_by"] is None
+    assert rendered["promoted_finding_id"] is None
+
+
+def test_findings_collection_reports_inference_retraction_and_promotion_state(
+    client: TestClient,
+) -> None:
+    created = _create_vertical_slice(client)
+    database = client.app.state.database
+    inference = _adopt_inference(client, created)
+    adoption = AdoptionService(database)
+    finding = adoption.promote_inference_to_finding(
+        inference_id=inference.id,
+        status=FindingStatus.SUPPORTED,
+        identity=local_identity(purpose="api inference promotion"),
+    )
+    retraction_identity = local_identity(purpose="api inference retraction")
+    adoption.retract_inference(
+        inference_id=inference.id,
+        reason="Superseded by a corrected analysis.",
+        identity=retraction_identity,
+    )
+
+    response = client.get(f"/api/v1/missions/{created['mission']['id']}/findings")
+
+    assert response.status_code == 200
+    rendered = _json(response)["agent_inferences"][0]
+    assert rendered["retracted"] is True
+    assert rendered["retraction_reason"] == "Superseded by a corrected analysis."
+    assert isinstance(rendered["retracted_at"], str)
+    assert rendered["retracted_at"].endswith("Z")
+    assert rendered["retracted_by"] == retraction_identity.actor_id
+    assert rendered["promoted_finding_id"] == finding.id
+    # The promotion's finding is a finding; the inference is still not one.
+    assert finding.id in {item["id"] for item in _json(response)["items"]}
+    assert inference.id not in {item["id"] for item in _json(response)["items"]}

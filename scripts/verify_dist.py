@@ -41,6 +41,7 @@ EXPECTED_RESOURCES = frozenset(
         "minerva/core/migrations/0002_findings_and_exports.sql",
         "minerva/core/migrations/0003_fulfillment_indexes.sql",
         "minerva/core/migrations/0004_finding_retractions.sql",
+        "minerva/core/migrations/0005_agent_inferences.sql",
         "minerva/web/templates/base.html",
         "minerva/web/templates/brief_preview.html",
         "minerva/web/templates/claim_detail.html",
