@@ -281,8 +281,11 @@ export directory. Minerva never overwrites that directory on retry; the operator
 inspect and remove the disposable partial target explicitly.
 
 Database migrations are forward-only. Operators must create and verify a standalone
-pre-upgrade backup. Rollback means stopping the new binary and restoring that backup to
-a new path with the prior binary; no in-place schema downgrade is implemented.
+pre-upgrade backup. An upgraded binary restores that backup directly: the staged copy is
+migrated forward inside the audited staging pipeline and deep-validated before
+publication (ADR 0004, gate D-11 amendment). Rollback to an older version means stopping
+the new binary and restoring that backup to a new path with the prior binary; no in-place
+schema downgrade is implemented.
 
 ## Future protocol seam
 

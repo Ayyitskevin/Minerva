@@ -155,6 +155,8 @@ undocumented.
 | `minerva backup` | create a non-overwriting backup |
 | `minerva restore` | restore into a new database |
 | `minerva assist finding-candidates` | draft candidate agent inferences from one claim's active evidence |
+| `minerva assist adopt` | adopt one reviewed candidate as a persisted, labeled agent inference |
+| `minerva assist retract-inference` | record that an adopted inference is no longer asserted, keeping its history |
 | `minerva serve` | start the loopback review server |
 
 There is no verb that deletes a mission, claim, snapshot, citation, finding, or
@@ -379,6 +381,32 @@ Candidates are not evidence or truth, do not update claim status, and are not st
 or adopted by Minerva. The audit ledger records bounded request/result metadata and
 digests, not credentials, prompts, evidence text, or returned candidate text.
 
+A candidate the operator judges correct can be adopted explicitly, one candidate from
+one exact preview at a time. Adoption re-supplies the reviewed candidate text, its
+citation IDs, and the provider response digest, and Minerva revalidates every citation
+against the live record before persisting a labeled `agent_inference` with full
+provenance:
+
+```bash
+minerva assist adopt --db research.db --claim CLM_ID \
+  --candidate-index 0 --response-sha256 RESPONSE_SHA256 \
+  --statement "ADOPTED STATEMENT" --uncertainty "RECORDED UNCERTAINTY" \
+  --evidence EVD_ID
+```
+
+An adopted inference is never evidence and never a finding; it cannot influence claim
+status and does not count toward anything. `assist retract-inference --inference INF_ID
+--reason "..."` records that one is no longer asserted, keeping its row and history,
+and `finding add --from-inference INF_ID --status STATUS` promotes one into a human
+finding — the operator's own assertion — linked to the inference that remains as its
+provenance. Inferences and their retraction state (reason, timestamp, actor) are
+visible wherever findings are read: `mission show`, `claim show`,
+`GET /api/v1/missions/{id}/findings`, the web review page, and their own clearly
+labeled section of the Markdown brief, which retracted inferences leave exactly as
+retracted findings do. The canonical `minerva.research-brief.v2` JSON is unchanged by
+adoption. `doctor --deep` verifies inference citation integrity symmetric with
+findings.
+
 ## Web and API
 
 ```bash
@@ -404,10 +432,13 @@ dependency, security, and diff gates are listed in [AGENTS.md](AGENTS.md).
 
 Minerva migrations are forward-only. Before running `minerva init` against an existing
 database, create a standalone backup and verify it with
-`minerva doctor --db backups/research.db --deep`. There is no in-place downgrade. To roll
-back an upgrade, stop the newer process and use the older binary to restore a pre-upgrade
-backup into a new database path; verify that restored path before deliberately replacing
-any operator-owned file.
+`minerva doctor --db backups/research.db --deep`. Restoring that pre-upgrade backup with
+the upgraded binary works directly: restore migrates the staged copy forward inside the
+audited staging pipeline, records a `database.migrated` audit event, and deep-validates
+the migrated state before publication (ADR 0004, gate D-11). There is no in-place
+downgrade, so rolling back to an older version still means stopping the newer process and
+using the older binary to restore a pre-upgrade backup into a new database path; verify
+that restored path before deliberately replacing any operator-owned file.
 
 `doctor` also reports remnants it will never remove: private staging copies left beside
 the database by an interrupted restore or initialization, and assistance invocations

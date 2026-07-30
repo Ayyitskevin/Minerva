@@ -7,6 +7,9 @@
 - [ADR 0005: Add targeted indexes for claim-scoped request fulfillment](adr/0005-targeted-fulfillment-indexing.md)
 - [ADR 0006: Report operator remnants without removing them](adr/0006-operator-remnant-notices.md)
 - [ADR 0007: Retract findings instead of blocking export forever](adr/0007-finding-retraction.md)
+- [ADR 0008: Persist human-adopted agent inferences as a separate labeled record](adr/0008-persisted-agent-inferences.md)
+- [ADR 0009: External principals and signed request attribution](adr/0009-external-principals-and-request-attribution.md) — **Proposed (gate D-2)**
+- [ADR 0010: The Athena coordination adapter seam](adr/0010-athena-coordination-adapter-seam.md) — **Proposed (gate D-2)**
 
 ## Milestone 1 implementation decisions
 
@@ -687,3 +690,102 @@ All six CLI-backed capabilities were confirmed to map to real verbs before the
 test was written, so this enforces a property that already held rather than
 fixing a live falsehood. That distinction is the point — the manifest was true
 and unguarded, and it is the guard that was missing.
+
+## Persisted agent inferences (gate D-1)
+
+Kevin's directive of 2026-07-30 opened gate D-1 and accepted ADR 0008. The four
+open questions resolved as follows; each remains reversible by Kevin at review
+time.
+
+- **`minerva.research-brief.v2` canonical bytes are unchanged.** Inferences
+  appear in the Markdown brief in their own clearly labeled section, so two
+  exports of the same mission diverge: the packet omits live content the
+  Markdown carries. That divergence is real and is documented here and in the
+  ADR rather than hidden; the `v3` packet question is deferred to the first
+  consumer-facing packet revision (the D-2 era), when a version bump will be
+  forced anyway. This is the smallest reviewed change to the highest-integrity
+  surface and preserves the golden fixtures and the offline verifier contract.
+- **Promotion into a finding is explicit and never automatic.**
+  `finding add --from-inference <id>` creates the human finding and records an
+  append-only promotion link in the same atomic transaction. The link is a
+  fourth table, `agent_inference_promotions`, because the `BEFORE UPDATE`
+  triggers correctly forbid setting a link column after insert.
+  `UNIQUE(inference_id)` permits one promotion per inference. The finding is
+  the human's assertion; the inference remains as provenance.
+- **`doctor` verifies inference citation integrity**, symmetric with findings,
+  at the cost of another deep-check query.
+- **The CLI verb is `assist adopt`**, keeping the assistance surface together
+  per ADR 0003's boundary. Adoption stays CLI-only; no API or web adoption
+  path is added.
+
+Non-negotiables carried from the ADR: migration 0005 ships the retraction table
+and the reading-surface visibility in the same change (the D-9 lesson);
+adoption revalidates every citation against the live record, rescans the text
+for secret patterns, and is idempotent by unique constraint on
+`(request_sha256, candidate_index, claim_id)`; inferences never influence claim
+status, never count toward anything, and can never be cited by a finding as
+evidence.
+
+## CLI-only correction verbs and the manifest taxonomy (gate D-10)
+
+Kevin's directive of 2026-07-30 opened gate D-10 and accepted Plan 2's
+recommendation: record the boundary now, defer the endpoint.
+
+- **Evidence withdrawal is deliberately CLI-only.** `minerva evidence withdraw`
+  is the only withdrawal surface; there is no REST, web, or packet-driven
+  withdrawal path. This is a boundary decision, not an unbuilt feature: a
+  correction verb changes the research record, and the only actor Minerva
+  recognizes today is the local OS user behind the CLI. The REST withdrawal
+  endpoint stays deferred until gate D-2 creates the first real protocol
+  consumer with an authenticated principal to answer for the correction.
+- **Finding retraction is the same boundary.** `minerva finding retract`
+  shipped in Milestone 1.5 as a CLI-only correction verb (see the D-9 section
+  above) and is recorded here as the same deliberate shape.
+- **The capability manifest now says so.** `minerva.capabilities.v2` gains
+  `evidence.withdraw.cli` and `finding.retract.cli`, so a consumer reading the
+  manifest can discover the symmetric correction vocabulary and see that it is
+  CLI-only rather than absent. This is additive: no entry is removed or
+  altered, so a consumer pinning the previous set sees new names, never a
+  missing one — the same rule the F5-CAP-PACKET-CLI fix established for the
+  packet-CLI entries. The `.cli` taxonomy is now truthful in both directions:
+  every advertised `.cli` entry names a verb that exists (pinned by
+  `test_capability_manifest_cli_entries_name_verbs_that_exist`), and every
+  capability a protocol consumer could expect that is CLI-only — the correction
+  verbs and the packet, request, and assistance surfaces — is labeled `.cli`.
+  Operator-only tooling (`init`, `doctor`, `backup`, `restore`, `audit list`,
+  `serve`, `demo`) is deliberately not advertised at all: the manifest answers
+  what a consumer can ask Minerva to do, not how an operator maintains it.
+
+## Staged migration during restore (gate D-11)
+
+Kevin's directive of 2026-07-30 opened gate D-11 and accepted Plan 2's
+recommendation, recorded as the second amendment to ADR 0004.
+
+- **Restoring a pre-upgrade backup no longer requires the prior binary.**
+  `restore_from` accepts an intact backup at any older recorded schema version
+  and runs the forward-only migration chain on the private staged copy — never
+  the live database — inside the existing audited staging pipeline. Deep
+  doctor then validates the migrated staging state, and only then does
+  exclusive publication happen. A backup this installation cannot reconcile at
+  all (unmanaged, newer, or checksum-mismatched) is still refused before
+  staging, with the same codes as before; only genuine corruption reports
+  `backup_invalid`.
+- **Fail-closed semantics are unchanged.** A failed staged migration, a failed
+  audit callback, or a failed deep validation abandons the staged copy and
+  leaves the destination and the live database untouched; publication still
+  never overwrites and never removes a public replacement.
+- **The audit trail is provenance-correct about the migration.** The
+  migration, a new `database.migrated` event
+  (`from_schema_version` → `to_schema_version`), and the existing
+  `database.restored` event commit in one transaction on the staged copy, which
+  is the database that gets published. The restored database therefore carries
+  its own honest history: the backup's original events, then the restore run's
+  events showing that the record was migrated forward during this restore and
+  by how much. A same-version restore records no `database.migrated` event, and
+  `minerva init` upgrades of a live database are unchanged and record none
+  either — the event exists only where the migration happened inside restore.
+- **Rollback doctrine is unchanged.** Migrations remain forward-only with
+  recorded checksums; there is still no in-place downgrade, so rolling back to
+  an older version still means restoring the verified pre-upgrade backup with
+  the prior binary into a new path. What closed is the asymmetric gap: moving
+  *forward* from a pre-upgrade backup no longer needs the old binary.

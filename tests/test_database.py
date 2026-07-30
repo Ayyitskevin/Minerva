@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
 import stat
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
@@ -1354,46 +1355,31 @@ def test_backup_refuses_to_publish_beside_an_existing_sidecar(
     assert sidecar.read_bytes() == b"operator owned"
 
 
-@pytest.mark.parametrize(
-    ("installed_migrations", "expected_code"),
-    [
-        ("newer", "database_migration_required"),
-        ("older", "database_too_new"),
-    ],
-)
-def test_restore_preserves_migration_state_codes_for_intact_backups(
+def test_restore_of_a_backup_newer_than_this_binary_reports_database_too_new(
     database: Database,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    installed_migrations: str,
-    expected_code: str,
 ) -> None:
-    """An intact backup at another schema version must not be called corrupt.
+    """An intact backup this binary cannot reconcile must not be called corrupt.
 
     Reporting `backup_invalid` here would tell an operator their backup failed
-    integrity validation at the moment they most need to trust it.
+    integrity validation at the moment they most need to trust it. The other
+    direction -- a backup older than this binary -- is no longer an error at
+    all: since the D-11 amendment to ADR 0004 it is migrated on the staged
+    copy, which `test_restore_migrates_a_pre_upgrade_backup_on_the_staged_copy`
+    covers.
     """
 
     migrations = db_module._migration_files()
     assert len(migrations) >= 2
     backup = tmp_path / "backup.db"
     database.backup_to(backup)
-
-    if installed_migrations == "newer":
-        future = Migration(
-            version=len(migrations) + 1,
-            name="0099_future.sql",
-            sql="CREATE TABLE future_state(value TEXT);",
-            checksum="b" * 64,
-        )
-        monkeypatch.setattr(db_module, "_migration_files", lambda: (*migrations, future))
-    else:
-        monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:-1])
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:-1])
 
     with pytest.raises(IntegrityError) as caught:
         Database.restore_from(backup, tmp_path / "restored.db")
 
-    assert caught.value.code == expected_code
+    assert caught.value.code == "database_too_new"
     assert not (tmp_path / "restored.db").exists()
 
 
@@ -1419,3 +1405,228 @@ def test_symlinked_database_path_reports_the_symlink_regardless_of_flags(tmp_pat
         codes.append(caught.value.code)
 
     assert codes == ["database_symlink", "database_symlink"]
+
+
+def _pre_upgrade_backup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    seed: Callable[[Database], None] | None = None,
+) -> Path:
+    """Build a standalone backup one schema version behind this binary.
+
+    This is the artifact a verified pre-upgrade backup is: a database the prior
+    binary initialized and wrote through while its own migration set was the
+    latest, copied to a standalone file the way that binary's `backup` would
+    have left it. `backup_to` cannot produce one here because it rightly
+    refuses an outdated schema.
+    """
+
+    migrations = db_module._migration_files()
+    assert len(migrations) >= 2
+    old_path = tmp_path / "prior-installation.db"
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations[:-1])
+    old = Database(old_path)
+    assert old.initialize() == len(migrations) - 1
+    if seed is not None:
+        seed(old)
+    monkeypatch.setattr(db_module, "_migration_files", lambda: migrations)
+    backup = tmp_path / "pre-upgrade-backup.db"
+    shutil.copyfile(old_path, backup)
+    return backup
+
+
+def test_restore_migrates_a_pre_upgrade_backup_on_the_staged_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-upgrade backup restores with the upgraded binary (gate D-11).
+
+    The staged copy -- never the live database -- is migrated forward inside
+    the audited staging pipeline, deep doctor runs on the migrated staging
+    state, and publication leaves the restored database at the latest schema
+    version with the migration history and audit provenance to prove it.
+    """
+
+    migrations = db_module._migration_files()
+    ids = SequenceIds()
+    seed_identity = IdentityContext(
+        actor_id="os-user:prior-binary",
+        actor_kind=ActorKind.OS_USER,
+        run_id=ids("run"),
+        purpose="research recorded before the upgrade",
+    )
+    created: list[str] = []
+
+    def seed(old: Database) -> None:
+        mission = ResearchService(old, clock=fixed_clock, id_factory=ids).create_mission(
+            title="Pre-upgrade mission",
+            objective="Prove a pre-upgrade backup survives staged migration.",
+            identity=seed_identity,
+        )
+        created.append(mission.id)
+
+    backup = _pre_upgrade_backup(tmp_path, monkeypatch, seed=seed)
+    backup_bytes = backup.read_bytes()
+    live_path = tmp_path / "prior-installation.db"
+    live_bytes = live_path.read_bytes()
+    target = tmp_path / "restored.db"
+    restore_identity = IdentityContext(
+        actor_id="os-user:restore-migration-test",
+        actor_kind=ActorKind.OS_USER,
+        run_id=ids("run"),
+        purpose="restore a pre-upgrade backup",
+    )
+
+    restored = OperationsService.restore(
+        backup=backup,
+        target=target,
+        identity=restore_identity,
+        clock=fixed_clock,
+        id_factory=ids,
+    )
+
+    assert restored.path == target
+    assert restored.schema_version() == latest_schema_version()
+    assert ResearchService(restored).get_mission(created[0]).title == "Pre-upgrade mission"
+    # The restored database is exactly the state deep doctor validated on the
+    # migrated staging copy, so validating it again must pass cleanly.
+    assert run_doctor(restored, deep=True).ok
+    with restored.read() as connection:
+        history = [
+            (int(row["version"]), str(row["name"]), str(row["checksum"]))
+            for row in connection.execute(
+                "SELECT version, name, checksum FROM schema_migrations ORDER BY version"
+            )
+        ]
+        events = [
+            event
+            for event in list_audit_events(connection)
+            if event["run_id"] == restore_identity.run_id
+        ]
+    assert history == [
+        (migration.version, migration.name, migration.checksum) for migration in migrations
+    ]
+    # The migration, its provenance event, and the restore event committed in
+    # one transaction on the staged copy, which became this database.
+    assert [event["event_type"] for event in events] == [
+        "research.run.started",
+        "database.migrated",
+        "database.restored",
+    ]
+    assert events[1]["details"] == {
+        "from_schema_version": len(migrations) - 1,
+        "to_schema_version": len(migrations),
+    }
+    assert events[2]["details"] == {"schema_version": latest_schema_version()}
+    assert backup.read_bytes() == backup_bytes
+    assert live_path.read_bytes() == live_bytes
+    assert list(tmp_path.glob(f".{target.name}.minerva-*.tmp*")) == []
+
+
+def test_restore_validates_the_migrated_staging_state_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deep doctor runs after the staged migration, not before it.
+
+    A callback that damages the migrated staging state -- here by dropping an
+    append-only trigger the deep checks require -- must still fail closed with
+    no publication, exactly as it does for a current-version restore.
+    """
+
+    backup = _pre_upgrade_backup(tmp_path, monkeypatch)
+    target = tmp_path / "restored.db"
+    ids = SequenceIds()
+    identity = IdentityContext(
+        actor_id="os-user:restore-migrated-validation-test",
+        actor_kind=ActorKind.OS_USER,
+        run_id=ids("run"),
+        purpose="validate the migrated staging state",
+    )
+
+    class TriggerRemovingAuditSink:
+        def __init__(self) -> None:
+            self.delegate = AuditRecorder(clock=fixed_clock, id_factory=ids)
+
+        def ensure_run(
+            self,
+            connection: sqlite3.Connection,
+            current_identity: IdentityContext,
+        ) -> None:
+            self.delegate.ensure_run(connection, current_identity)
+
+        def record(
+            self,
+            connection: sqlite3.Connection,
+            *,
+            identity: IdentityContext,
+            event_type: str,
+            entity_type: str,
+            entity_id: str,
+            mission_id: str | None,
+            details: Mapping[str, object] | None = None,
+        ) -> str:
+            audit_id = self.delegate.record(
+                connection,
+                identity=identity,
+                event_type=event_type,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                mission_id=mission_id,
+                details=details,
+            )
+            # A migrated restore records `database.migrated` first, so the
+            # damage lands on the final event to run exactly once.
+            if event_type == "database.restored":
+                connection.execute("DROP TRIGGER audit_no_update")
+            return audit_id
+
+    with pytest.raises(IntegrityError) as caught:
+        OperationsService.restore(
+            backup=backup,
+            target=target,
+            identity=identity,
+            audit=TriggerRemovingAuditSink(),
+            clock=fixed_clock,
+            id_factory=ids,
+        )
+
+    assert caught.value.code == "backup_invalid"
+    assert not target.exists()
+    assert list(tmp_path.glob(f".{target.name}.minerva-*.tmp*")) == []
+
+
+def test_restore_leaves_everything_untouched_when_the_staged_migration_fails(
+    database: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A migration that fails on the staged copy cannot reach the live database.
+
+    The staged copy is the only place the forward-only migration chain runs
+    during restore; its failure abandons that private copy and reports the real
+    code, while the live database and the backup stay byte-identical.
+    """
+
+    migrations = db_module._migration_files()
+    backup = tmp_path / "backup.db"
+    database.backup_to(backup)
+    backup_bytes = backup.read_bytes()
+    live_bytes = database.path.read_bytes()
+    broken = Migration(
+        version=len(migrations) + 1,
+        name="0099_broken.sql",
+        sql="CREATE TABLE broken(",
+        checksum="c" * 64,
+    )
+    monkeypatch.setattr(db_module, "_migration_files", lambda: (*migrations, broken))
+
+    with pytest.raises(IntegrityError) as caught:
+        Database.restore_from(backup, tmp_path / "restored.db")
+
+    assert caught.value.code == "migration_failed"
+    assert not (tmp_path / "restored.db").exists()
+    assert backup.read_bytes() == backup_bytes
+    assert database.path.read_bytes() == live_bytes
+    assert list(tmp_path.glob(".restored.db.minerva-*.tmp*")) == []

@@ -21,6 +21,9 @@
   content or path identity changes during the snapshot window.
 - Restore audit writes and deep validation complete on unpublished staging state before
   exclusive publication; public replacements are never removed during failed restore.
+  Since the gate D-11 amendment to ADR 0004, a pre-upgrade backup is migrated forward
+  on the staged copy — with a `database.migrated` provenance event — before that deep
+  validation and publication.
 - Machine-readable ownership states that Minerva researches but does not execute,
   approve, orchestrate, or publish.
 - The additive `minerva.capabilities.v2` manifest advertises canonical packet support
