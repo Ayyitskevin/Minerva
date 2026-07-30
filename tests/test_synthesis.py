@@ -14,6 +14,9 @@ import minerva.evidence.integrity as evidence_integrity_module
 import minerva.integrations.research_packet as packet_module
 import minerva.synthesis.service as synthesis_module
 from conftest import ClaimSeed, Lab, SequenceIds, fixed_clock
+from minerva.assist.adoption import AdoptionService
+from minerva.assist.models import FindingCandidate, ModelProvider, ProviderSelection
+from minerva.assist.service import AssistanceService
 from minerva.core.audit import AuditRecorder
 from minerva.core.errors import ConflictError, IntegrityError, NotFoundError, OperationalError
 from minerva.core.types import IdentityContext
@@ -903,6 +906,350 @@ def test_claim_preflight_bounds_each_emitted_text_family_before_materialization(
     assert caught.value.code == "brief_work_limit"
     assert not any("SELECT id, title, objective" in statement for statement in statements)
     assert not any("ss.content" in statement for statement in statements)
+
+
+def _adopt_inference(
+    lab: Lab,
+    seed: ClaimSeed,
+    evidence: EvidenceCard,
+    *,
+    statement: str,
+    uncertainty: str,
+) -> str:
+    assistance = AssistanceService(lab.database, clock=fixed_clock, id_factory=lab.ids)
+    preview = assistance.preview_finding_candidates(
+        claim_id=seed.claim.id,
+        selection=ProviderSelection(ModelProvider.OPENAI, "test-model-1", "test"),
+        max_candidates=2,
+        max_output_tokens=512,
+    )
+    adoption = AdoptionService(lab.database, clock=fixed_clock, id_factory=lab.ids)
+    inference = adoption.adopt_inference(
+        preview=preview,
+        candidate_index=0,
+        candidate=FindingCandidate(
+            statement=statement,
+            statement_kind=StatementKind.AGENT_INFERENCE,
+            uncertainty=uncertainty,
+            evidence_ids=(evidence.id,),
+        ),
+        response_sha256=sha256(b"a fake provider response document").hexdigest(),
+        identity=lab.identity,
+    )
+    return inference.id
+
+
+def _claim_bound(lab: Lab, mission_id: str, claim_id: str) -> int:
+    with lab.database.read() as connection:
+        return synthesis_module._preflight_claim_synthesis(
+            connection,
+            mission_id=mission_id,
+            claim_id=claim_id,
+            max_export_bytes=synthesis_module.MAX_EXPORT_BYTES,
+        )
+
+
+def test_claim_preflight_counts_inference_text_at_exact_markdown_multiplicity(
+    lab: Lab,
+) -> None:
+    scenario = _populate_brief(lab)
+    baseline = _claim_bound(lab, scenario.seed.mission.id, scenario.seed.claim.id)
+    statement = "Café adoption review leaves the claim contested. " + ("x" * 1_000)
+    uncertainty = "The adopted draft does not establish generality."
+
+    _adopt_inference(
+        lab,
+        scenario.seed,
+        scenario.support,
+        statement=statement,
+        uncertainty=uncertainty,
+    )
+
+    with_inference = _claim_bound(lab, scenario.seed.mission.id, scenario.seed.claim.id)
+    # Exactly the text the Markdown section renders, once each, in stored bytes.
+    assert with_inference == baseline + len(statement.encode()) + len(uncertainty.encode())
+
+
+def test_claim_preflight_refuses_inference_text_past_the_bound_before_assembly(
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = _populate_brief(lab)
+    baseline = _claim_bound(lab, scenario.seed.mission.id, scenario.seed.claim.id)
+    statement = "x" * 2_000
+    uncertainty = "y" * 1_000
+    _adopt_inference(
+        lab,
+        scenario.seed,
+        scenario.support,
+        statement=statement,
+        uncertainty=uncertainty,
+    )
+    bound = baseline + len(statement) + len(uncertainty)
+
+    synthesis = SynthesisService(lab.database, clock=fixed_clock, id_factory=lab.ids)
+    monkeypatch.setattr(synthesis, "_max_export_bytes", bound - 1)
+
+    def unexpected_packet_build(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("bounded inference text reached packet construction")
+
+    monkeypatch.setattr(synthesis_module, "build_research_packet", unexpected_packet_build)
+    with pytest.raises(IntegrityError) as caught:
+        synthesis.build_brief(scenario.seed.mission.id, claim_id=scenario.seed.claim.id)
+
+    assert caught.value.code == "brief_work_limit"
+
+
+def test_claim_preflight_admits_a_claim_just_under_the_inference_bound(
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = _populate_brief(lab)
+    inference_id = _adopt_inference(
+        lab,
+        scenario.seed,
+        scenario.support,
+        statement="The bounded evidence supports a cautious adopted inference.",
+        uncertainty="The evidence does not establish generality.",
+    )
+    bound = _claim_bound(lab, scenario.seed.mission.id, scenario.seed.claim.id)
+    artifacts = lab.synthesis.build_brief(scenario.seed.mission.id, claim_id=scenario.seed.claim.id)
+    assert inference_id in artifacts.markdown.decode("utf-8")
+
+    # The tightest cap the artifacts genuinely fit: the preflight admits it.
+    tight = max(len(artifacts.json), len(artifacts.markdown))
+    assert bound <= tight
+    synthesis = SynthesisService(lab.database, clock=fixed_clock, id_factory=lab.ids)
+    monkeypatch.setattr(synthesis, "_max_export_bytes", tight)
+
+    assert synthesis.build_brief(scenario.seed.mission.id, claim_id=scenario.seed.claim.id) == (
+        artifacts
+    )
+
+
+def test_claim_preflight_ignores_retracted_inferences_like_the_brief_does(lab: Lab) -> None:
+    scenario = _populate_brief(lab)
+    baseline = _claim_bound(lab, scenario.seed.mission.id, scenario.seed.claim.id)
+    inference_id = _adopt_inference(
+        lab,
+        scenario.seed,
+        scenario.support,
+        statement="A model draft later withdrawn from assertion.",
+        uncertainty="The withdrawal removes it from the brief and the bound.",
+    )
+    assert _claim_bound(lab, scenario.seed.mission.id, scenario.seed.claim.id) > baseline
+
+    AdoptionService(lab.database, clock=fixed_clock, id_factory=lab.ids).retract_inference(
+        inference_id=inference_id,
+        reason="Superseded by a corrected analysis.",
+        identity=lab.identity,
+    )
+
+    assert _claim_bound(lab, scenario.seed.mission.id, scenario.seed.claim.id) == baseline
+
+
+def test_claim_preflight_never_counts_inferences_for_json_only_builds(
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A JSON-only build emits no Markdown, so inference text cannot shrink its cap."""
+
+    scenario = _populate_brief(lab)
+    before = lab.synthesis.build_research_packet_json(
+        scenario.seed.mission.id, claim_id=scenario.seed.claim.id
+    )
+    baseline = _claim_bound(lab, scenario.seed.mission.id, scenario.seed.claim.id)
+    statement = "x" * 3_000
+    uncertainty = "y" * 1_000
+    _adopt_inference(
+        lab,
+        scenario.seed,
+        scenario.support,
+        statement=statement,
+        uncertainty=uncertainty,
+    )
+    bound = baseline + len(statement) + len(uncertainty)
+    # The inference-inclusive bound must clear the canonical JSON size, or this
+    # test would prove nothing about the cap the Markdown build refuses.
+    assert bound > len(before)
+
+    # A cap the Markdown build refuses must leave the JSON-only build admitted,
+    # and the v2 bytes provably unchanged by the adoption.
+    synthesis = SynthesisService(lab.database, clock=fixed_clock, id_factory=lab.ids)
+    monkeypatch.setattr(synthesis, "_max_export_bytes", len(before))
+    with pytest.raises(IntegrityError) as caught:
+        synthesis.build_brief(scenario.seed.mission.id, claim_id=scenario.seed.claim.id)
+    assert caught.value.code == "brief_work_limit"
+
+    packet = synthesis.build_research_packet_json(
+        scenario.seed.mission.id, claim_id=scenario.seed.claim.id
+    )
+    assert packet == before
+
+
+def _mission_preflight_threshold(
+    lab: Lab,
+    mission_id: str,
+    *,
+    include_markdown: bool = True,
+) -> int:
+    """The smallest max_export_bytes the mission-wide preflight admits.
+
+    The mission path returns nothing, so its emitted-text lower bound is read
+    through the refusal boundary instead: UTF-8 storage bytes equal output
+    bytes, making the smallest admitted cap the bound itself.
+    """
+
+    def admitted(cap: int) -> bool:
+        with lab.database.read() as connection:
+            try:
+                synthesis_module._preflight_synthesis(
+                    connection,
+                    mission_id=mission_id,
+                    claim_id=None,
+                    max_export_bytes=cap,
+                    include_markdown=include_markdown,
+                )
+            except IntegrityError as error:
+                if error.code != "brief_work_limit":
+                    raise
+                return False
+        return True
+
+    low, high = 0, synthesis_module.MAX_EXPORT_BYTES
+    assert not admitted(low)
+    assert admitted(high)
+    while high - low > 1:
+        middle = (low + high) // 2
+        if admitted(middle):
+            high = middle
+        else:
+            low = middle
+    return high
+
+
+def test_mission_preflight_counts_inference_text_at_exact_markdown_multiplicity(
+    lab: Lab,
+) -> None:
+    scenario = _populate_brief(lab)
+    baseline = _mission_preflight_threshold(lab, scenario.seed.mission.id)
+    statement = "Café adoption review leaves the claim contested. " + ("x" * 1_000)
+    uncertainty = "The adopted draft does not establish generality."
+
+    _adopt_inference(
+        lab,
+        scenario.seed,
+        scenario.support,
+        statement=statement,
+        uncertainty=uncertainty,
+    )
+
+    with_inference = _mission_preflight_threshold(lab, scenario.seed.mission.id)
+    # Exactly the text the Markdown section renders, once each, in stored bytes.
+    assert with_inference == baseline + len(statement.encode()) + len(uncertainty.encode())
+
+
+def test_mission_preflight_refuses_inference_text_past_the_bound_before_assembly(
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = _populate_brief(lab)
+    _adopt_inference(
+        lab,
+        scenario.seed,
+        scenario.support,
+        statement="x" * 2_000,
+        uncertainty="y" * 1_000,
+    )
+    bound = _mission_preflight_threshold(lab, scenario.seed.mission.id)
+
+    synthesis = SynthesisService(lab.database, clock=fixed_clock, id_factory=lab.ids)
+    monkeypatch.setattr(synthesis, "_max_export_bytes", bound - 1)
+
+    def unexpected_packet_build(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("bounded inference text reached packet construction")
+
+    monkeypatch.setattr(synthesis_module, "build_research_packet", unexpected_packet_build)
+    with pytest.raises(IntegrityError) as caught:
+        synthesis.build_brief(scenario.seed.mission.id)
+
+    assert caught.value.code == "brief_work_limit"
+
+
+def test_mission_preflight_admits_a_mission_just_under_the_inference_bound(
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = _populate_brief(lab)
+    inference_id = _adopt_inference(
+        lab,
+        scenario.seed,
+        scenario.support,
+        statement="The bounded evidence supports a cautious adopted inference.",
+        uncertainty="The evidence does not establish generality.",
+    )
+    bound = _mission_preflight_threshold(lab, scenario.seed.mission.id)
+    artifacts = lab.synthesis.build_brief(scenario.seed.mission.id)
+    assert inference_id in artifacts.markdown.decode("utf-8")
+
+    # The tightest cap the artifacts genuinely fit: the preflight admits it.
+    tight = max(len(artifacts.json), len(artifacts.markdown))
+    assert bound <= tight
+    synthesis = SynthesisService(lab.database, clock=fixed_clock, id_factory=lab.ids)
+    monkeypatch.setattr(synthesis, "_max_export_bytes", tight)
+
+    assert synthesis.build_brief(scenario.seed.mission.id) == artifacts
+
+
+def test_mission_preflight_ignores_retracted_inferences_like_the_brief_does(lab: Lab) -> None:
+    scenario = _populate_brief(lab)
+    baseline = _mission_preflight_threshold(lab, scenario.seed.mission.id)
+    inference_id = _adopt_inference(
+        lab,
+        scenario.seed,
+        scenario.support,
+        statement="A model draft later withdrawn from assertion.",
+        uncertainty="The withdrawal removes it from the brief and the bound.",
+    )
+    assert _mission_preflight_threshold(lab, scenario.seed.mission.id) > baseline
+
+    AdoptionService(lab.database, clock=fixed_clock, id_factory=lab.ids).retract_inference(
+        inference_id=inference_id,
+        reason="Superseded by a corrected analysis.",
+        identity=lab.identity,
+    )
+
+    assert _mission_preflight_threshold(lab, scenario.seed.mission.id) == baseline
+
+
+def test_mission_preflight_never_counts_inferences_for_json_only_builds(lab: Lab) -> None:
+    """A JSON-only build emits no Markdown, so inference text cannot shrink its cap."""
+
+    scenario = _populate_brief(lab)
+    before = lab.synthesis.build_research_packet_json(scenario.seed.mission.id)
+    json_baseline = _mission_preflight_threshold(
+        lab, scenario.seed.mission.id, include_markdown=False
+    )
+    markdown_baseline = _mission_preflight_threshold(lab, scenario.seed.mission.id)
+    statement = "x" * 3_000
+    uncertainty = "y" * 1_000
+    _adopt_inference(
+        lab,
+        scenario.seed,
+        scenario.support,
+        statement=statement,
+        uncertainty=uncertainty,
+    )
+
+    assert (
+        _mission_preflight_threshold(lab, scenario.seed.mission.id, include_markdown=False)
+        == json_baseline
+    )
+    assert _mission_preflight_threshold(lab, scenario.seed.mission.id) == (
+        markdown_baseline + len(statement) + len(uncertainty)
+    )
+    # The v2 bytes are provably unchanged by the adoption.
+    assert lab.synthesis.build_research_packet_json(scenario.seed.mission.id) == before
 
 
 def test_synthesis_batches_citation_verification_and_caches_shared_snapshots(

@@ -80,6 +80,14 @@ _REQUIRED_TRIGGERS = frozenset(
         "finding_retractions_no_delete",
         "exports_no_update",
         "exports_no_delete",
+        "agent_inferences_no_update",
+        "agent_inferences_no_delete",
+        "agent_inference_citations_no_update",
+        "agent_inference_citations_no_delete",
+        "agent_inference_retractions_no_update",
+        "agent_inference_retractions_no_delete",
+        "agent_inference_promotions_no_update",
+        "agent_inference_promotions_no_delete",
     }
 )
 """Declared floor for the append-only triggers a database must carry.
@@ -325,6 +333,64 @@ def _deep_checks(connection: sqlite3.Connection) -> list[DoctorCheck]:
                 "finding_integrity",
                 False,
                 "one or more findings failed citation policy",
+            )
+        )
+
+    # Symmetric with findings: every citation of an unretracted adopted
+    # inference must resolve to an existing, active evidence card that
+    # evaluates the same claim in the same mission.
+    inference_count = 0
+    inference_snapshot_cache = new_snapshot_cache()
+    try:
+        for row in connection.execute(
+            """
+            SELECT id, mission_id, claim_id
+            FROM agent_inferences AS inference
+            WHERE NOT EXISTS (
+                SELECT 1 FROM agent_inference_retractions AS retraction
+                WHERE retraction.inference_id = inference.id
+            )
+            ORDER BY id
+            """
+        ):
+            inference_count += 1
+            citation_rows = list(
+                connection.execute(
+                    "SELECT evidence_id FROM agent_inference_citations WHERE inference_id = ?",
+                    (str(row["id"]),),
+                )
+            )
+            if not citation_rows:
+                raise IntegrityError(
+                    "uncited_agent_inference",
+                    "An adopted inference is missing required citations.",
+                )
+            for citation_row in citation_rows:
+                citation = verify_evidence_reference(
+                    connection,
+                    evidence_id=str(citation_row["evidence_id"]),
+                    mission_id=str(row["mission_id"]),
+                    allow_withdrawn=False,
+                    snapshot_cache=inference_snapshot_cache,
+                )
+                if citation.claim_id != str(row["claim_id"]):
+                    raise IntegrityError(
+                        "inference_citation_scope_invalid",
+                        "An inference citation evaluates a different claim.",
+                    )
+        checks.append(
+            DoctorCheck(
+                "inference_integrity",
+                True,
+                f"verified {inference_count} agent inference(s)",
+            )
+        )
+    except MinervaError:
+        checks.append(
+            DoctorCheck(
+                "inference_integrity",
+                False,
+                "one or more agent inferences failed citation policy",
             )
         )
 

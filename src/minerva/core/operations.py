@@ -90,7 +90,26 @@ class OperationsService:
                 details={"schema_version": version},
             )
 
-        return Database.restore_from(backup, target, on_ready=record_restore)
+        def record_migration(
+            connection: sqlite3.Connection, from_version: int, to_version: int
+        ) -> None:
+            service._audit.ensure_run(connection, identity)
+            service._audit.record(
+                connection,
+                identity=identity,
+                event_type="database.migrated",
+                entity_type="database",
+                entity_id="local",
+                mission_id=None,
+                details={
+                    "from_schema_version": from_version,
+                    "to_schema_version": to_version,
+                },
+            )
+
+        return Database.restore_from(
+            backup, target, on_ready=record_restore, on_migrate=record_migration
+        )
 
 
 def _unlink_if_same(path: Path, device: int, inode: int) -> bool:

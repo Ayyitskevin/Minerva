@@ -10,9 +10,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 import minerva.web.app as app_module
+from minerva.assist.adoption import AdoptionService
+from minerva.assist.models import FindingCandidate, ModelProvider, ProviderSelection
+from minerva.assist.service import AssistanceService
 from minerva.core.db import Database
 from minerva.core.types import local_identity
 from minerva.evidence.service import EvidenceService
+from minerva.research.models import StatementKind
 from minerva.research.service import ResearchService
 from minerva.synthesis.service import SynthesisService
 from minerva.web.app import create_app
@@ -370,3 +374,87 @@ def test_brief_downloads_are_deterministic_in_memory_and_read_only(
         )
     assert audit_count_after == audit_count_before
     assert {item.name for item in database.path.parent.iterdir()} == files_before
+
+
+def _adopt_review_inference(
+    web_client: TestClient,
+    created: dict[str, Any],
+    *,
+    statement: str,
+    uncertainty: str = "The evidence does not establish generality.",
+) -> Any:
+    database = web_client.app.state.database
+    preview = AssistanceService(database).preview_finding_candidates(
+        claim_id=created["claim"]["id"],
+        selection=ProviderSelection(ModelProvider.OPENAI, "test-model-1", "test"),
+        max_candidates=2,
+        max_output_tokens=512,
+    )
+    return AdoptionService(database).adopt_inference(
+        preview=preview,
+        candidate_index=0,
+        candidate=FindingCandidate(
+            statement=statement,
+            statement_kind=StatementKind.AGENT_INFERENCE,
+            uncertainty=uncertainty,
+            evidence_ids=(created["supporting"]["id"],),
+        ),
+        response_sha256="0" * 64,
+        identity=local_identity(purpose="web inference adoption"),
+    )
+
+
+def test_mission_review_renders_adopted_inferences_as_escaped_text(
+    web_client: TestClient,
+) -> None:
+    """Rendered inference text is untrusted model output: inert, labeled, escaped."""
+
+    created = _create_review_data(web_client)
+    payload = "<script>window.inference_pwned=true</script> Adopted model draft."
+    inference = _adopt_review_inference(web_client, created, statement=payload)
+
+    detail = web_client.get(f"/missions/{created['mission']['id']}")
+    claim_detail = web_client.get(f"/claims/{created['claim']['id']}")
+
+    assert detail.status_code == 200
+    assert "Agent inferences (model-drafted, human-adopted)" in detail.text
+    assert "agent inference · openai / test-model-1" in detail.text
+    assert "never evidence or a human finding" in detail.text
+    assert inference.id in detail.text
+    assert "&lt;script&gt;window.inference_pwned=true&lt;/script&gt;" in detail.text
+    assert "<script>window.inference_pwned=true</script>" not in detail.text
+
+    assert claim_detail.status_code == 200
+    assert "Agent inferences (model-drafted, human-adopted)" in claim_detail.text
+    assert inference.id in claim_detail.text
+    assert "<script>window.inference_pwned=true</script>" not in claim_detail.text
+
+
+def test_retracted_inference_is_marked_retracted_in_web(
+    web_client: TestClient,
+) -> None:
+    """A retracted adoption must never read as a live one on the review surface."""
+
+    created = _create_review_data(web_client)
+    inference = _adopt_review_inference(
+        web_client,
+        created,
+        statement="A model draft later withdrawn from assertion.",
+    )
+    before = web_client.get(f"/missions/{created['mission']['id']}")
+    identity = local_identity(purpose="web inference retraction")
+    AdoptionService(web_client.app.state.database).retract_inference(
+        inference_id=inference.id,
+        reason="Synthetic review withdrew this adoption.",
+        identity=identity,
+    )
+
+    response = web_client.get(f"/missions/{created['mission']['id']}")
+
+    assert before.status_code == 200
+    assert "RETRACTED" not in before.text
+    assert response.status_code == 200
+    assert "RETRACTED" in response.text
+    assert "no longer asserted" in response.text
+    assert "Synthetic review withdrew this adoption." in response.text
+    assert identity.actor_id in response.text

@@ -166,6 +166,37 @@ class CandidateBundle:
     disclaimer: str
 
 
+@dataclass(frozen=True, slots=True)
+class AgentInference:
+    """A persisted, human-adopted candidate: labeled model output, never a finding.
+
+    Retraction and promotion mirror the finding read model: a retracted or
+    promoted inference keeps its row and its history, and the read surface must
+    carry that state so a withdrawn adoption never reads as a live one.
+    """
+
+    id: str
+    mission_id: str
+    claim_id: str
+    statement: str
+    uncertainty: str
+    provider: ModelProvider
+    model: str
+    request_sha256: str
+    candidate_index: int
+    response_sha256: str
+    system_prompt_version: str
+    evidence_ids: tuple[str, ...]
+    creator_id: str
+    run_id: str
+    created_at: str
+    retracted: bool = False
+    retraction_reason: str | None = None
+    retracted_at: str | None = None
+    retracted_by: str | None = None
+    promoted_finding_id: str | None = None
+
+
 def validate_model_id(value: str) -> str:
     if not isinstance(value, str):
         raise IntegrityError("assistant_model_invalid", "The provider model identifier is invalid.")

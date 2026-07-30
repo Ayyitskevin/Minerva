@@ -1,9 +1,9 @@
 # ADR 0008: Persist human-adopted agent inferences as a separate labeled record
 
-- Status: **Proposed — not accepted, not implemented**
+- Status: **Accepted**
 - Date: 2026-07-26
-- Decision: **pending, decision gate D-1.** Nothing in this document is in effect.
-  No table, migration, service, or CLI verb described here exists.
+- Decision: **accepted 2026-07-30, decision gate D-1 opened by Kevin's
+  directive.** The four open questions below are resolved as recorded there.
 - Review: Kevin. This adds migration history, persists untrusted model output, and
   changes what a research brief contains — three separately review-gated surfaces
   under AGENTS.md.
@@ -38,7 +38,7 @@ Two prior decisions constrain the shape of any fix:
   type must ship with both halves — the retraction record *and* its visibility —
   or it will repeat that sequence exactly.
 
-## Decision (proposed)
+## Decision
 
 ### What is persisted
 
@@ -56,15 +56,22 @@ It does **not** record the prompt text, the raw provider response, the credentia
 or any provider account identifier. ADR 0003's audit rule is unchanged: digests
 and bounded metadata, never content that was not already local.
 
-### Three append-only tables (migration 0005)
+### Four append-only tables (migration 0005)
 
-`agent_inferences`, `agent_inference_citations`, and
-`agent_inference_retractions` — STRICT, CHECKed identifiers, mission-composite
-foreign keys, and `BEFORE UPDATE` / `BEFORE DELETE` `RAISE(ABORT)` triggers,
-mirroring the existing finding tables exactly. No existing table changes.
+`agent_inferences`, `agent_inference_citations`,
+`agent_inference_retractions`, and `agent_inference_promotions` — STRICT,
+CHECKed identifiers, mission-composite foreign keys, and `BEFORE UPDATE` /
+`BEFORE DELETE` `RAISE(ABORT)` triggers, mirroring the existing finding tables
+exactly. No existing table changes.
 
 The retraction table ships **in the same migration as the record it retracts.**
 That is the whole D-9 lesson and it is not negotiable in this design.
+
+The promotion table is a separate append-only link rather than a column on
+`agent_inferences`, because the update triggers correctly forbid setting a link
+column after insert. `UNIQUE(inference_id)` permits one promotion per
+inference; the finding it names is the human's assertion and the inference
+remains as its provenance.
 
 ### Visibility, from day one
 
@@ -105,40 +112,41 @@ deletion.
 ### Export
 
 `minerva.research-brief.v2` is **unchanged**. Inferences appear in the Markdown
-brief in their own section, labeled so they cannot be mistaken for human findings.
+brief in their own section, labeled so they cannot be mistaken for human
+findings. The v2-omits-inferences divergence is documented in DECISIONS.md, and
+the `v3` packet question is deferred to the first consumer-facing packet
+revision, when a version bump will be forced anyway.
 
-This is the part of the proposal least settled — see the open questions.
+## Open questions — resolved 2026-07-30 under gate D-1
 
-## Open questions for the decision
+These were genuine forks, not rhetorical ones. Kevin's directive of 2026-07-30
+opened gate D-1 and resolved each as follows; the resolutions follow the
+recommendations already drafted above and remain reversible by Kevin at review
+time.
 
-These are genuine forks, not rhetorical ones. Each changes what gets built.
+1. **Does the v2 packet need to say inferences exist?** Resolved: leave
+   `minerva.research-brief.v2` canonical bytes unchanged for this milestone.
+   Inferences appear in the Markdown brief in their own clearly labeled
+   section; the divergence is documented here and in DECISIONS.md, and the
+   `v3` packet question is deferred to the first consumer-facing packet
+   revision (the D-2 era), when a version bump will be forced anyway.
+   Rationale: smallest reviewed change to the highest-integrity surface;
+   preserves golden fixtures and the offline verifier contract.
 
-1. **Does the v2 packet need to say inferences exist?** If inferences are
-   persisted but appear only in Markdown, then two exports of the same mission
-   describe it differently, and a consumer reading v2 has no way to know content
-   was withheld. Three options: leave v2 silent (smallest change, but the
-   divergence is real and undocumented); add a count or boolean so a v2 reader
-   knows to look elsewhere (honest, but changes canonical bytes → `v3`); or carry
-   inferences fully in a `v3`. ADR 0007 deferred a similar question for retracted
-   findings on the grounds that no consumer needed it. That reasoning is weaker
-   here, because a retracted finding is *withdrawn* content while an inference is
-   *live* content the packet omits.
+2. **May a human promote an inference into a finding?** Resolved: yes,
+   explicitly, never automatically. `finding add --from-inference <id>`
+   creates the human finding and records an append-only promotion link in the
+   same atomic transaction — a fourth table, because the `BEFORE UPDATE`
+   triggers correctly forbid setting a link column after insert. The finding
+   is the human's assertion; the inference remains as provenance.
 
-2. **May a human promote an inference into a finding?** If yes, the finding is the
-   human's assertion and the inference stays as its provenance — but nothing
-   structurally links them unless a link is designed. If no, the operator ends up
-   retyping, which is the problem this ADR exists to solve. A link field is
-   probably right; it is not specified above because it deserves an explicit
-   answer.
+3. **Does `doctor` verify inference citation integrity?** Resolved: yes,
+   symmetric with findings, at the cost of another deep-check query.
 
-3. **Does `doctor` verify inference citation integrity?** Findings get this. The
-   symmetric answer is yes, at the cost of another deep-check query.
+4. **CLI verb shape.** Resolved: `assist adopt`, keeping the assistance
+   surface together per ADR 0003's boundary.
 
-4. **CLI verb shape.** Plan 2 proposes `assist adopt`. It could equally be
-   `finding adopt-inference` or `inference adopt`. `assist adopt` keeps the
-   assistance surface together, which reads better against ADR 0003.
-
-## Consequences if accepted
+## Consequences
 
 - Model contribution becomes part of the permanent record instead of terminal
   output, with enough provenance to audit what produced it.

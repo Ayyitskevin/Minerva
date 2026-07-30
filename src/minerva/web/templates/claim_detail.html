@@ -44,4 +44,32 @@
   <p class="empty-state">No evidence cards recorded.</p>
   {% endif %}
 </section>
+
+<section>
+  <h2>Agent inferences (model-drafted, human-adopted)</h2>
+  <p>Adopted model output is labeled provenance, never evidence or a human finding, and it does not influence claim status or counts.</p>
+  {% if agent_inferences %}
+  <ul class="card-list">
+    {% for inference in agent_inferences %}
+    <li class="card">
+      <p class="eyebrow">agent inference · {{ inference.provider.value }} / {{ inference.model }}{% if inference.retracted %} · <strong>RETRACTED</strong>{% endif %}</p>
+      {% if inference.retracted %}
+      <p class="uncertainty"><strong>Retracted:</strong> this inference is no longer asserted. Reason: {{ inference.retraction_reason }} · retracted by {{ inference.retracted_by }} at {{ inference.retracted_at }}</p>
+      {% endif %}
+      <h3>{{ inference.statement }}</h3>
+      <p class="uncertainty"><strong>Uncertainty:</strong> {{ inference.uncertainty }}</p>
+      <dl class="metadata">
+        <dt>Inference ID</dt><dd><code>{{ inference.id }}</code></dd>
+        <dt>Citations</dt><dd>{% for evidence_id in inference.evidence_ids %}<code>{{ evidence_id }}</code>{{ " " if not loop.last }}{% endfor %}</dd>
+        {% if inference.promoted_finding_id %}
+        <dt>Promoted to human finding</dt><dd><code>{{ inference.promoted_finding_id }}</code></dd>
+        {% endif %}
+      </dl>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty-state">No agent inferences adopted.</p>
+  {% endif %}
+</section>
 {% endblock %}

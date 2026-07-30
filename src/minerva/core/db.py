@@ -542,6 +542,7 @@ class Database:
         *,
         refuse_existing: bool = False,
         on_ready: Callable[[sqlite3.Connection, int], None] | None = None,
+        on_migrate: Callable[[sqlite3.Connection, int, int], None] | None = None,
     ) -> int:
         # The unsafe-path rule dominates. `Path.exists()` follows symlinks, so
         # checking `refuse_existing` first made the same filesystem state report
@@ -553,11 +554,13 @@ class Database:
         if refuse_existing and existed_before:
             raise ConflictError("database_exists", "Refusing to overwrite an existing database.")
         if existed_before:
-            return self._initialize_in_place(on_ready=on_ready)
+            return self._initialize_in_place(on_ready=on_ready, on_migrate=on_migrate)
 
         staged = _create_private_database_file(self.path)
         try:
-            version = Database(staged.path)._initialize_in_place(on_ready=on_ready)
+            version = Database(staged.path)._initialize_in_place(
+                on_ready=on_ready, on_migrate=on_migrate
+            )
             _require_standalone_staged_initialize(staged.path)
             try:
                 _publish_private_database(staged, self.path, conflict_code="database_exists")
@@ -567,7 +570,7 @@ class Database:
                 # Another process published first. Repeat initialization against
                 # the public database so a race stays idempotent, exactly as a
                 # sequential second `initialize()` already is.
-                return self._initialize_in_place(on_ready=on_ready)
+                return self._initialize_in_place(on_ready=on_ready, on_migrate=on_migrate)
             return version
         finally:
             staged.cleanup()
@@ -576,6 +579,7 @@ class Database:
         self,
         *,
         on_ready: Callable[[sqlite3.Connection, int], None] | None = None,
+        on_migrate: Callable[[sqlite3.Connection, int, int], None] | None = None,
     ) -> int:
         connection = self.connect(validate_schema=False)
         try:
@@ -604,6 +608,11 @@ class Database:
             # lock actually held.
             pending = _classify_migrations(applied, migrations)
 
+            # Set only when this call migrates a database that already recorded
+            # history. A fresh database applies every migration, but that is
+            # initialization, not a migration of existing state, and `on_ready`
+            # already covers it.
+            migrated_from: int | None = None
             try:
                 if pending:
                     statements = ["BEGIN IMMEDIATE;"]
@@ -617,6 +626,8 @@ class Database:
                             )
                         )
                     connection.executescript("\n".join(statements))
+                    if applied:
+                        migrated_from = len(applied)
                 else:
                     connection.execute("BEGIN IMMEDIATE")
             except sqlite3.Error as error:
@@ -639,6 +650,11 @@ class Database:
 
             _validate_migration_state(connection, require_latest=True)
             version = len(migrations)
+            # The migration, its provenance callback, and the `on_ready` audit
+            # callback commit in this one transaction, so a database is never
+            # published with its schema advanced but the event unrecorded.
+            if on_migrate is not None and migrated_from is not None:
+                on_migrate(connection, migrated_from, version)
             if on_ready is not None:
                 on_ready(connection, version)
             connection.commit()
@@ -716,6 +732,7 @@ class Database:
         target: Path,
         *,
         on_ready: Callable[[sqlite3.Connection, int], None] | None = None,
+        on_migrate: Callable[[sqlite3.Connection, int, int], None] | None = None,
     ) -> Database:
         _reject_unsafe_database_path(backup)
         _reject_unsafe_database_path(target)
@@ -744,9 +761,11 @@ class Database:
                     "The backup failed integrity validation.",
                 )
             # Deliberately unwrapped: a backup taken before a schema upgrade is
-            # intact, not corrupt, and the operator needs that distinction at
-            # recovery time. Only genuine corruption reports backup_invalid.
-            _validate_migration_state(source, require_latest=True)
+            # intact, not corrupt. Since the D-11 amendment to ADR 0004 such a
+            # backup is migrated on the staged copy below, so only a backup this
+            # installation cannot reconcile at all -- unmanaged, newer, or
+            # checksum-mismatched -- is refused here.
+            _validate_migration_state(source, require_latest=False)
 
             staged = _create_private_database_file(target)
             try:
@@ -765,7 +784,12 @@ class Database:
 
             _require_standalone_backup(backup)
             restored = cls(staged.path)
-            restored.initialize(on_ready=on_ready)
+            # A pre-upgrade backup is migrated forward on the private staged
+            # copy -- never the live database -- and deep validation then runs
+            # on the migrated staging state, before publication (ADR 0004, D-11
+            # amendment). Failure anywhere in this pipeline abandons the staged
+            # copy and leaves the destination untouched.
+            restored.initialize(on_ready=on_ready, on_migrate=on_migrate)
             from minerva.core.doctor import run_doctor
 
             report = run_doctor(restored, deep=True)

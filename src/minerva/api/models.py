@@ -6,6 +6,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from minerva.assist.models import AgentInference, ModelProvider
 from minerva.evidence.models import EvidenceCard, EvidenceStance
 from minerva.integrations.research_packet import ResearchPacketDocument
 from minerva.research.models import (
@@ -158,6 +159,29 @@ class FindingRead(StrictModel):
     retracted_by: str | None
 
 
+class AgentInferenceRead(StrictModel):
+    """A human-adopted, labeled model draft: a sibling of findings, never one of them."""
+
+    id: str
+    mission_id: str
+    claim_id: str
+    statement: str
+    uncertainty: str
+    provider: ModelProvider
+    model: str
+    request_sha256: str
+    candidate_index: int
+    response_sha256: str
+    system_prompt_version: str
+    evidence_ids: list[str]
+    created_at: str
+    retracted: bool
+    retraction_reason: str | None
+    retracted_at: str | None
+    retracted_by: str | None
+    promoted_finding_id: str | None
+
+
 class MissionCollection(StrictModel):
     items: list[MissionRead]
     next_cursor: str | None
@@ -180,6 +204,7 @@ class SourceCollection(StrictModel):
 
 class FindingCollection(StrictModel):
     items: list[FindingRead]
+    agent_inferences: list[AgentInferenceRead]
     next_cursor: str | None
 
 
@@ -322,4 +347,27 @@ def finding_read(value: Finding) -> FindingRead:
         retraction_reason=value.retraction_reason,
         retracted_at=value.retracted_at,
         retracted_by=value.retracted_by,
+    )
+
+
+def agent_inference_read(value: AgentInference) -> AgentInferenceRead:
+    return AgentInferenceRead(
+        id=value.id,
+        mission_id=value.mission_id,
+        claim_id=value.claim_id,
+        statement=value.statement,
+        uncertainty=value.uncertainty,
+        provider=value.provider,
+        model=value.model,
+        request_sha256=value.request_sha256,
+        candidate_index=value.candidate_index,
+        response_sha256=value.response_sha256,
+        system_prompt_version=value.system_prompt_version,
+        evidence_ids=list(value.evidence_ids),
+        created_at=value.created_at,
+        retracted=value.retracted,
+        retraction_reason=value.retraction_reason,
+        retracted_at=value.retracted_at,
+        retracted_by=value.retracted_by,
+        promoted_finding_id=value.promoted_finding_id,
     )

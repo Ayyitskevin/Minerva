@@ -314,6 +314,7 @@ class ResearchService:
         evidence_ids: tuple[str, ...],
         identity: IdentityContext,
         claim_id: str | None = None,
+        connection: sqlite3.Connection | None = None,
     ) -> Finding:
         if not isinstance(statement_kind, StatementKind):
             raise IntegrityError("statement_kind_invalid", "Statement class is invalid.")
@@ -338,85 +339,131 @@ class ResearchService:
             )
         finding_id = self._id_factory("fnd")
         created_at = self._clock()
-        with self.database.transaction() as connection:
-            _require_mission(connection, mission_id)
-            if claim_id is not None:
-                claim = connection.execute(
-                    "SELECT 1 FROM claims WHERE id = ? AND mission_id = ?",
-                    (claim_id, mission_id),
-                ).fetchone()
-                if claim is None:
-                    raise NotFoundError("claim_not_found")
-            snapshot_cache = new_snapshot_cache()
-            for evidence_id in unique_evidence:
-                citation = verify_evidence_reference(
-                    connection,
-                    evidence_id=evidence_id,
+        # A caller that already holds a write transaction (inference promotion)
+        # passes its connection so the finding and the record that explains it
+        # commit or roll back together.
+        if connection is None:
+            with self.database.transaction() as owned_connection:
+                return self._record_finding(
+                    owned_connection,
                     mission_id=mission_id,
-                    # PRD invariant 8 and ADR 0007 scope the withdrawn-citation
-                    # refusal to material findings. Refusing it here for every
-                    # kind made creation stricter than export: an assumption
-                    # citing already-withdrawn evidence was rejected, while the
-                    # same end state reached by withdrawing afterwards exports
-                    # fine with the citation marked withdrawn.
-                    allow_withdrawn=not statement_kind.requires_citation,
-                    snapshot_cache=snapshot_cache,
+                    claim_id=claim_id,
+                    statement=statement,
+                    statement_kind=statement_kind,
+                    status=status,
+                    uncertainty=uncertainty,
+                    unique_evidence=unique_evidence,
+                    finding_id=finding_id,
+                    created_at=created_at,
+                    identity=identity,
                 )
-                if claim_id is not None and citation.claim_id != claim_id:
-                    raise IntegrityError(
-                        "finding_citation_scope_invalid",
-                        "A finding citation must evaluate its linked claim.",
-                    )
-            self._audit.ensure_run(connection, identity)
+        return self._record_finding(
+            connection,
+            mission_id=mission_id,
+            claim_id=claim_id,
+            statement=statement,
+            statement_kind=statement_kind,
+            status=status,
+            uncertainty=uncertainty,
+            unique_evidence=unique_evidence,
+            finding_id=finding_id,
+            created_at=created_at,
+            identity=identity,
+        )
+
+    def _record_finding(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        mission_id: str,
+        claim_id: str | None,
+        statement: str,
+        statement_kind: StatementKind,
+        status: FindingStatus,
+        uncertainty: str,
+        unique_evidence: tuple[str, ...],
+        finding_id: str,
+        created_at: str,
+        identity: IdentityContext,
+    ) -> Finding:
+        _require_mission(connection, mission_id)
+        if claim_id is not None:
+            claim = connection.execute(
+                "SELECT 1 FROM claims WHERE id = ? AND mission_id = ?",
+                (claim_id, mission_id),
+            ).fetchone()
+            if claim is None:
+                raise NotFoundError("claim_not_found")
+        snapshot_cache = new_snapshot_cache()
+        for evidence_id in unique_evidence:
+            citation = verify_evidence_reference(
+                connection,
+                evidence_id=evidence_id,
+                mission_id=mission_id,
+                # PRD invariant 8 and ADR 0007 scope the withdrawn-citation
+                # refusal to material findings. Refusing it here for every
+                # kind made creation stricter than export: an assumption
+                # citing already-withdrawn evidence was rejected, while the
+                # same end state reached by withdrawing afterwards exports
+                # fine with the citation marked withdrawn.
+                allow_withdrawn=not statement_kind.requires_citation,
+                snapshot_cache=snapshot_cache,
+            )
+            if claim_id is not None and citation.claim_id != claim_id:
+                raise IntegrityError(
+                    "finding_citation_scope_invalid",
+                    "A finding citation must evaluate its linked claim.",
+                )
+        self._audit.ensure_run(connection, identity)
+        connection.execute(
+            """
+            INSERT INTO findings(
+                id, mission_id, claim_id, statement, statement_kind, status,
+                uncertainty, creator_id, run_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                finding_id,
+                mission_id,
+                claim_id,
+                statement,
+                statement_kind.value,
+                status.value,
+                uncertainty,
+                identity.actor_id,
+                identity.run_id,
+                created_at,
+            ),
+        )
+        for evidence_id in unique_evidence:
             connection.execute(
                 """
-                INSERT INTO findings(
-                    id, mission_id, claim_id, statement, statement_kind, status,
-                    uncertainty, creator_id, run_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO finding_citations(
+                    finding_id, mission_id, evidence_id, creator_id, run_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     finding_id,
                     mission_id,
-                    claim_id,
-                    statement,
-                    statement_kind.value,
-                    status.value,
-                    uncertainty,
+                    evidence_id,
                     identity.actor_id,
                     identity.run_id,
                     created_at,
                 ),
             )
-            for evidence_id in unique_evidence:
-                connection.execute(
-                    """
-                    INSERT INTO finding_citations(
-                        finding_id, mission_id, evidence_id, creator_id, run_id, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        finding_id,
-                        mission_id,
-                        evidence_id,
-                        identity.actor_id,
-                        identity.run_id,
-                        created_at,
-                    ),
-                )
-            self._audit.record(
-                connection,
-                identity=identity,
-                event_type="research.finding.created",
-                entity_type="finding",
-                entity_id=finding_id,
-                mission_id=mission_id,
-                details={
-                    "citation_count": len(unique_evidence),
-                    "statement_kind": statement_kind.value,
-                    "status": status.value,
-                },
-            )
+        self._audit.record(
+            connection,
+            identity=identity,
+            event_type="research.finding.created",
+            entity_type="finding",
+            entity_id=finding_id,
+            mission_id=mission_id,
+            details={
+                "citation_count": len(unique_evidence),
+                "statement_kind": statement_kind.value,
+                "status": status.value,
+            },
+        )
         return Finding(
             finding_id,
             mission_id,

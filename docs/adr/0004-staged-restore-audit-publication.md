@@ -2,8 +2,9 @@
 
 - Status: Accepted
 - Date: 2026-07-22
-- Amended: 2026-07-25 (extended to fresh initialization; see the amendment at the
-  end of this record)
+- Amended: 2026-07-25 (extended to fresh initialization) and 2026-07-30 (staged
+  migration during restore, gate D-11); see the amendments at the end of this
+  record
 - Review: Kevin/Opus review required because this changes audit atomicity and
   restore-publication ordering
 
@@ -134,3 +135,93 @@ keeps a race as idempotent as a sequential second `initialize()` already was.
   stop the destructive unlink.
 - **Interpolating the path into the URI**: a database named `a?b.db` silently
   opens a file named `a`.
+
+## Amendment (2026-07-30): migrate the staged copy during restore (gate D-11)
+
+### Context
+
+This record's pipeline stages the backup copy, initializes it, audits,
+deep-validates, and publishes exclusively — but until now the source validation
+refused any backup whose recorded schema version was behind the binary's
+packaged migrations. That left an asymmetric recovery gap. The documented
+upgrade procedure is: verified standalone pre-upgrade backup, then `minerva
+init`, then `doctor --deep`. An operator who upgraded, hit trouble, and reached
+for that backup found that the *upgraded* binary refused to restore it
+(`database_migration_required`), so recovery from a pre-upgrade backup required
+keeping or reinstalling the prior binary — the exact binary whose retirement
+was the point of the upgrade. Rolling back a version legitimately needs the
+prior binary (there is no in-place downgrade), but moving *forward* from an
+older backup does not: the forward-only migration chain is already the reviewed
+mechanism for advancing recorded history, and this record's staging pipeline
+already gives it a private, audited, deep-validated place to run.
+
+Kevin's directive of 2026-07-30 opened gate D-11 and accepted Plan 2's
+recommendation to close the gap inside this pipeline rather than beside it.
+
+### Decision
+
+`restore_from` validates the backup's migration state without requiring the
+latest schema version. An intact backup at any older recorded version is
+accepted; an unmanaged, newer, or checksum-mismatched backup is still refused
+before staging with the same stable codes as before, and only genuine
+corruption reports `backup_invalid`.
+
+The staged copy — never the live database — is then migrated forward by the
+same forward-only, checksum-recording migration runner that initialization
+uses, inside the staging pipeline this record established. When the staged
+copy's recorded history advances, a `database.migrated` audit event carrying
+`from_schema_version` and `to_schema_version` is recorded in the same
+transaction as the migration itself and the restore-audit callback, before
+deep validation. The existing deep doctor check then runs on the *migrated*
+staging state, and only a clean report proceeds to the unchanged exclusive
+publication.
+
+The audit trail this produces is provenance-correct about what happened: the
+staged copy is the database that gets published, so the restored database
+carries the backup's original history followed by the restore run's
+`database.migrated` (from → to) and `database.restored` events, all committed
+atomically with the schema change they describe. A same-version restore records
+no `database.migrated` event. `minerva init` upgrades of a live database are
+unchanged and record none either; the event exists only where a migration ran
+inside restore.
+
+### Consequences
+
+- Restoring a pre-upgrade backup with the upgraded binary now succeeds and
+  yields a published database at the latest schema version, with recorded
+  migration history and checksums identical to any other current database.
+- The live database is never migrated by restore. A failed staged migration
+  reports `migration_failed`, and every failure in the pipeline — migration,
+  audit callback, or deep validation — abandons the private staged copy with
+  the destination and live state untouched, preserving this record's
+  fail-closed semantics.
+- Deep validation continues to run after all staged writes, so it now also
+  covers the migrated schema: the required-trigger set and audit reconciliation
+  are derived from the packaged migrations the staged copy was just advanced
+  to.
+- Backup policy is deliberately unchanged: `backup_to` still refuses an
+  outdated live schema with `database_migration_required`, because running deep
+  doctor against an older schema is not meaningful. The operator takes the
+  pre-upgrade backup *before* upgrading, with the binary that is current at
+  that moment; restore is the side that now tolerates the age difference.
+- Rollback doctrine is unchanged. Migrations remain forward-only and recorded
+  history is never rewritten; rolling back to an older version still means
+  restoring the verified pre-upgrade backup with the prior binary into a new
+  path. What closed is the forward direction of the same gap.
+
+### Rejected alternatives (amendment)
+
+- **Restore-with-prior-binary forever**: operationally fragile (the prior
+  binary may be unavailable exactly when recovery is needed) and unnecessary,
+  since the forward chain and the staging pipeline already exist and compose
+  safely.
+- **Migrate the backup file in place before staging**: mutates the operator's
+  only recovery artifact and breaks the byte-stable-artifact posture; the whole
+  point of staging is that nothing irreversible happens to anything public or
+  operator-owned.
+- **Migrate after publication**: exposes a published database at an
+  unvalidated intermediate schema and repeats the publish-then-fix ordering
+  this record was written to forbid.
+- **A silent migration**: advancing recorded history without an audit event
+  would leave the restored database's own trail unable to say when or by how
+  much its schema moved — dishonesty by omission on a high-integrity surface.
