@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from minerva.core.durability import fsync_directory
-from minerva.core.errors import ConflictError, IntegrityError, MinervaError
+from minerva.core.errors import ConflictError, IntegrityError, MinervaError, OperationalError
 
 if TYPE_CHECKING:
     # `doctor` imports this module, so the runtime import stays inside the
@@ -320,7 +320,18 @@ def _publish_private_database(
     # The link created a new directory entry. Persist it before any caller
     # records the publication, so an audit row can never survive a crash that
     # the database it describes did not.
-    fsync_directory(target)
+    try:
+        fsync_directory(target)
+    except OSError as error:
+        # The public hard link is already visible. Do not unlink it here: another
+        # process may have adopted that exact path, and a failed directory sync
+        # cannot tell us whether the name will survive a crash. Preserve the
+        # target and require the operator to inspect it before any retry.
+        raise OperationalError(
+            "database_publication_durability_unknown",
+            "The database target may have been created, but its directory entry "
+            "could not be confirmed durable. Inspect the target before retrying.",
+        ) from error
 
 
 def _require_backupable(

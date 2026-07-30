@@ -13,6 +13,13 @@ class MinervaError(Exception):
         self.http_status = http_status
 
 
+class OperationalError(MinervaError):
+    """An expected local failure that callers may safely retry only as directed."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(code, message, http_status=503)
+
+
 class NotFoundError(MinervaError):
     def __init__(self, code: str, message: str = "The requested resource was not found.") -> None:
         super().__init__(code, message, http_status=404)

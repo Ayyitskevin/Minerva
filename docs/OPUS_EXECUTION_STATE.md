@@ -19,13 +19,16 @@ records what has actually been built, verified, and deviated from.
 **Plan 1 Phase 0 is complete and merged** (PRs #10, #11, #12). Slice 6
 answered decision gate **D-9**, the first gate Kevin recorded.
 
-**Plan 2 Phase 0C is complete** (slices 7-18, PRs #15-#24 plus this one).
-Plan 2 (base commit `b26268c`, merged as PRs #13/#14) re-verified every
-load-bearing claim below against the code and re-ran all eleven gates
-before trusting any of it: all claims held, all gates passed. It also
-found eleven defects that survived adversarial verification, two of them
-high, both consequences of D-9 landing in the database but not on the
-reading surfaces.
+**Plan 2 Phase 0C implementation is complete, with final repository
+integration held on open PR #29.** The original slices 7-18 landed through
+PRs #15-#25. A later closure audit added the release record in merged PR #28,
+direct retraction/network-guard witnesses in merged PR #30, and the final
+publication-durability correction in ready-for-human-review PR #29. Plan 2
+(base commit `b26268c`, merged as PRs #13/#14) re-verified every load-bearing
+claim below against the code and re-ran all eleven gates before trusting any
+of it. It also found eleven defects that survived adversarial verification,
+two of them high, both consequences of D-9 landing in the database but not on
+the reading surfaces.
 
 Executing those twelve issues surfaced **five further defects the plan
 did not name**, each found while fixing another: `backup_to` rewriting
@@ -35,8 +38,10 @@ migration race reporting `migration_failed` where the truth was
 `database_too_new`, and `KeyboardInterrupt` escaping the assistance
 interrupt handling entirely.
 
-The only ungated work left is the release tag, which needs a version
-decision from Kevin rather than code — see **Next task**.
+The release tag is published. No ungated implementation work remains. The
+only Phase 0C integration hold is mandatory human review and merge of ready,
+CI-green PR #29. Its live PR/check record, rather than this versioned file, is
+authoritative for the current exact head; see **Next task**.
 
 No decision gate beyond D-9 has been entered; none may be until Kevin
 records it.
@@ -1338,14 +1343,35 @@ only order-independent sums, so canonical output cannot be affected.
 
 ## Blockers
 
-None. Slice 1 required no human decision.
+PR #29 requires the repository-mandated human review because it changes
+high-integrity filesystem publication and audit ordering. No known code, test,
+or CI defect remains on its exact head.
 
 ## Next task
 
-**Phase 0C is complete.** Slices 7-18 closed plan 2 issues 1-12. Slice 18 took
-the last of them: F-AI-4 (interrupt-safe assist audit), F-DUP-2 (canonical-helper
-consolidation), F-TEST-3 (coverage floor 85 -> 88), and the documentation half of
-F-REL-1/2.
+**Phase 0C implementation is complete after post-plan audit corrections;
+repository integration is held on PR #29 human review.** Slices 7-18 were
+originally recorded as closing plan 2 issues 1-12, with slice 18 taking
+F-AI-4 (interrupt-safe assist audit), F-DUP-2 (canonical-helper
+consolidation), F-TEST-3 (coverage floor 85 -> 88), and the documentation
+half of F-REL-1/2. A later requirement-by-requirement Codex audit found three
+closure gaps behind that claim:
+
+- the release tag and durable release record still needed to be published and
+  reconciled (PR #28);
+- issue 1 lacked a direct CLI retraction-rendering witness and issue 10 lacked a
+  direct `sendmsg` network-guard witness (PR #30); and
+- issue 5 synced files inside a newly created output directory without first
+  making the directory name durable, and publication-barrier failures had no
+  explicit unknown-outcome contract (the final durability correction).
+
+PRs #28 and #30 close their merged gaps without retroactively crediting slices
+7-18 with work they did not contain. PR #29 closes the remaining code gap on
+its exact branch but cannot become repository-integrated truth before human
+review and merge. On that combined branch all eleven gates pass: 703 tests at
+90.06% branch coverage, both distributions verified, installed-wheel smoke
+passed, static security passed over 51 files, 41 packages are compatible, and
+the diff is clean.
 
 **Kevin answered the tag question: tag `v0.2.0a1` as-is.** Plan 2 asked for
 `v0.2.0` while `pyproject.toml` declares `0.2.0a1`; rather than bump the version
@@ -1372,7 +1398,9 @@ in `CONTRIBUTING.md` was followed on the merge commit `b162573`:
    annotated tag object `ceb995a750644c561a3da20388badc345621b0ce`, peeling to
    exact commit `b1625737345a8d3d017678d1f26ab11eedf9ff57`.
 
-The release record is therefore complete. Nothing in Phase 0C remains open.
+The release record is complete. The only Phase 0C item not integrated on
+`main` is PR #29's final durability correction; no ungated implementation
+work remains.
 
 Still awaiting Kevin, and not to be started without a recorded decision:
 

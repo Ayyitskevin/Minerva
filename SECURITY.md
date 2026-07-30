@@ -107,10 +107,33 @@ directory that Minerva will refuse to overwrite.
 Every point that publishes a new filename — the exclusive `os.link` behind
 initialization, backup, and restore, plus the exported brief and the fulfillment
 output files — syncs the containing directory before the operation reports success
-or records it. Without that, a file's contents can be durable while the directory
-entry naming it is still only in the page cache, so a crash immediately after a
-successful `minerva backup` could leave a committed `database.backup.created` audit
-row describing a file that no longer exists.
+or records it. Before an export or fulfillment writes anything, Minerva always syncs
+the pinned parent directory that names its output directory, including when that output
+directory already existed. This closes the race where one process observes a newly
+created directory whose creator has not yet made the name durable. Minerva then syncs
+the output directory after writing the files inside it. Failure at either barrier is
+reported as `output_publication_durability_unknown` (CLI exit `4`), records no export
+audit success, and requires inspection before retry. The visible output directory is
+not deleted automatically; after a later output-directory sync failure, Minerva
+attempts to remove only operation-created files whose recorded identities still match.
+Cleanup is best effort, does not follow symbolic links, and checks recorded identities
+before removal; mutually untrusted processes running as the same OS user remain outside
+the security boundary. Without those steps, durable file contents could still disappear
+because a parent directory entry existed only in the page cache, leaving a successful
+operation or committed audit row describing a path that did not survive the crash.
+
+Database publication has one unavoidable uncertain-outcome case. If the exclusive hard
+link succeeds but syncing its parent directory fails, the public target is already
+visible and another process may have adopted it. Minerva therefore does not delete that
+target or report success. It reports `database_publication_durability_unknown` (CLI exit
+`4`) and attempts best-effort removal of only its private staging name. A backup failure
+at this point records no `database.backup.created` event in the source database; an
+initialization or restore target can already contain the corresponding event committed
+into the staged database before publication. Stop concurrent use, inspect the exact
+target with `doctor --deep`, then either persist its parent directory with trusted OS
+tooling and reverify before adopting it, or human-confirm removal of that exact target
+and sync the parent before retrying. Minerva has no application-level command that
+resolves this OS durability state, so blind retry or deletion is unsafe.
 
 This closes exactly one window and claims nothing further. It does not make a
 multi-file export atomic: a crash between the two exported files still leaves the

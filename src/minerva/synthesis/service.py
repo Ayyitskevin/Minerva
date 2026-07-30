@@ -14,7 +14,7 @@ from typing import Any
 
 from minerva.core.audit import AuditRecorder, AuditSink
 from minerva.core.db import Database
-from minerva.core.errors import ConflictError, IntegrityError, NotFoundError
+from minerva.core.errors import ConflictError, IntegrityError, NotFoundError, OperationalError
 from minerva.core.types import Clock, IdentityContext, IdFactory, new_id, utc_now
 from minerva.evidence.integrity import new_snapshot_cache, verify_evidence_references
 from minerva.integrations.research_packet import (
@@ -267,7 +267,7 @@ class SynthesisService:
                 # durable until the directory is. Persist them before recording
                 # the export, so a committed `brief_exports` row cannot outlive
                 # the artifacts it names.
-                os.fsync(root_fd)
+                _sync_output_directory_entries(root_fd)
                 with self.database.transaction() as connection:
                     if _audit_watermark(connection) != audit_watermark:
                         raise ConflictError(
@@ -340,7 +340,7 @@ def write_research_request_artifacts(
             written.append(_write_exclusive(root_fd, _RESULT_NAME, result_json))
             # Fulfillment reports success by these files existing, so their
             # directory entries must survive a crash that follows the report.
-            os.fsync(root_fd)
+            _sync_output_directory_entries(root_fd)
         except BaseException:
             _clean_written(root_fd, written)
             raise
@@ -1614,6 +1614,17 @@ class _WrittenFile:
         self.inode = inode
 
 
+def _sync_output_directory_entries(descriptor: int) -> None:
+    try:
+        os.fsync(descriptor)
+    except OSError as error:
+        raise OperationalError(
+            "output_publication_durability_unknown",
+            "The output path may have been created, but its directory entries could not be "
+            "confirmed durable. Inspect the output directory before retrying.",
+        ) from error
+
+
 def _open_output_directory(path: Path, *, create: bool) -> int:
     absolute = Path(os.path.abspath(path))
     if "\x00" in os.fspath(absolute):
@@ -1662,6 +1673,16 @@ def _open_output_directory(path: Path, *, create: bool) -> int:
                     "export_path_invalid",
                     "The export directory is invalid.",
                 ) from error
+            if is_final:
+                # Persist the final name through its pinned parent even when the
+                # directory already existed. It may have been created by another
+                # process whose own barrier has not completed or will fail.
+                try:
+                    _sync_output_directory_entries(descriptor)
+                except BaseException:
+                    with contextlib.suppress(OSError):
+                        os.close(next_descriptor)
+                    raise
             os.close(descriptor)
             descriptor = next_descriptor
         return descriptor
