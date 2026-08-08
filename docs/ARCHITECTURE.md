@@ -41,6 +41,11 @@ claim lineage CLI --> complete claim-owned closure --> one query-only SQLite sna
                                                         |
                                                         +--> verified typed nodes/edges
                                                              + deterministic JSON receipt
+
+mission queue CLI --> complete Claim Review cue index --> one query-only SQLite snapshot
+                                                               |
+                                                               +--> reviewed claims/cues
+                                                                    + deterministic receipt
 ```
 
 The SQLite database is authoritative for structured research state and source
@@ -61,6 +66,8 @@ they may not reimplement domain validation or write SQL directly.
   and correction-impact receipts over existing claim ledgers.
 - `lineage`: complete-or-refuse typed provenance topology over one existing
   claim-owned ledger closure, with exact citation and snapshot verification.
+- `research_queue`: complete-or-refuse mission-wide aggregation of the pinned Claim
+  Review cue taxonomy into a non-normative structural review index.
 - `synthesis`: canonical research-packet assembly, citation verification,
   claim-scoped request fulfillment, Markdown/JSON rendering, digesting, and contained
   file export.
@@ -263,6 +270,64 @@ score, or status recommendation and performs no correction or adoption. Its scop
 owner-first closure is not a replacement for deep doctor's whole-database referential
 and audit-integrity scan. See [`CLAIM_LINEAGE_V1.md`](CLAIM_LINEAGE_V1.md) for the
 receipt and semantic contract.
+
+## Mission Research Queue read boundary
+
+`MissionResearchQueueService.build_queue(...)` is a public local query application
+service over every owner-admitted claim in one explicitly named mission. The CLI
+supplies the mission and aggregate deterministic bounds and emits the returned receipt
+inside a JSON-only `mission_research_queue` envelope. All claim discovery, review
+derivation, scope checks, integrity resolution, bounds, ordering, and digest
+construction remain in the service.
+
+One `Database.read()` transaction with connection-local `PRAGMA query_only=ON` owns
+the whole mission build. Claims are admitted in `(created_at, id)` order. A
+connection-bound internal Claim Review derivation reuses the existing review SQL,
+scope, citation/snapshot verification, cue taxonomy, and receipt construction under
+the queue's one cumulative SQLite progress handler; the queue neither loops the
+public multi-connection wrapper nor creates a parallel review implementation.
+
+Every complete pinned Claim Review v1 receipt yields a reviewed-claim summary and
+review digest. Every cue yields one `structural_review_cue` item carrying category,
+code, explanation, related record IDs, claim/question identity, and the source review
+digest. Claim summaries remain separately represented so claim-set completeness is
+bound directly rather than inferred from the item array. Under the current taxonomy
+every claim emits at least one cue, because missing support/opposition is a gap while
+coexistence is a structural stance conflict. The assembler nevertheless retains a
+self-consistent zero-cue child review with `item_count: 0`; that defensive shape does
+not assert that honest Claim Review v1 state can be cue-free.
+
+Claim Lineage is not part of this build path. Its typed graph remains a separate
+operator inspection surface, but it defines topology and recorded human rationale,
+not queue reason codes or actionability. Mission-owned claimless findings may occur
+only as related IDs already admitted by Claim Review through a target claim's
+correction impact; they never become queue roots.
+
+Claims order by `(created_at, id)` and cues use the fixed Claim Review catalog order.
+That canonical sequence is presentation only; it is not priority, severity, age,
+confidence, actionability, or recommended traversal. Compact sorted-key serialization
+produces claim-set, review-set, item-set, and whole-receipt SHA-256 values without a
+generated identifier or observation time.
+
+Aggregate claim, item, distinct verified-evidence-card, distinct evidence-quote-byte,
+affected-record, relationship, actual snapshot-byte, canonical-output-byte, and
+cumulative SQLite-VM ceilings protect the whole operation. One internal
+verified-citation cache binds the evidence count and quote-byte sum to the union of
+target ledgers and admitted correction-citation closure; a metadata-only length
+preflight must admit every new evidence ID and its quote bytes against the remaining
+aggregate budgets before quote text reaches Python. Crossing any ceiling raises
+`mission_research_queue_work_limit` and returns no prefix. Invalid bounds raise
+`mission_research_queue_bounds_invalid`; inconsistent admitted review/cue state raises
+`mission_research_queue_inconsistent` or the existing exact citation/snapshot integrity
+error as applicable.
+
+The queue service has no identity, clock, ID factory, writer, audit sink, export,
+provider, credential, network, packet, capability-manifest, Claim Lineage, HTTP/web,
+MCP, or other external-agent dependency. The result is a non-normative review index,
+not a persisted task queue: it creates no assignment, deferment, resolution,
+completion, research state, or action recommendation. See
+[`MISSION_RESEARCH_QUEUE_V1.md`](MISSION_RESEARCH_QUEUE_V1.md) for the receipt and
+semantic contract.
 
 ## Exact citations
 

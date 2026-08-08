@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import asdict
 from hashlib import sha256
-from typing import cast
+from inspect import signature
+from typing import Any, cast
 
 import pytest
 
@@ -26,6 +27,41 @@ from minerva.review import ClaimReviewBounds, ClaimReviewService
 
 _SUPPORT_QUOTE = "Evidence supports the claim."
 _SAFE_INTEGRITY_MESSAGE = "Stored claim review state is invalid."
+
+
+def test_public_claim_review_cannot_accept_a_caller_forged_snapshot_cache(lab: Lab) -> None:
+    seed = lab.seed_claim()
+    service = ClaimReviewService(lab.database)
+    parameters = signature(service.review_claim).parameters
+
+    assert "_connection" not in parameters
+    assert "_snapshot_cache" not in parameters
+    with pytest.raises(TypeError):
+        cast(Any, service.review_claim)(
+            mission_id=seed.mission.id,
+            claim_id=seed.claim.id,
+            _snapshot_cache={},
+        )
+
+
+def test_public_claim_review_snapshot_bound_remains_distinct_blob_bytes(lab: Lab) -> None:
+    quote = "Q" * 100_000
+    seed = lab.seed_claim(content=quote.encode("utf-8"))
+    lab.cite(seed, quote, EvidenceStance.SUPPORTS)
+    lab.cite(seed, quote, EvidenceStance.CONTEXT)
+
+    review = ClaimReviewService(lab.database).review_claim(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        bounds=ClaimReviewBounds(
+            max_evidence_cards=2,
+            max_snapshot_bytes=100_000,
+        ),
+    )
+
+    assert review.work.evidence_card_count == 2
+    assert review.work.distinct_snapshot_count == 1
+    assert review.work.distinct_snapshot_bytes == 100_000
 
 
 def _raw_corrupt(
@@ -954,7 +990,10 @@ def test_claim_with_foreign_or_dangling_question_refuses(
     assert foreign.question.text not in caught.value.public_message
 
 
-def test_unaffected_promotion_lineage_counts_toward_relationship_bound(lab: Lab) -> None:
+def test_unaffected_promotion_lineage_counts_toward_relationship_bound(
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     seed = lab.seed_claim()
     evidence = lab.cite(seed, _SUPPORT_QUOTE, EvidenceStance.SUPPORTS)
     adoption, inference = _adopt_inference(
@@ -973,6 +1012,16 @@ def test_unaffected_promotion_lineage_counts_toward_relationship_bound(lab: Lab)
         reason="Select the inference while leaving its promoted finding live.",
         identity=lab.identity,
     )
+    trace: list[str] = []
+    real_read = lab.database.read
+
+    @contextmanager
+    def traced_read() -> Any:
+        with real_read() as connection:
+            connection.set_trace_callback(trace.append)
+            yield connection
+
+    monkeypatch.setattr(lab.database, "read", traced_read)
 
     with pytest.raises(IntegrityError) as caught:
         ClaimReviewService(lab.database).review_claim(
@@ -981,6 +1030,11 @@ def test_unaffected_promotion_lineage_counts_toward_relationship_bound(lab: Lab)
             bounds=ClaimReviewBounds(max_relationships=1),
         )
     assert caught.value.code == "claim_review_work_limit"
+    normalized_trace = tuple(" ".join(statement.upper().split()) for statement in trace)
+    assert not any(
+        "SELECT MISSION_ID, EVIDENCE_ID FROM FINDING_CITATIONS WHERE FINDING_ID =" in statement
+        for statement in normalized_trace
+    )
 
     review = ClaimReviewService(lab.database).review_claim(
         mission_id=seed.mission.id,

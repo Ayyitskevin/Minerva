@@ -33,6 +33,10 @@ from minerva.lens import LensBounds, LensService
 from minerva.lineage import ClaimLineageBounds, ClaimLineageService
 from minerva.research.models import ClaimStatus, FindingStatus, StatementKind
 from minerva.research.service import ResearchService
+from minerva.research_queue import (
+    MissionResearchQueueBounds,
+    MissionResearchQueueService,
+)
 from minerva.review import ClaimReviewBounds, ClaimReviewService
 from minerva.sources.service import SourceService
 from minerva.synthesis.request_fulfillment import ResearchRequestFulfillmentService
@@ -103,6 +107,27 @@ def _cmd_mission_show(args: argparse.Namespace) -> Outcome:
             "agent_inferences": adoption.list_inferences(mission_id, connection=connection),
         }
     return Outcome(result)
+
+
+def _cmd_mission_queue(args: argparse.Namespace) -> Outcome:
+    result = MissionResearchQueueService(_database(args)).build_queue(
+        mission_id=cast(str, args.mission),
+        bounds=MissionResearchQueueBounds(
+            max_claims=cast(int, args.max_claims),
+            max_items=cast(int, args.max_items),
+            max_evidence_cards=cast(int, args.max_evidence_cards),
+            max_distinct_evidence_quote_bytes=cast(
+                int,
+                args.max_distinct_evidence_quote_bytes,
+            ),
+            max_affected_records=cast(int, args.max_affected_records),
+            max_relationships=cast(int, args.max_relationships),
+            max_distinct_snapshot_bytes=cast(int, args.max_distinct_snapshot_bytes),
+            max_output_bytes=cast(int, args.max_output_bytes),
+            max_sqlite_vm_steps=cast(int, args.max_sqlite_vm_steps),
+        ),
+    )
+    return _command_result("mission_research_queue", result)
 
 
 def _cmd_question_add(args: argparse.Namespace) -> Outcome:
@@ -554,6 +579,30 @@ def build_parser() -> argparse.ArgumentParser:
     _add_database(mission_show)
     mission_show.add_argument("--mission", required=True)
     _set_handler(mission_show, _cmd_mission_show)
+    mission_queue = mission_commands.add_parser(
+        "queue",
+        help="build the deterministic mission research review index",
+    )
+    _add_database(mission_queue)
+    mission_queue.add_argument("--mission", required=True)
+    mission_queue.add_argument("--max-claims", type=int, default=100)
+    mission_queue.add_argument("--max-items", type=int, default=1_400)
+    mission_queue.add_argument("--max-evidence-cards", type=int, default=5_000)
+    mission_queue.add_argument(
+        "--max-distinct-evidence-quote-bytes",
+        type=int,
+        default=67_108_864,
+    )
+    mission_queue.add_argument("--max-affected-records", type=int, default=10_000)
+    mission_queue.add_argument("--max-relationships", type=int, default=50_000)
+    mission_queue.add_argument(
+        "--max-distinct-snapshot-bytes",
+        type=int,
+        default=67_108_864,
+    )
+    mission_queue.add_argument("--max-output-bytes", type=int, default=67_108_864)
+    mission_queue.add_argument("--max-sqlite-vm-steps", type=int, default=8_000_000)
+    _set_handler(mission_queue, _cmd_mission_queue)
 
     question_parser = commands.add_parser("question", help="manage research questions")
     question_commands = question_parser.add_subparsers(dest="question_command", required=True)

@@ -251,7 +251,9 @@ hashes are not an external integrity anchor against coordinated database rewrite
 No schema migration, index, trust-model change, capability entry, canonical packet
 change, cryptographic identity, external principal, Athena/Icarus adapter,
 scholarly-source adapter, PROV-O/RO-Crate export, or MCP/API surface is accepted by
-this decision. The next proposed dependency is a derived, non-persisted,
-human-owned mission research queue built from existing deterministic reason codes;
-Lens receipt verification/replay follows it. Each still requires a separate owner
-decision, and persistence or external protocol work remains separately gated.
+this decision. A later continuation separately accepts Mission Research Queue v1 as a
+non-persisted mission-wide index of Claim Review cues. Queue v1 does not invoke this
+graph: Claim Lineage supplies topology, not a reason-code or actionability policy.
+Lens receipt verification/replay is now the next proposed dependency. It still
+requires a separate owner decision, and persistence or external protocol work remains
+separately gated.

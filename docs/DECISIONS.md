@@ -14,6 +14,7 @@
 - [Lens v1: narrow local candidate retrieval](#lens-v1-narrow-local-candidate-retrieval) — **Accepted 2026-08-08; broad D-6 remains closed**
 - [Claim Review v1: schema-free gaps and correction impacts](#claim-review-v1-schema-free-gaps-and-correction-impacts) — **Accepted 2026-08-08; this local read-only view only**
 - [Claim Lineage Graph v1: schema-free claim-owned provenance topology](#claim-lineage-graph-v1-schema-free-claim-owned-provenance-topology) — **Accepted 2026-08-08; this local read-only graph only**
+- [Mission Research Queue v1: schema-free structural review index](#mission-research-queue-v1-schema-free-structural-review-index) — **Accepted 2026-08-08; this non-persisted local index only**
 
 ## Milestone 1 implementation decisions
 
@@ -1073,7 +1074,97 @@ broaden any existing trust gate.
 
 The dependency-ordered follow-on plan now proposes (1) a derived, non-persisted,
 human-owned mission research queue and then (2) local Lens receipt
-verification/replay. Neither is authorized by this acceptance. A persistent queue,
-Lens-to-evidence convenience mutation, canonical PROV-O/RO-Crate exporter, migration,
-trust-model change, D-2/D-3/D-5 implementation, or packet v3 continues to need its own
-recorded owner decision.
+verification/replay. Neither is authorized by the Claim Lineage acceptance itself;
+the separate Queue decision below later accepts only the first local read model. A
+persistent queue, Lens-to-evidence convenience mutation, canonical PROV-O/RO-Crate
+exporter, migration, trust-model change, D-2/D-3/D-5 implementation, or packet v3
+continues to need its own recorded owner decision.
+
+## Mission Research Queue v1: schema-free structural review index
+
+The repository owner's 2026-08-08 instruction to continue the accepted dependency
+order separately accepts the next planned capability only: a local, schema-free,
+query-only mission index over the complete pinned Claim Review v1 cue set. The name
+“queue” is an operator metaphor; this decision does not accept persisted task state or
+a family of queue operations.
+
+- **The public surfaces remain local and narrow.**
+  `minerva mission queue --mission ...` and
+  `minerva.research_queue.MissionResearchQueueService.build_queue(...)` return the
+  same receipt; the CLI wraps it in one JSON-only `mission_research_queue` envelope.
+  The service, not the CLI, owns claim discovery, review derivation, scope checks,
+  aggregate bounds, integrity verification, ordering, and receipt construction. There
+  is no REST, web, packet, capability-manifest, MCP, or authenticated external surface.
+- **Queue v1 is a non-normative structural review index.** Its schema is
+  `minerva.mission-research-queue.v1`, algorithm is
+  `claim-review-cue-aggregation` version `"1"`, and scope is
+  `mission_claim_review_cues_v1`. Every owner-admitted mission claim is reviewed in a
+  single query-only SQLite snapshot. The service reuses the pinned Claim Review v1
+  derivation and never creates a parallel review policy or SQL path.
+- **Every pinned cue is retained without actionability filtering.** One
+  `structural_review_cue` item is emitted for each of the four Claim Review gap codes
+  and ten impact codes. Its category, exact code, explanation, related record IDs,
+  claim/question identity, and source review digest establish reason provenance.
+  Historical withdrawal/retraction cues therefore remain visible after the recorded
+  correction; Queue v1 does not silently reinterpret them as actionable or resolved.
+- **Item presence is not task state.** Claim Review v1 always emits at least one cue
+  per claim: lack of support or opposition is a gap, while coexistence emits the
+  structural stance-conflict cue. Queue v1 consequently does not claim that an item
+  can or should disappear. An item is not unresolved work, required action, severity,
+  priority, confidence, assignment, ownership, age, status, deferment, resolution, or
+  completion. A reviewed-claim summary is retained separately for every claim so the
+  receipt binds claim-set completeness directly, not by inference from cue items. The
+  assembler accepts a self-consistent zero-cue child review and records
+  `item_count: 0`; honest Claim Review v1 output still guarantees at least one cue.
+- **Ordering is canonical presentation only.** Claims order by `(created_at, id)`,
+  followed by the fixed Claim Review cue catalog order. No rank or generated item ID
+  is added; `(claim_id, cue_code)` is the natural key. Equal timestamps use
+  the claim identifier as a total tie-break. Array position never becomes priority,
+  severity, or recommended traversal.
+- **Claim Lineage is inspectable but not invoked.** The graph exposes typed topology,
+  lifecycle state, and recorded human reasons, not a queue reason-code or
+  actionability policy. Queue v1 does not convert graph nodes, status rationale, or
+  correction rationale into work items. Operators may separately run Claim Lineage
+  for an indexed claim. Mission-owned claimless findings can appear only as related
+  record IDs when existing Claim Review admits their correction impact; they never
+  become queue roots.
+- **Completion is all or nothing.** Aggregate claim, item, distinct
+  verified-evidence-card, distinct evidence-quote-byte,
+  affected-record, relationship, actual snapshot-byte, final canonical-output-byte,
+  and cumulative SQLite-VM bounds cover the entire mission index. Crossing a ceiling
+  raises `mission_research_queue_work_limit`; invalid bounds raise
+  `mission_research_queue_bounds_invalid`, and inconsistent admitted cue/review state
+  raises `mission_research_queue_inconsistent` or an existing exact-citation/snapshot
+  integrity error as applicable. Success always says
+  `completion_policy: complete_or_refuse`, `complete: true`, and `truncated: false`.
+- **Receipts separately bind every admitted claim.** Stable
+  reviewed-claim summaries bind the exact Claim Review schema/algorithm/version and
+  each child review digest. Compact sorted-key canonical JSON produces claim-set,
+  review-set, item-set, and whole-receipt SHA-256 values without a generated ID or
+  observation time. These hashes establish self-consistency only, not freshness,
+  authenticity, authority, approval, truth, actionability, or disclosure permission.
+- **Evaluation claims remain structural and fixture-bound.** The checked-in harness
+  measures exact claim coverage, reason-label accuracy over the fixed claim-by-catalog
+  universe, cue-entry precision/recall including related record-ID sets, 14/14 reason
+  code coverage, canonical order, digest validity, determinism, foreign-ID/text isolation,
+  and database non-mutation. It reports no priority, relevance, truth, confidence,
+  severity, actionability, or completion metric.
+- **The result is observation, not coordination or mutation.** It creates no queue
+  row, identity, run, audit event, assignment, completion marker, evidence, finding,
+  inference, status, correction, promotion, export, file, or packet; changes no
+  source/snapshot bytes; and invokes no provider, credential, network, graph service,
+  or external system. Separate existing audited commands remain the only mutation
+  path.
+- **No persistence or trust contract changed.** Schema remains v5; no migration,
+  index, packet field/version, capability name, external principal, signature,
+  cryptographic identity, Athena/Icarus seam, MCP, agent-facing API, scholarly-source
+  adapter, standards exporter, or broad D-6 behavior is added. Deep doctor remains the
+  whole-database surface for foreign-owner corruption outside the admitted mission
+  view.
+
+The next proposed dependency is local Lens receipt verification/replay, followed by a
+local review dossier. Neither is authorized by this acceptance. A durable
+assign/defer/resolve queue additionally requires a separately approved migration and
+day-one correction model. Lens-to-evidence mutation, canonical PROV-O/RO-Crate
+export, trust-model change, D-2/D-3/D-5 implementation, or packet v3 continues to need
+its own recorded owner decision.

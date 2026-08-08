@@ -1,4 +1,4 @@
-# Minerva product requirements: provenance foundation through Claim Lineage Graph v1
+# Minerva product requirements: provenance foundation through Mission Research Queue v1
 
 ## Product identity
 
@@ -95,6 +95,30 @@ creates no correction, research state, queue, audit event, export, file, or pack
 and invokes no provider, credential, network, or external-agent protocol. Human
 correction and adoption remain separate explicit audited operations.
 
+## Mission Research Queue v1 outcome
+
+An offline human or local application-service consumer can name one mission and
+receive a deterministic structural review index covering every mission-owned claim.
+`minerva.mission-research-queue.v1` retains a reviewed-claim summary and exact Claim
+Review receipt digest for every claim and emits one `structural_review_cue` item for
+every pinned Claim Review v1 cue. Claim Lineage remains separately inspectable but is
+not invoked because topology does not define queue reason codes.
+
+The versioned `claim-review-cue-aggregation` algorithm uses scope
+`mission_claim_review_cues_v1` and one query-only SQLite snapshot. Aggregate claim,
+item, distinct verified-evidence-card, distinct evidence-quote-byte, affected-record,
+relationship, actual snapshot-byte, canonical-output-byte, and SQLite-work bounds are
+complete-or-refuse: success never hides a later claim or returns a partial index. Stable claim/cue
+presentation order and claim-set, review-set, item-set, and whole-receipt digests bind
+the result without a generated identifier or observation time.
+
+The name “queue” is non-normative. Every current Claim Review claim necessarily has a
+cue, so item presence cannot mean unfinished or required work. No item assigns
+priority, severity, confidence, age, actionability, recommended traversal, ownership,
+assignment, deferment, resolution, or completion. The view creates no persisted queue
+or research state, writes no audit/export/file/packet, invokes no model, credential,
+network, or Claim Lineage service, and exposes no external-agent protocol.
+
 ## Milestone 2B outcome
 
 A local CLI operator can optionally ask OpenAI or Anthropic to draft finding
@@ -154,6 +178,10 @@ publication, messaging, or autonomous research.
   provenance records and append-only relationships owned by one claim. It preserves
   corrected history and exact citation custody but is neither a truth graph nor a
   correction, status, adoption, or queue operation.
+- **Mission research queue:** a deterministic, mission-wide structural index of the
+  pinned Claim Review cue taxonomy. Despite its name, it is neither persisted task
+  state nor a claim that a cue is actionable, unresolved, prioritized, assigned, or
+  complete.
 
 ## Statement classes
 
@@ -271,6 +299,14 @@ unresolved question under the same citation rules as human-authored material.
     unreferenced snapshots, audit/run nodes, and reverse dependents are excluded by
     contract. The result creates no state and makes no truth, confidence, scoring,
     status-recommendation, correction, queue, provider, network, or protocol claim.
+20. Mission Research Queue resolves one explicit mission in one query-only read
+    snapshot and derives a complete pinned Claim Review v1 receipt for every
+    mission-owned claim. Every cue is represented in canonical claim/cue order and
+    bound to its source review digest; claims remain separately summarized. The
+    receipt is complete-or-refuse and creates no persisted task/research state. Cue
+    presence and array position make no actionability, unresolved-work, severity,
+    priority, confidence, assignment, completion, truth, correction, provider,
+    network, or protocol claim.
 
 ## User surfaces
 
@@ -287,6 +323,11 @@ unresolved question under the same citation rules as human-authored material.
   `minerva.lineage.ClaimLineageService.build_graph` application service return one
   deterministic, complete-or-refuse claim provenance graph. No equivalent REST, web,
   provider, packet, capability, or MCP operation exists.
+- `minerva mission queue` and the public local
+  `minerva.research_queue.MissionResearchQueueService.build_queue` application
+  service return one deterministic, complete-or-refuse mission structural review
+  index. No equivalent REST, web, provider, packet, capability, or MCP operation
+  exists.
 - `minerva-demo` creates a disposable synthetic mission and exports its brief without
   contacting a network service. It refuses an existing database.
 - The web interface is a restrained, server-rendered review surface.

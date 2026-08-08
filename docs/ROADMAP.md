@@ -198,46 +198,83 @@
   no correction, research state, queue, audit event, export/file/packet, provider call,
   network activity, protocol, migration, index, or capability claim.
 
+## Mission Research Queue v1: deterministic structural review index
+
+- The repository owner's 2026-08-08 instruction to continue the accepted dependency
+  order narrowly accepts `minerva mission queue` and the public local
+  `minerva.research_queue.MissionResearchQueueService.build_queue` application
+  service. It does not accept persistence, a family of queue operations, or any later
+  roadmap item by implication.
+- `minerva.mission-research-queue.v1` uses algorithm
+  `claim-review-cue-aggregation` and scope `mission_claim_review_cues_v1`. One
+  query-only SQLite snapshot admits every mission-owned claim in stable
+  `(created_at, id)` order and derives a complete pinned Claim Review v1 receipt for
+  each claim.
+- Every pinned Claim Review cue becomes one `structural_review_cue` item. Each item
+  retains its category, code, explanation, related record IDs, source review digest,
+  and claim/question identity. Every reviewed claim has a separate summary and review
+  digest, so claim-set completeness is bound independently from the item array.
+- Item order is deterministic presentation, not a relevance score, severity, priority,
+  age, actionability judgment, or recommended traversal. Under Claim Review v1 every
+  claim has at least one cue: missing support or opposition is a gap, while both
+  coexisting is a structural stance conflict. Item presence therefore never means
+  unresolved or required work. The assembler still retains a self-consistent zero-cue
+  child review as a reviewed-claim summary rather than inferring claim completeness
+  from items.
+- Claim Lineage remains a separate inspection surface. It supplies deterministic
+  topology but no queue reason-code contract, so Queue v1 neither invokes it nor
+  converts status/correction rationale into work items. Mission-owned claimless
+  findings may appear only as related IDs when existing Claim Review admits their
+  correction impact; they never become queue roots.
+- Aggregate claim, item, evidence, affected-record, relationship, snapshot-byte,
+  output-byte, and SQLite-VM bounds are complete-or-refuse. Claim-set, review-set,
+  item-set, and whole-receipt digests bind the result without a generated ID or
+  observation time.
+- The fixed synthetic Queue harness measures exact claim coverage, reason labels and
+  cue entries across the 14-code catalog, related record-ID sets, canonical ordering,
+  digest validity, determinism, mission isolation, and zero mutation. It reports no
+  priority, relevance, truth, confidence, severity, actionability, or completion
+  metric.
+- The index is non-normative and read-only. It creates no persisted queue, assignment,
+  defer/resolve/completion state, identity, run, audit event, evidence, finding,
+  inference, status, correction, export/file/packet, provider call, network activity,
+  protocol, migration, index, or capability claim.
+
 ## Next dependency-ordered capabilities
 
-Claim Lineage Graph v1 is now the accepted completed dependency. The following
+Mission Research Queue v1 is now the accepted completed dependency. The following
 remaining order is proposed, not implementation authorization. Each future slice needs
 an explicit owner decision, including the schema-free local read-only items. No
 migration, trust-model, external-principal,
 cryptographic-identity, adapter, external/agent-facing API, packet-version, or broad
 D-6 gate is open.
 
-1. **Derived mission research queue v1:** turn Claim Review and graph reason codes
-   into a deterministic human worklist without assignments, completion state,
-   confidence, autonomous prioritization, or persistence. A durable
-   assign/defer/resolve queue requires a separately approved migration and a day-one
-   correction model.
-2. **Lens receipt verification/replay:** safely verify a bounded Lens receipt and
+1. **Lens receipt verification/replay:** safely verify a bounded Lens receipt and
    replay it against the exact local snapshot set, detecting receipt,
    Unicode/algorithm, corpus, and snapshot drift without changing research state or
    advertising a new agent protocol.
-3. **Local review dossier:** compose the gap, graph, queue, and Lens provenance views
+2. **Local review dossier:** compose the gap, graph, queue, and Lens provenance views
    for the existing trusted-operator surface. No new external/agent-facing API,
    mutation control, or capability-manifest claim follows from this item.
-4. **PROV-O/RO-Crate decision packet (design only):** prove a lossless mapping for
+3. **PROV-O/RO-Crate decision packet (design only):** prove a lossless mapping for
    exact spans, stance, corrections, inference labels, activities, and audit lineage;
    decide canonicalization, context pinning, and source-byte disclosure before any new
    canonical exporter is accepted.
-5. **Explicit Lens-to-evidence bridge (owner-gated):** if approved, require a
+4. **Explicit Lens-to-evidence bridge (owner-gated):** if approved, require a
    verified receipt, selected candidate, claim, stance, and exact digest confirmation,
    then reuse normal evidence validation/audit. It may never make search itself
    mutating or perform autonomous/bulk adoption.
-6. **Authenticated Athena seam (gate D-2):** first reverify the counterpart, then
+5. **Authenticated Athena seam (gate D-2):** first reverify the counterpart, then
    separately decide ADRs 0009/0010, the external-principal migration, asymmetric
    verification dependency, revocation, replay, and transport. No external research
    mutation is implied.
-7. **Icarus artifact exchange (gate D-3 after D-2):** requires its own canonical
+6. **Icarus artifact exchange (gate D-3 after D-2):** requires its own canonical
    request/result and import-before-evidence decision, likely including a migration;
    Minerva still performs no experiment or automatic adoption.
-8. **Read-only agent protocol (gate D-5 after D-2/D-3):** MCP or any new agent-facing
+7. **Read-only agent protocol (gate D-5 after D-2/D-3):** MCP or any new agent-facing
    API starts with authenticated, bounded read tools backed by existing services and
    exposes no correction, adoption, assistance, publication, or execution verbs.
-9. **Packet v3 (separate decision after a real consumer exists):** define the exact
+8. **Packet v3 (separate decision after a real consumer exists):** define the exact
     correction/inference delta, independent verifier, backward compatibility, and
     hostile-input limits without changing frozen v2 bytes by accident.
 

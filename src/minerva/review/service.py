@@ -8,7 +8,7 @@ import sqlite3
 from collections import Counter
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 from typing import Any, cast
 
@@ -33,6 +33,7 @@ from minerva.research.service import ResearchService
 from minerva.review.models import (
     CLAIM_REVIEW_ALGORITHM,
     CLAIM_REVIEW_ALGORITHM_VERSION,
+    CLAIM_REVIEW_CUE_CATALOG,
     CLAIM_REVIEW_SCHEMA_VERSION,
     AffectedFinding,
     AffectedInference,
@@ -55,6 +56,9 @@ _MAX_EVIDENCE_CARDS = 200
 _MAX_AFFECTED_RECORDS = 500
 _MAX_RELATIONSHIPS = 5_000
 _MAX_SNAPSHOT_BYTES = 67_108_864
+_MAX_EXECUTION_EVIDENCE_QUOTE_BYTES = (
+    _MAX_EVIDENCE_CARDS + _MAX_RELATIONSHIPS
+) * _MAX_SNAPSHOT_BYTES
 _MIN_SQLITE_VM_STEPS = 1_000
 _MAX_SQLITE_VM_STEPS = 16_000_000
 _QUERY_PROGRESS_GRANULARITY = 1_000
@@ -63,46 +67,25 @@ _MISSION_ID = re.compile(r"mis_[0-9a-f]{32}\Z")
 _CLAIM_ID = re.compile(r"clm_[0-9a-f]{32}\Z")
 
 _GAP_EXPLANATIONS = {
-    "no_active_evidence": "No evidence card in this claim is currently active.",
-    "no_active_support": "The active ledger contains no supporting evidence card.",
-    "no_active_opposition": "The active ledger contains no opposing evidence card.",
-    "status_required_active_stance_missing": (
-        "The recorded workflow status no longer has every active stance it requires."
-    ),
+    code: explanation
+    for code, category, explanation in CLAIM_REVIEW_CUE_CATALOG
+    if category == "structural_gap"
+}
+_IMPACT_EXPLANATIONS = {
+    code: explanation
+    for code, category, explanation in CLAIM_REVIEW_CUE_CATALOG
+    if category == "structural_impact"
 }
 
-_IMPACT_EXPLANATIONS = {
-    "active_stance_contradiction": (
-        "The active ledger contains both supporting and opposing evidence."
-    ),
-    "withdrawn_evidence_history_present": (
-        "One or more evidence cards have an append-only withdrawal record."
-    ),
-    "recorded_status_requirement_unmet": (
-        "The recorded status is retained, but its active-evidence requirement is unmet."
-    ),
-    "live_material_finding_uses_withdrawn_evidence": (
-        "An unretracted material finding cites withdrawn evidence and blocks applicable synthesis."
-    ),
-    "optional_statement_uses_withdrawn_evidence": (
-        "An unretracted assumption or unresolved question retains an optional withdrawn citation."
-    ),
-    "retracted_finding_history_present": (
-        "A related finding retraction remains in the append-only history."
-    ),
-    "live_inference_uses_withdrawn_evidence": (
-        "An unretracted adopted inference cites evidence that is no longer active."
-    ),
-    "retracted_inference_history_present": (
-        "A related adopted-inference retraction remains in the append-only history."
-    ),
-    "promoted_finding_remains_independently_asserted": (
-        "A retracted inference's promoted finding remains asserted until separately retracted."
-    ),
-    "live_inference_remains_after_promoted_finding_retraction": (
-        "Retracting a promoted finding does not retract its still-live source inference."
-    ),
-}
+
+@dataclass(frozen=True, slots=True)
+class _ClaimReviewExecutionLimits:
+    max_evidence_cards: int
+    max_affected_records: int
+    max_relationships: int
+    max_new_evidence_cards: int
+    max_new_evidence_quote_bytes: int
+    max_new_snapshot_bytes: int
 
 
 class ClaimReviewService:
@@ -118,22 +101,57 @@ class ClaimReviewService:
         claim_id: str,
         bounds: ClaimReviewBounds = DEFAULT_CLAIM_REVIEW_BOUNDS,
     ) -> ClaimReviewResult:
+        return self._review_claim(
+            mission_id=mission_id,
+            claim_id=claim_id,
+            bounds=bounds,
+            connection=None,
+            snapshot_cache=None,
+            verified_citation_cache=None,
+            verified_citation_quote_bytes=None,
+            execution_limits=None,
+        )
+
+    def _review_claim(
+        self,
+        *,
+        mission_id: str,
+        claim_id: str,
+        bounds: ClaimReviewBounds,
+        connection: sqlite3.Connection | None,
+        snapshot_cache: SnapshotCache | None,
+        verified_citation_cache: dict[str, VerifiedCitation] | None,
+        verified_citation_quote_bytes: dict[str, int] | None,
+        execution_limits: _ClaimReviewExecutionLimits | None,
+    ) -> ClaimReviewResult:
         safe_bounds = _validate_bounds(bounds)
+        safe_execution_limits = _validate_execution_limits(
+            safe_bounds,
+            execution_limits,
+        )
         _validate_scope_ids(mission_id=mission_id, claim_id=claim_id)
         research = ResearchService(self.database)
 
-        with self.database.read() as connection:
-            connection.execute("PRAGMA query_only = ON")
-            with _bounded_query_work(connection, safe_bounds.max_sqlite_vm_steps):
-                _require_mission(connection, mission_id)
-                _require_claim_scope(connection, mission_id=mission_id, claim_id=claim_id)
+        with _review_connection(self.database, connection) as active_connection:
+            active_connection.execute("PRAGMA query_only = ON")
+            with _review_query_budget(
+                active_connection,
+                safe_bounds.max_sqlite_vm_steps,
+                managed=connection is None,
+            ):
+                _require_mission(active_connection, mission_id)
+                _require_claim_scope(
+                    active_connection,
+                    mission_id=mission_id,
+                    claim_id=claim_id,
+                )
                 status_row = _verify_claim_relationships(
-                    connection,
+                    active_connection,
                     mission_id=mission_id,
                     claim_id=claim_id,
                 )
                 try:
-                    claim = research.get_claim(claim_id, connection=connection)
+                    claim = research.get_claim(claim_id, connection=active_connection)
                 except (KeyError, TypeError, ValueError) as error:
                     raise IntegrityError(
                         "claim_review_inconsistent",
@@ -147,97 +165,137 @@ class ClaimReviewService:
                 )
 
                 evidence_rows = _claim_evidence_rows(
-                    connection,
+                    active_connection,
                     mission_id=mission_id,
                     claim_id=claim_id,
-                    limit=safe_bounds.max_evidence_cards,
+                    limit=safe_execution_limits.max_evidence_cards,
                 )
                 target_evidence_ids = tuple(str(row["id"]) for row in evidence_rows)
+                target_quote_bytes = {
+                    str(row["id"]): _stored_quote_byte_length(row) for row in evidence_rows
+                }
+                new_target_evidence_ids = set(target_quote_bytes).difference(
+                    () if verified_citation_cache is None else verified_citation_cache
+                )
+                if (
+                    len(new_target_evidence_ids) > safe_execution_limits.max_new_evidence_cards
+                    or sum(
+                        target_quote_bytes[evidence_id] for evidence_id in new_target_evidence_ids
+                    )
+                    > safe_execution_limits.max_new_evidence_quote_bytes
+                ):
+                    _raise_work_limit()
                 target_evidence_set = frozenset(target_evidence_ids)
                 withdrawn_target_ids = tuple(
                     str(row["id"]) for row in evidence_rows if row["withdrawal_id"] is not None
                 )
 
                 finding_ids = _affected_finding_ids(
-                    connection,
+                    active_connection,
                     mission_id=mission_id,
                     claim_id=claim_id,
                     target_evidence_ids=target_evidence_ids,
                     withdrawn_target_ids=withdrawn_target_ids,
-                    limit=safe_bounds.max_affected_records,
+                    limit=safe_execution_limits.max_affected_records,
                 )
                 inference_ids = _affected_inference_ids(
-                    connection,
+                    active_connection,
                     mission_id=mission_id,
                     claim_id=claim_id,
                     withdrawn_target_ids=withdrawn_target_ids,
                     finding_ids=finding_ids,
-                    limit=safe_bounds.max_affected_records,
+                    limit=(safe_execution_limits.max_affected_records - len(finding_ids)),
                 )
-                if len(finding_ids) + len(inference_ids) > safe_bounds.max_affected_records:
+                if (
+                    len(finding_ids) + len(inference_ids)
+                    > safe_execution_limits.max_affected_records
+                ):
                     _raise_work_limit()
 
                 finding_rows = _finding_rows(
-                    connection,
+                    active_connection,
                     mission_id=mission_id,
                     finding_ids=finding_ids,
                 )
                 inference_rows = _inference_rows(
-                    connection,
+                    active_connection,
                     mission_id=mission_id,
                     inference_ids=inference_ids,
                 )
                 finding_citations = _citation_map(
-                    connection,
+                    active_connection,
                     mission_id=mission_id,
                     table="finding_citations",
                     owner_column="finding_id",
                     owner_ids=finding_ids,
-                    limit=safe_bounds.max_relationships,
+                    limit=safe_execution_limits.max_relationships,
                 )
                 relationship_count = sum(len(items) for items in finding_citations.values())
                 inference_citations = _citation_map(
-                    connection,
+                    active_connection,
                     mission_id=mission_id,
                     table="agent_inference_citations",
                     owner_column="inference_id",
                     owner_ids=inference_ids,
-                    limit=safe_bounds.max_relationships - relationship_count,
+                    limit=safe_execution_limits.max_relationships - relationship_count,
                 )
                 relationship_count += sum(len(items) for items in inference_citations.values())
                 additional_promotion_relationships = _verify_promotion_citation_lineage(
-                    connection,
+                    active_connection,
                     inference_rows=inference_rows,
                     inference_citations=inference_citations,
                     finding_citations=finding_citations,
                     mission_id=mission_id,
-                    limit=safe_bounds.max_relationships - relationship_count,
+                    limit=safe_execution_limits.max_relationships - relationship_count,
                 )
                 relationship_count += additional_promotion_relationships
 
                 citation_ids = set(target_evidence_ids)
                 for items in (*finding_citations.values(), *inference_citations.values()):
                     citation_ids.update(items)
+                active_verified_citation_cache = (
+                    {} if verified_citation_cache is None else verified_citation_cache
+                )
+                active_verified_quote_bytes = (
+                    {} if verified_citation_quote_bytes is None else verified_citation_quote_bytes
+                )
+                new_evidence_ids = citation_ids.difference(active_verified_citation_cache)
+                if len(new_evidence_ids) > safe_execution_limits.max_new_evidence_cards:
+                    _raise_work_limit()
+                new_quote_bytes = _evidence_quote_byte_lengths(
+                    active_connection,
+                    mission_id=mission_id,
+                    evidence_ids=tuple(sorted(new_evidence_ids)),
+                )
+                new_quote_byte_count = sum(new_quote_bytes.values())
+                if new_quote_byte_count > safe_execution_limits.max_new_evidence_quote_bytes:
+                    _raise_work_limit()
                 distinct_snapshot_count, distinct_snapshot_bytes = _snapshot_work(
-                    connection,
+                    active_connection,
                     mission_id=mission_id,
                     evidence_ids=tuple(sorted(citation_ids)),
                     max_snapshot_bytes=safe_bounds.max_snapshot_bytes,
+                    max_new_snapshot_bytes=(safe_execution_limits.max_new_snapshot_bytes),
+                    cached_snapshot_ids=frozenset(() if snapshot_cache is None else snapshot_cache),
                 )
 
-                snapshot_cache = new_snapshot_cache()
+                active_snapshot_cache = (
+                    new_snapshot_cache() if snapshot_cache is None else snapshot_cache
+                )
                 verified_by_id = _verify_citations(
-                    connection,
+                    active_connection,
                     mission_id=mission_id,
                     evidence_ids=tuple(sorted(citation_ids)),
-                    snapshot_cache=snapshot_cache,
+                    snapshot_cache=active_snapshot_cache,
+                    verified_citation_cache=active_verified_citation_cache,
                 )
+                active_verified_quote_bytes.update(new_quote_bytes)
                 evidence = _evidence_references(
                     evidence_rows,
                     mission_id=mission_id,
                     claim_id=claim_id,
                     verified_by_id=verified_by_id,
-                    snapshot_cache=snapshot_cache,
+                    snapshot_cache=active_snapshot_cache,
                     target_evidence_set=target_evidence_set,
                 )
                 findings = _affected_findings(
@@ -360,6 +418,30 @@ class ClaimReviewService:
             review_receipt_sha256=_review_receipt_digest(provisional),
         )
 
+    def _review_claim_in_snapshot(
+        self,
+        *,
+        mission_id: str,
+        claim_id: str,
+        bounds: ClaimReviewBounds,
+        connection: sqlite3.Connection,
+        snapshot_cache: SnapshotCache,
+        verified_citation_cache: dict[str, VerifiedCitation],
+        verified_citation_quote_bytes: dict[str, int],
+        execution_limits: _ClaimReviewExecutionLimits,
+    ) -> ClaimReviewResult:
+        """Package-private seam for aggregate read models owning one snapshot."""
+        return self._review_claim(
+            mission_id=mission_id,
+            claim_id=claim_id,
+            bounds=bounds,
+            connection=connection,
+            snapshot_cache=snapshot_cache,
+            verified_citation_cache=verified_citation_cache,
+            verified_citation_quote_bytes=verified_citation_quote_bytes,
+            execution_limits=execution_limits,
+        )
+
 
 def _validate_bounds(bounds: ClaimReviewBounds) -> ClaimReviewBounds:
     if not isinstance(bounds, ClaimReviewBounds):
@@ -384,6 +466,44 @@ def _validate_bounds(bounds: ClaimReviewBounds) -> ClaimReviewBounds:
     return bounds
 
 
+def _validate_execution_limits(
+    bounds: ClaimReviewBounds,
+    execution_limits: _ClaimReviewExecutionLimits | None,
+) -> _ClaimReviewExecutionLimits:
+    if execution_limits is None:
+        return _ClaimReviewExecutionLimits(
+            max_evidence_cards=bounds.max_evidence_cards,
+            max_affected_records=bounds.max_affected_records,
+            max_relationships=bounds.max_relationships,
+            max_new_evidence_cards=bounds.max_evidence_cards + bounds.max_relationships,
+            max_new_evidence_quote_bytes=_MAX_EXECUTION_EVIDENCE_QUOTE_BYTES,
+            max_new_snapshot_bytes=bounds.max_snapshot_bytes,
+        )
+    values = (
+        execution_limits.max_evidence_cards,
+        execution_limits.max_affected_records,
+        execution_limits.max_relationships,
+        execution_limits.max_new_evidence_cards,
+        execution_limits.max_new_evidence_quote_bytes,
+        execution_limits.max_new_snapshot_bytes,
+    )
+    if (
+        any(isinstance(value, bool) or not isinstance(value, int) for value in values)
+        or not 0 <= execution_limits.max_evidence_cards <= bounds.max_evidence_cards
+        or not 0 <= execution_limits.max_affected_records <= bounds.max_affected_records
+        or not 0 <= execution_limits.max_relationships <= bounds.max_relationships
+        or not 0
+        <= execution_limits.max_new_evidence_cards
+        <= bounds.max_evidence_cards + bounds.max_relationships
+        or not 0
+        <= execution_limits.max_new_evidence_quote_bytes
+        <= _MAX_EXECUTION_EVIDENCE_QUOTE_BYTES
+        or not 0 <= execution_limits.max_new_snapshot_bytes <= bounds.max_snapshot_bytes
+    ):
+        raise IntegrityError("claim_review_bounds_invalid", "Claim review bounds are invalid.")
+    return execution_limits
+
+
 def _validate_scope_ids(*, mission_id: object, claim_id: object) -> None:
     if not isinstance(mission_id, str) or _MISSION_ID.fullmatch(mission_id) is None:
         raise NotFoundError("mission_not_found")
@@ -392,6 +512,34 @@ def _validate_scope_ids(*, mission_id: object, claim_id: object) -> None:
             "claim_review_scope_invalid",
             "The claim review scope is invalid for this mission.",
         )
+
+
+@contextmanager
+def _review_connection(
+    database: Database,
+    supplied: sqlite3.Connection | None,
+) -> Iterator[sqlite3.Connection]:
+    """Reuse a caller-owned read snapshot without opening a nested transaction."""
+    if supplied is not None:
+        yield supplied
+        return
+    with database.read() as connection:
+        yield connection
+
+
+@contextmanager
+def _review_query_budget(
+    connection: sqlite3.Connection,
+    max_sqlite_vm_steps: int,
+    *,
+    managed: bool,
+) -> Iterator[None]:
+    """Leave a caller-owned cumulative progress handler untouched."""
+    if not managed:
+        yield
+        return
+    with _bounded_query_work(connection, max_sqlite_vm_steps):
+        yield
 
 
 @contextmanager
@@ -582,7 +730,8 @@ def _claim_evidence_rows(
             """
             SELECT evidence.id, evidence.mission_id, evidence.claim_id,
                    evidence.snapshot_id, evidence.snapshot_sha256,
-                   evidence.start_byte, evidence.end_byte, evidence.quote,
+                   evidence.start_byte, evidence.end_byte,
+                   LENGTH(CAST(evidence.quote AS BLOB)) AS quote_byte_length,
                    evidence.stance, evidence.supersedes_evidence_id,
                    evidence.creator_id, evidence.run_id, evidence.created_at,
                    withdrawal.id AS withdrawal_id,
@@ -922,6 +1071,8 @@ def _verify_promotion_citation_lineage(
                     "Stored claim review state is invalid.",
                 )
             continue
+        if additional_relationships + len(expected) > limit:
+            _raise_work_limit()
         citations = tuple(
             connection.execute(
                 """
@@ -943,8 +1094,6 @@ def _verify_promotion_citation_lineage(
                 "Stored claim review state is invalid.",
             )
         additional_relationships += len(citations)
-        if additional_relationships > limit:
-            _raise_work_limit()
     return additional_relationships
 
 
@@ -959,7 +1108,7 @@ def _citation_map(
 ) -> dict[str, tuple[str, ...]]:
     if not owner_ids:
         return {}
-    if limit < 1:
+    if limit < 0:
         _raise_work_limit()
     if (table, owner_column) not in {
         ("finding_citations", "finding_id"),
@@ -992,12 +1141,63 @@ def _citation_map(
     return {owner_id: tuple(items) for owner_id, items in grouped.items()}
 
 
+def _stored_quote_byte_length(row: sqlite3.Row) -> int:
+    try:
+        start_byte = int(row["start_byte"])
+        end_byte = int(row["end_byte"])
+        quote_byte_length = int(row["quote_byte_length"])
+    except (TypeError, ValueError) as error:
+        raise IntegrityError(
+            "claim_review_inconsistent",
+            "Stored claim review state is invalid.",
+        ) from error
+    if quote_byte_length < 1 or end_byte - start_byte != quote_byte_length:
+        raise IntegrityError("citation_tampered", "Stored citation integrity failed.")
+    return quote_byte_length
+
+
+def _evidence_quote_byte_lengths(
+    connection: sqlite3.Connection,
+    *,
+    mission_id: str,
+    evidence_ids: tuple[str, ...],
+) -> dict[str, int]:
+    lengths: dict[str, int] = {}
+    for identifiers in _identifier_chunks(evidence_ids):
+        placeholders = _placeholders(identifiers)
+        rows = connection.execute(
+            f"""
+            SELECT id, mission_id, start_byte, end_byte,
+                   LENGTH(CAST(quote AS BLOB)) AS quote_byte_length
+            FROM evidence_cards
+            WHERE id IN ({placeholders})
+            """,  # noqa: S608 - only placeholders are composed.
+            identifiers,
+        )
+        for row in rows:
+            quote_byte_length = _stored_quote_byte_length(row)
+            if str(row["mission_id"]) != mission_id:
+                raise IntegrityError(
+                    "claim_review_inconsistent",
+                    "Stored claim review state is invalid.",
+                )
+            lengths[str(row["id"])] = quote_byte_length
+    if set(lengths) != set(evidence_ids):
+        raise IntegrityError(
+            "claim_review_inconsistent",
+            "Stored claim review state is invalid.",
+        )
+    return lengths
+
+
 def _snapshot_work(
     connection: sqlite3.Connection,
     *,
     mission_id: str,
     evidence_ids: tuple[str, ...],
     max_snapshot_bytes: int,
+    max_new_snapshot_bytes: int,
+    cached_snapshot_ids: frozenset[str],
 ) -> tuple[int, int]:
     if not evidence_ids:
         return 0, 0
@@ -1023,6 +1223,7 @@ def _snapshot_work(
         )
 
     total_bytes = 0
+    new_snapshot_bytes = 0
     resolved_snapshot_ids: set[str] = set()
     for identifiers in _identifier_chunks(tuple(sorted(snapshot_ids))):
         placeholders = _placeholders(identifiers)
@@ -1052,6 +1253,10 @@ def _snapshot_work(
             total_bytes += actual_bytes
             if total_bytes > max_snapshot_bytes:
                 _raise_work_limit()
+            if str(row["id"]) not in cached_snapshot_ids:
+                new_snapshot_bytes += actual_bytes
+                if new_snapshot_bytes > max_new_snapshot_bytes:
+                    _raise_work_limit()
     if resolved_snapshot_ids != snapshot_ids:
         raise IntegrityError(
             "snapshot_tampered",
@@ -1066,17 +1271,24 @@ def _verify_citations(
     mission_id: str,
     evidence_ids: tuple[str, ...],
     snapshot_cache: SnapshotCache,
+    verified_citation_cache: dict[str, VerifiedCitation],
 ) -> dict[str, VerifiedCitation]:
-    return {
-        evidence_id: verify_evidence_reference(
-            connection,
-            evidence_id=evidence_id,
-            mission_id=mission_id,
-            allow_withdrawn=True,
-            snapshot_cache=snapshot_cache,
-        )
-        for evidence_id in evidence_ids
-    }
+    verified_by_id: dict[str, VerifiedCitation] = {}
+    newly_verified: dict[str, VerifiedCitation] = {}
+    for evidence_id in evidence_ids:
+        verified = verified_citation_cache.get(evidence_id)
+        if verified is None:
+            verified = verify_evidence_reference(
+                connection,
+                evidence_id=evidence_id,
+                mission_id=mission_id,
+                allow_withdrawn=True,
+                snapshot_cache=snapshot_cache,
+            )
+            newly_verified[evidence_id] = verified
+        verified_by_id[evidence_id] = verified
+    verified_citation_cache.update(newly_verified)
+    return verified_by_id
 
 
 def _evidence_references(
@@ -1099,7 +1311,7 @@ def _evidence_references(
             or verified.snapshot_sha256 != str(row["snapshot_sha256"])
             or verified.start_byte != int(row["start_byte"])
             or verified.end_byte != int(row["end_byte"])
-            or verified.quote != str(row["quote"])
+            or len(verified.quote.encode("utf-8")) != int(row["quote_byte_length"])
             or verified.stance.value != str(row["stance"])
             or verified.withdrawn != (row["withdrawal_id"] is not None)
         ):

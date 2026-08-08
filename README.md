@@ -37,6 +37,11 @@ withdrawal, retraction, promotion, and exact referenced snapshot while excluding
 claimless and sibling-claim state. The graph is deterministic, local, and read-only;
 it is neither a truth graph nor a correction or queue operation.
 
+Mission Research Queue v1 composes every Claim Review cue across one mission into a
+deterministic structural review index. It retains every reviewed claim and the exact
+review-receipt digest behind each cue, but it is not a persisted task queue: an item never
+means unresolved work, required action, severity, priority, assignment, or completion.
+
 Milestone 2B adds one deliberately narrow, optional assistance surface. A local CLI
 operator can preview a bounded request made from one claim and its active evidence,
 then explicitly authorize that exact request for OpenAI or Anthropic using their own
@@ -116,6 +121,7 @@ minerva evidence add --db research.db --mission MIS_ID --claim CLM_ID \
 minerva claim show --db research.db --claim CLM_ID
 minerva claim review --db research.db --mission MIS_ID --claim CLM_ID
 minerva claim lineage --db research.db --mission MIS_ID --claim CLM_ID
+minerva mission queue --db research.db --mission MIS_ID
 minerva brief export --db research.db --mission MIS_ID --output-dir ./export
 minerva audit list --db research.db --mission MIS_ID
 minerva doctor --db research.db --deep
@@ -141,7 +147,7 @@ reconciled against its `research.finding.retracted` audit event.
 ## Command reference
 
 Every verb the CLI exposes. `--help` on any of them lists its arguments, and the
-sections below cover retrieval, review, lineage, packet, request, assistance, and
+sections below cover retrieval, review, lineage, queue, packet, request, assistance, and
 operations verbs in depth. A test asserts this table stays complete, so a new verb
 cannot ship undocumented.
 
@@ -151,6 +157,7 @@ cannot ship undocumented.
 | `minerva mission create` | create a research mission |
 | `minerva mission list` | list missions, newest first |
 | `minerva mission show` | show one mission and its questions |
+| `minerva mission queue` | build the deterministic mission research review index |
 | `minerva question add` | add a research question to a mission |
 | `minerva claim add` | add a falsifiable claim under a question |
 | `minerva claim show` | show one claim, its status, and its findings |
@@ -301,6 +308,59 @@ Run `uv run python scripts/evaluate_claim_lineage.py` for the fixed synthetic to
 evaluation: typed node and owner-link precision/recall, edge precision/recall, exact
 citation-byte accuracy, deterministic output, mission/claim isolation, and zero
 unauthorized mutation.
+
+## Mission research review index
+
+Build one complete structural index of every Claim Review cue in a mission:
+
+```bash
+minerva mission queue --db research.db --mission MIS_ID
+```
+
+`minerva.mission-research-queue.v1` uses the versioned
+`claim-review-cue-aggregation` algorithm and scope
+`mission_claim_review_cues_v1`. It reviews every mission-owned claim in stable
+`(created_at, id)` order inside one query-only SQLite snapshot, retains a summary and
+Claim Review receipt digest for every reviewed claim, and emits one
+`structural_review_cue` item for every pinned Claim Review v1 cue. Claim Lineage is
+not invoked: its topology remains available through the separate claim command, but
+it does not define queue reason codes.
+
+Item order is canonical presentation only. It is not ranking by importance, age,
+severity, confidence, actionability, or recommended traversal. In the pinned Claim
+Review taxonomy, every claim has at least one structural cue: absence of support or
+opposition is a gap, while their coexistence is a structural stance conflict.
+Accordingly, item presence does not mean unfinished work, and an item never has an
+assigned, deferred, resolved, open, or completed state. Historical withdrawal or
+retraction cues remain visible because the index mirrors Claim Review rather than
+silently filtering them into an action policy.
+
+The assembler nevertheless retains a self-consistent zero-cue child review as a
+reviewed-claim summary with `item_count: 0`. That defensive completeness shape does
+not change the current Claim Review guarantee; honest Claim Review v1 state still
+produces at least one cue per claim.
+
+The result is complete-or-refuse. Aggregate claim, item, distinct verified-evidence,
+distinct evidence-quote-byte, affected-record, relationship, snapshot-byte,
+canonical-output-byte, and SQLite-work bounds cover the whole mission review; a limit
+refuses the operation instead of returning a plausible prefix. Claim-set, review-set,
+item-set, and whole-receipt SHA-256 values bind the deterministic result. Those hashes
+establish self-consistency only, not freshness, truth, authenticity, authority,
+approval, priority, or disclosure permission.
+
+Building the index creates no queue row, assignment, completion marker, run, audit
+event, evidence, finding, inference, status, correction, export, file, packet, or
+provider request. It reads no credential, contacts no network, and exposes no REST,
+web, MCP, Athena, Icarus, or other external-agent protocol. See
+[Mission Research Queue v1](docs/MISSION_RESEARCH_QUEUE_V1.md) for the exact receipt,
+bounds, reason provenance, exclusions, and semantic non-effects.
+
+Run `uv run python scripts/evaluate_mission_research_queue.py` for the fixed synthetic
+evaluation. It measures exact claim coverage, reason-label accuracy, cue-entry
+precision/recall including related record-ID sets, all 14 reason codes, canonical
+ordering, digest validity, byte determinism, mission isolation, and zero unauthorized
+mutation. It reports no priority, relevance, truth, confidence, severity,
+actionability, or completion metric.
 
 ## Canonical research packet
 
@@ -614,5 +674,6 @@ content and integrity metadata is outside the Milestone 1 detection boundary.
 - [Lens v1 retrieval and receipt contract](docs/LENS_V1.md)
 - [Claim Review v1 gap and correction-impact contract](docs/CLAIM_REVIEW_V1.md)
 - [Claim Lineage Graph v1 provenance-topology contract](docs/CLAIM_LINEAGE_V1.md)
+- [Mission Research Queue v1 structural-review-index contract](docs/MISSION_RESEARCH_QUEUE_V1.md)
 - [Competitive landscape and dependency roadmap](docs/COMPETITIVE_LANDSCAPE.md)
 - [Contributing](CONTRIBUTING.md)

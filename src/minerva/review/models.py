@@ -12,6 +12,79 @@ CLAIM_REVIEW_SCHEMA_VERSION = "minerva.claim-review.v1"
 CLAIM_REVIEW_ALGORITHM = "structural-ledger-review"
 CLAIM_REVIEW_ALGORITHM_VERSION = "1"
 
+CLAIM_REVIEW_CUE_CATALOG: tuple[tuple[str, str, str], ...] = (
+    (
+        "no_active_evidence",
+        "structural_gap",
+        "No evidence card in this claim is currently active.",
+    ),
+    (
+        "no_active_support",
+        "structural_gap",
+        "The active ledger contains no supporting evidence card.",
+    ),
+    (
+        "no_active_opposition",
+        "structural_gap",
+        "The active ledger contains no opposing evidence card.",
+    ),
+    (
+        "status_required_active_stance_missing",
+        "structural_gap",
+        "The recorded workflow status no longer has every active stance it requires.",
+    ),
+    (
+        "active_stance_contradiction",
+        "structural_impact",
+        "The active ledger contains both supporting and opposing evidence.",
+    ),
+    (
+        "withdrawn_evidence_history_present",
+        "structural_impact",
+        "One or more evidence cards have an append-only withdrawal record.",
+    ),
+    (
+        "recorded_status_requirement_unmet",
+        "structural_impact",
+        "The recorded status is retained, but its active-evidence requirement is unmet.",
+    ),
+    (
+        "live_material_finding_uses_withdrawn_evidence",
+        "structural_impact",
+        "An unretracted material finding cites withdrawn evidence and blocks applicable synthesis.",
+    ),
+    (
+        "optional_statement_uses_withdrawn_evidence",
+        "structural_impact",
+        "An unretracted assumption or unresolved question retains an optional withdrawn citation.",
+    ),
+    (
+        "retracted_finding_history_present",
+        "structural_impact",
+        "A related finding retraction remains in the append-only history.",
+    ),
+    (
+        "live_inference_uses_withdrawn_evidence",
+        "structural_impact",
+        "An unretracted adopted inference cites evidence that is no longer active.",
+    ),
+    (
+        "retracted_inference_history_present",
+        "structural_impact",
+        "A related adopted-inference retraction remains in the append-only history.",
+    ),
+    (
+        "promoted_finding_remains_independently_asserted",
+        "structural_impact",
+        "A retracted inference's promoted finding remains asserted until separately retracted.",
+    ),
+    (
+        "live_inference_remains_after_promoted_finding_retraction",
+        "structural_impact",
+        "Retracting a promoted finding does not retract its still-live source inference.",
+    ),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ClaimReviewBounds:

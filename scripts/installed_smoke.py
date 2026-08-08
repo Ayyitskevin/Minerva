@@ -53,6 +53,51 @@ def _json_object(document: str, *, label: str) -> dict[str, object]:
     return value
 
 
+def _canonical_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _installed_database_state(
+    python: Path,
+    database_path: Path,
+    *,
+    cwd: Path,
+    environment: dict[str, str],
+) -> tuple[str, str]:
+    state_probe = """
+import json
+import sys
+from hashlib import sha256
+from pathlib import Path
+
+from minerva.core.db import Database
+
+database = Database(Path(sys.argv[1]))
+with database.read() as connection:
+    dump = tuple(connection.iterdump())
+encoded = json.dumps(
+    dump,
+    ensure_ascii=False,
+    sort_keys=True,
+    separators=(",", ":"),
+    allow_nan=False,
+).encode("utf-8")
+print(sha256(encoded).hexdigest())
+""".strip()
+    dump_sha256 = _run_checked(
+        [str(python), "-c", state_probe, str(database_path)],
+        cwd=cwd,
+        environment=environment,
+    )
+    return sha256(database_path.read_bytes()).hexdigest(), dump_sha256
+
+
 def _single_wheel(dist_directory: Path) -> Path:
     resolved_directory = dist_directory.resolve()
     if not resolved_directory.is_dir():
@@ -228,6 +273,7 @@ def smoke_wheel(dist_directory: Path) -> Path:
             "from minerva.lens import LensService; "
             "from minerva.lineage import ClaimLineageService; "
             "from minerva.review import ClaimReviewService; "
+            "from minerva.research_queue import MissionResearchQueueService; "
             "print(version('minerva-research')); "
             "print(Path(minerva.__file__).resolve())"
         )
@@ -367,9 +413,300 @@ if unexpected:
         ):
             raise SmokeError("installed Lens byte span does not round trip")
         claim_ids = demo.get("claim_ids")
-        if not isinstance(claim_ids, list) or not claim_ids or not isinstance(claim_ids[0], str):
-            raise SmokeError("installed demo did not return a claim identifier")
-        claim_id = claim_ids[0]
+        if not isinstance(claim_ids, list) or not claim_ids:
+            raise SmokeError("installed demo did not return claim identifiers")
+        demo_claim_ids = tuple(item for item in claim_ids if isinstance(item, str))
+        if len(demo_claim_ids) != len(claim_ids):
+            raise SmokeError("installed demo returned an invalid claim identifier")
+        claim_id = demo_claim_ids[0]
+
+        queue_state_before = _installed_database_state(
+            python,
+            demo_database,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        mission_queue_arguments = [
+            str(minerva_command),
+            "mission",
+            "queue",
+            "--db",
+            str(demo_database),
+            "--mission",
+            mission_id,
+        ]
+        mission_queue_output = _run_checked(
+            mission_queue_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if mission_queue_output != _run_checked(
+            mission_queue_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        ):
+            raise SmokeError("installed Mission Research Queue is not byte-deterministic")
+        queue_state_after = _installed_database_state(
+            python,
+            demo_database,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if queue_state_before != queue_state_after:
+            raise SmokeError("installed Mission Research Queue changed database state")
+
+        mission_queue_envelope = _json_object(
+            mission_queue_output,
+            label="installed Mission Research Queue",
+        )
+        mission_queue = mission_queue_envelope.get("mission_research_queue")
+        if not isinstance(mission_queue, dict):
+            raise SmokeError("installed Mission Research Queue omitted its receipt")
+        reviewed_claims = mission_queue.get("reviewed_claims")
+        queue_items = mission_queue.get("items")
+        reason_catalog = mission_queue.get("reason_catalog")
+        reason_counts = mission_queue.get("reason_counts")
+        queue_work = mission_queue.get("work")
+        queue_boundary = mission_queue.get("semantic_boundary")
+        queue_receipt = mission_queue.get("queue_receipt_sha256")
+        if (
+            mission_queue.get("schema_version") != "minerva.mission-research-queue.v1"
+            or mission_queue.get("kind") != "mission_research_queue"
+            or mission_queue.get("algorithm") != "claim-review-cue-aggregation"
+            or mission_queue.get("algorithm_version") != "1"
+            or mission_queue.get("scope") != "mission_claim_review_cues_v1"
+            or mission_queue.get("completion_policy") != "complete_or_refuse"
+            or mission_queue.get("complete") is not True
+            or mission_queue.get("truncated") is not False
+            or mission_queue.get("mission_id") != mission_id
+            or mission_queue.get("sequence_semantics") != "deterministic_display_order_not_priority"
+            or mission_queue.get("ordering")
+            != [
+                "reviewed_claims:claim_created_at_ascending_then_claim_id_ascending",
+                "items:reviewed_claim_order_then_claim_review_cue_catalog_order",
+            ]
+            or not isinstance(reviewed_claims, list)
+            or not isinstance(queue_items, list)
+            or not isinstance(reason_catalog, list)
+            or not isinstance(reason_counts, list)
+            or not isinstance(queue_work, dict)
+            or not isinstance(queue_boundary, dict)
+            or not isinstance(queue_receipt, str)
+            or len(queue_receipt) != 64
+            or not isinstance(mission_queue.get("claim_set_sha256"), str)
+            or len(mission_queue["claim_set_sha256"]) != 64
+            or not isinstance(mission_queue.get("claim_review_set_sha256"), str)
+            or len(mission_queue["claim_review_set_sha256"]) != 64
+            or not isinstance(mission_queue.get("item_set_sha256"), str)
+            or len(mission_queue["item_set_sha256"]) != 64
+        ):
+            raise SmokeError("installed Mission Research Queue receipt is invalid")
+
+        reviewed_claim_documents = [item for item in reviewed_claims if isinstance(item, dict)]
+        queue_item_documents = [item for item in queue_items if isinstance(item, dict)]
+        reason_documents = [item for item in reason_catalog if isinstance(item, dict)]
+        reason_count_documents = [item for item in reason_counts if isinstance(item, dict)]
+        if (
+            len(reviewed_claim_documents) != len(reviewed_claims)
+            or len(queue_item_documents) != len(queue_items)
+            or len(reason_documents) != len(reason_catalog)
+            or len(reason_count_documents) != len(reason_counts)
+        ):
+            raise SmokeError("installed Mission Research Queue contains an invalid row")
+
+        catalog_position_by_code: dict[str, int] = {}
+        catalog_codes: list[str] = []
+        for expected_position, reason in enumerate(reason_documents, start=1):
+            code = reason.get("code")
+            if (
+                reason.get("catalog_position") != expected_position
+                or not isinstance(code, str)
+                or code in catalog_position_by_code
+                or not isinstance(reason.get("category"), str)
+                or not isinstance(reason.get("explanation"), str)
+            ):
+                raise SmokeError("installed Mission Research Queue reason catalog is invalid")
+            catalog_position_by_code[code] = expected_position
+            catalog_codes.append(code)
+
+        summary_by_claim: dict[str, dict[object, object]] = {}
+        summary_order: dict[str, int] = {}
+        claim_sort_keys: list[tuple[str, str]] = []
+        for expected_sequence, summary in enumerate(reviewed_claim_documents, start=1):
+            queue_claim_id = summary.get("claim_id")
+            claim_created_at = summary.get("claim_created_at")
+            if (
+                summary.get("sequence") != expected_sequence
+                or not isinstance(queue_claim_id, str)
+                or queue_claim_id in summary_by_claim
+                or not isinstance(summary.get("question_id"), str)
+                or not isinstance(summary.get("claim_statement"), str)
+                or not isinstance(claim_created_at, str)
+                or not isinstance(summary.get("reason_codes"), list)
+                or not isinstance(summary.get("item_count"), int)
+                or not isinstance(summary.get("review_receipt_sha256"), str)
+                or len(summary["review_receipt_sha256"]) != 64
+            ):
+                raise SmokeError("installed Mission Research Queue claim summary is invalid")
+            summary_by_claim[queue_claim_id] = summary
+            summary_order[queue_claim_id] = expected_sequence
+            claim_sort_keys.append((claim_created_at, queue_claim_id))
+        if (
+            set(summary_by_claim) != set(demo_claim_ids)
+            or len(summary_by_claim) != len(demo_claim_ids)
+            or claim_sort_keys != sorted(claim_sort_keys)
+        ):
+            raise SmokeError("installed Mission Research Queue claim coverage is invalid")
+
+        items_by_claim: dict[str, list[dict[object, object]]] = {
+            queue_claim_id: [] for queue_claim_id in summary_by_claim
+        }
+        item_order_keys: list[tuple[int, int]] = []
+        seen_item_labels: set[tuple[str, str]] = set()
+        for expected_sequence, item in enumerate(queue_item_documents, start=1):
+            queue_claim_id = item.get("claim_id")
+            reason_code = item.get("reason_code")
+            record_ids = item.get("record_ids")
+            if (
+                item.get("sequence") != expected_sequence
+                or item.get("kind") != "structural_review_cue"
+                or not isinstance(queue_claim_id, str)
+                or queue_claim_id not in summary_by_claim
+                or not isinstance(reason_code, str)
+                or reason_code not in catalog_position_by_code
+                or (queue_claim_id, reason_code) in seen_item_labels
+                or not isinstance(item.get("question_id"), str)
+                or not isinstance(item.get("reason_category"), str)
+                or not isinstance(item.get("explanation"), str)
+                or not isinstance(record_ids, list)
+                or not all(isinstance(record_id, str) for record_id in record_ids)
+                or not isinstance(item.get("source_review_receipt_sha256"), str)
+                or len(item["source_review_receipt_sha256"]) != 64
+            ):
+                raise SmokeError("installed Mission Research Queue item is invalid")
+            seen_item_labels.add((queue_claim_id, reason_code))
+            items_by_claim[queue_claim_id].append(item)
+            item_order_keys.append(
+                (summary_order[queue_claim_id], catalog_position_by_code[reason_code])
+            )
+        if item_order_keys != sorted(item_order_keys):
+            raise SmokeError("installed Mission Research Queue item order is invalid")
+
+        for queue_claim_id, summary in summary_by_claim.items():
+            claim_items = items_by_claim[queue_claim_id]
+            projected_codes = [item["reason_code"] for item in claim_items]
+            if (
+                summary.get("reason_codes") != projected_codes
+                or summary.get("item_count") != len(claim_items)
+                or not projected_codes
+                or any(
+                    item.get("source_review_receipt_sha256") != summary.get("review_receipt_sha256")
+                    for item in claim_items
+                )
+            ):
+                raise SmokeError("installed Mission Research Queue cue projection is invalid")
+
+        item_code_counts = {
+            code: sum(item.get("reason_code") == code for item in queue_item_documents)
+            for code in catalog_codes
+        }
+        if [item.get("code") for item in reason_count_documents] != catalog_codes or any(
+            not isinstance(item.get("code"), str)
+            or item.get("count") != item_code_counts[item["code"]]
+            for item in reason_count_documents
+        ):
+            raise SmokeError("installed Mission Research Queue reason counts are invalid")
+        if (
+            queue_work.get("reviewed_claim_count") != len(reviewed_claim_documents)
+            or queue_work.get("item_count") != len(queue_item_documents)
+            or not isinstance(queue_work.get("evidence_card_count"), int)
+            or queue_work["evidence_card_count"] < 0
+            or not isinstance(queue_work.get("distinct_evidence_quote_bytes"), int)
+            or queue_work["distinct_evidence_quote_bytes"] < 0
+            or not isinstance(mission_queue.get("bounds"), dict)
+            or queue_work["distinct_evidence_quote_bytes"]
+            > mission_queue["bounds"].get("max_distinct_evidence_quote_bytes", -1)
+            or queue_work.get("canonical_output_bytes") != len(_canonical_bytes(mission_queue))
+        ):
+            raise SmokeError("installed Mission Research Queue work receipt is invalid")
+
+        common_frame = {
+            "algorithm": "claim-review-cue-aggregation",
+            "algorithm_version": "1",
+            "scope": "mission_claim_review_cues_v1",
+            "mission_id": mission_id,
+        }
+        claim_frame = {
+            "schema_version": "minerva.mission-research-queue-claims.v1",
+            **common_frame,
+            "claims": [
+                {
+                    "sequence": summary["sequence"],
+                    "claim_id": summary["claim_id"],
+                    "question_id": summary["question_id"],
+                    "claim_statement": summary["claim_statement"],
+                    "recorded_status": summary["recorded_status"],
+                    "recorded_status_version": summary["recorded_status_version"],
+                    "claim_created_at": summary["claim_created_at"],
+                }
+                for summary in reviewed_claim_documents
+            ],
+        }
+        review_frame = {
+            "schema_version": "minerva.mission-research-queue-claim-reviews.v1",
+            **common_frame,
+            "claim_reviews": [
+                {
+                    "sequence": summary["sequence"],
+                    "claim_id": summary["claim_id"],
+                    "reason_codes": summary["reason_codes"],
+                    "item_count": summary["item_count"],
+                    "review_receipt_sha256": summary["review_receipt_sha256"],
+                }
+                for summary in reviewed_claim_documents
+            ],
+        }
+        item_frame = {
+            "schema_version": "minerva.mission-research-queue-items.v1",
+            **common_frame,
+            "items": queue_item_documents,
+        }
+        if (
+            mission_queue.get("claim_set_sha256")
+            != sha256(_canonical_bytes(claim_frame)).hexdigest()
+            or mission_queue.get("claim_review_set_sha256")
+            != sha256(_canonical_bytes(review_frame)).hexdigest()
+            or mission_queue.get("item_set_sha256")
+            != sha256(_canonical_bytes(item_frame)).hexdigest()
+        ):
+            raise SmokeError("installed Mission Research Queue subreceipt digest is invalid")
+        queue_receipt_payload = dict(mission_queue)
+        queue_receipt_payload.pop("queue_receipt_sha256")
+        if queue_receipt != sha256(_canonical_bytes(queue_receipt_payload)).hexdigest():
+            raise SmokeError("installed Mission Research Queue receipt digest does not verify")
+
+        if (
+            queue_boundary.get("read_only") is not True
+            or queue_boundary.get("structural_review_index_only") is not True
+            or queue_boundary.get("current_claim_review_taxonomy_guarantees_a_cue") is not True
+            or queue_boundary.get("item_presence_means_action_required") is not False
+            or queue_boundary.get("item_presence_means_open_or_unresolved") is not False
+            or queue_boundary.get("item_order_is_priority_or_severity") is not False
+            or queue_boundary.get("assigns_work") is not False
+            or queue_boundary.get("records_completion_or_deferral") is not False
+            or queue_boundary.get("determines_truth") is not False
+            or queue_boundary.get("calculates_confidence") is not False
+            or queue_boundary.get("recommends_or_alters_claim_status") is not False
+            or queue_boundary.get("creates_or_changes_research_state") is not False
+            or queue_boundary.get("writes_audit_event_or_export") is not False
+            or queue_boundary.get("modifies_source_or_snapshot_bytes") is not False
+            or queue_boundary.get("invokes_claim_lineage") is not False
+            or queue_boundary.get("invokes_model_provider") is not False
+            or queue_boundary.get("invokes_network") is not False
+            or queue_boundary.get("exposes_external_agent_protocol") is not False
+        ):
+            raise SmokeError("installed Mission Research Queue semantic boundary is invalid")
+
         claim_review_arguments = [
             str(minerva_command),
             "claim",
