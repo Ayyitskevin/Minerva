@@ -7,8 +7,24 @@ from dataclasses import dataclass
 LENS_SCHEMA_VERSION = "minerva.lens-search.v1"
 LENS_SNAPSHOT_SET_SCHEMA_VERSION = "minerva.lens-snapshot-set.v1"
 LENS_ALGORITHM = "bounded-unicode-line-lexical"
-LENS_ALGORITHM_VERSION = "1"
-LENS_QUERY_NORMALIZATION = "unicode-nfkc-casefold-whitespace-collapse-word-token-v1"
+LENS_ALGORITHM_VERSION = "2"
+LENS_QUERY_NORMALIZATION = (
+    "unicode-nfkc-then-casefold-fixed-point-cap4-whitespace-collapse-word-token-v2"
+)
+LENS_RESULT_KIND = "candidate_context_search"
+LENS_CANDIDATE_KIND = "candidate_context"
+LENS_SCORING = (
+    "exact phrase, distinct query-term coverage, total query-term "
+    "occurrences, then integer density; all descending"
+)
+LENS_STABLE_TIE_BREAK = ("snapshot_id", "start_byte", "end_byte")
+LENS_SEMANTIC_NOTICE = (
+    "Lens results are candidate-context leads, not evidence. Their stance is "
+    "unassessed, this search mutates no research state, and normal explicit "
+    "evidence adoption and validation remain required."
+)
+LENS_RECEIPT_VERIFICATION_SCHEMA_VERSION = "minerva.lens-receipt-verification.v1"
+LENS_REPLAY_SCHEMA_VERSION = "minerva.lens-replay.v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,3 +141,63 @@ class LensSearchResult:
     semantic_notice: str
     semantic_boundary: LensSemanticBoundary
     retrieval_receipt_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class LensReceiptCheckBoundary:
+    reads_research_database: bool
+    deterministic_self_consistency_only: bool = True
+    establishes_origin_or_authenticity: bool = False
+    establishes_authority_or_approval: bool = False
+    establishes_disclosure_permission: bool = False
+    establishes_lasting_freshness: bool = False
+    determines_source_truth_or_quality: bool = False
+    creates_evidence_or_inference: bool = False
+    alters_claims_findings_or_confidence: bool = False
+    mutates_research_or_audit_state: bool = False
+    writes_artifact_or_export: bool = False
+    invokes_model_provider_or_network: bool = False
+    exposes_external_agent_protocol: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class LensReceiptVerificationResult:
+    schema_version: str
+    kind: str
+    status: str
+    receipt_schema_version: str
+    algorithm: str
+    algorithm_version: str
+    unicode_database_version: str
+    query_sha256: str
+    snapshot_set_sha256: str
+    retrieval_receipt_sha256: str
+    searched_snapshot_count: int
+    result_count: int
+    truncated: bool
+    canonical_digest_verified: bool
+    internal_consistency_verified: bool
+    runtime_compatible: bool
+    searched_snapshot_content_verified: bool
+    semantic_boundary: LensReceiptCheckBoundary
+
+
+@dataclass(frozen=True, slots=True)
+class LensReplayResult:
+    schema_version: str
+    kind: str
+    status: str
+    receipt_schema_version: str
+    algorithm: str
+    algorithm_version: str
+    unicode_database_version: str
+    query_sha256: str
+    snapshot_set_sha256: str
+    retrieval_receipt_sha256: str
+    searched_snapshot_count: int
+    result_count: int
+    exact_receipt_match: bool
+    current_database_snapshot_matched: bool
+    historical_corpus_replay: bool
+    searched_snapshot_content_verified: bool
+    semantic_boundary: LensReceiptCheckBoundary

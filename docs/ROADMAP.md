@@ -240,43 +240,84 @@
   inference, status, correction, export/file/packet, provider call, network activity,
   protocol, migration, index, or capability claim.
 
+## Lens v1 receipt verification and current-database reproduction
+
+- The repository owner's instruction to continue the accepted dependency order
+  narrowly accepts local `minerva lens verify`, `minerva lens replay`, the strict
+  captured-receipt loader/verifier, and `LensService.replay_receipt(...)`. It does not
+  accept a canonical Lens export, historical corpus archive, adoption bridge, external
+  protocol, or any later roadmap item by implication.
+- Both commands accept the normal `{"lens": {...}}` search CLI envelope through the
+  shared no-follow stable regular-file reader. The input is capped at 8 MiB before
+  strict UTF-8 JSON decoding; duplicate fields, non-standard numbers, excessive JSON
+  shape/fanout, omitted or unknown fields, unsupported versions, and inconsistent
+  derived values fail with stable bounded errors.
+- Database-free verification recomputes the canonical receipt digest and every
+  receipt-contained v1 invariant needed to trust its internal structure: pinned
+  schema/algorithm/normalization/runtime, canonical query and filters, snapshot-set
+  identity/count/bytes, quote byte/text/digest/span relationships, integer
+  scoring/explanation/order, omissions, and truncation. Its bounded report explicitly
+  says searched snapshot content was not independently verified.
+- Database-backed reproduction first verifies the receipt, then executes its captured
+  mission, normalized query/token sequence, filters, and bounds through the existing
+  Lens search/integrity path in one current query-only SQLite snapshot. A
+  package-private normalized-search seam preserves the exact captured request after
+  validation proves it is the version-2 Unicode normalization fixed point; it is not
+  a second public search contract.
+- Success requires exact complete-receipt equality and reports
+  `historical_corpus_replay: false`. Any same-mission snapshot append changes at least
+  mission/filter accounting and causes `lens_replay_mismatch`, even if an explicit
+  filter excludes that snapshot and candidate results are unchanged. Foreign-mission
+  changes do not affect the receipt. No as-of database or historical-source promise
+  is made.
+- Verification/reproduction writes no artifact, database row, source byte, evidence,
+  finding, inference, status, confidence, queue state, packet, or audit event; creates
+  no identity/run; reads no credential; and invokes no model, provider, network,
+  REST/web endpoint, MCP, Athena/Icarus adapter, or external-agent protocol.
+- Receipt digests and successful reproduction establish deterministic
+  self-consistency and equality to one current read, not origin, external
+  authenticity, identity, authority, approval, truth, quality, historical freshness,
+  or disclosure permission. Schema remains v5; no migration, index, capability entry,
+  or packet field/version is added.
+- Fixture-bound evaluation and regression tests cover strict hostile/tampered input,
+  deterministic reports, exact current reproduction, algorithm/Unicode/corpus/result
+  drift, mission isolation, content verification only on replay, no model/provider/
+  network invocation, and zero research/audit mutation. They make no external quality
+  or authenticity claim.
+
 ## Next dependency-ordered capabilities
 
-Mission Research Queue v1 is now the accepted completed dependency. The following
-remaining order is proposed, not implementation authorization. Each future slice needs
-an explicit owner decision, including the schema-free local read-only items. No
-migration, trust-model, external-principal,
+Lens receipt verification and current-database reproduction are now the accepted
+completed dependency. The following remaining order is proposed, not implementation
+authorization. Each future slice needs an explicit owner decision, including the
+schema-free local read-only item. No migration, trust-model, external-principal,
 cryptographic-identity, adapter, external/agent-facing API, packet-version, or broad
 D-6 gate is open.
 
-1. **Lens receipt verification/replay:** safely verify a bounded Lens receipt and
-   replay it against the exact local snapshot set, detecting receipt,
-   Unicode/algorithm, corpus, and snapshot drift without changing research state or
-   advertising a new agent protocol.
-2. **Local review dossier:** compose the gap, graph, queue, and Lens provenance views
+1. **Local review dossier:** compose the gap, graph, queue, and Lens provenance views
    for the existing trusted-operator surface. No new external/agent-facing API,
    mutation control, or capability-manifest claim follows from this item.
-3. **PROV-O/RO-Crate decision packet (design only):** prove a lossless mapping for
+2. **PROV-O/RO-Crate decision packet (design only):** prove a lossless mapping for
    exact spans, stance, corrections, inference labels, activities, and audit lineage;
    decide canonicalization, context pinning, and source-byte disclosure before any new
    canonical exporter is accepted.
-4. **Explicit Lens-to-evidence bridge (owner-gated):** if approved, require a
+3. **Explicit Lens-to-evidence bridge (owner-gated):** if approved, require a
    verified receipt, selected candidate, claim, stance, and exact digest confirmation,
    then reuse normal evidence validation/audit. It may never make search itself
    mutating or perform autonomous/bulk adoption.
-5. **Authenticated Athena seam (gate D-2):** first reverify the counterpart, then
+4. **Authenticated Athena seam (gate D-2):** first reverify the counterpart, then
    separately decide ADRs 0009/0010, the external-principal migration, asymmetric
    verification dependency, revocation, replay, and transport. No external research
    mutation is implied.
-6. **Icarus artifact exchange (gate D-3 after D-2):** requires its own canonical
+5. **Icarus artifact exchange (gate D-3 after D-2):** requires its own canonical
    request/result and import-before-evidence decision, likely including a migration;
    Minerva still performs no experiment or automatic adoption.
-7. **Read-only agent protocol (gate D-5 after D-2/D-3):** MCP or any new agent-facing
+6. **Read-only agent protocol (gate D-5 after D-2/D-3):** MCP or any new agent-facing
    API starts with authenticated, bounded read tools backed by existing services and
    exposes no correction, adoption, assistance, publication, or execution verbs.
-8. **Packet v3 (separate decision after a real consumer exists):** define the exact
-    correction/inference delta, independent verifier, backward compatibility, and
-    hostile-input limits without changing frozen v2 bytes by accident.
+7. **Packet v3 (separate decision after a real consumer exists):** define the exact
+   correction/inference delta, independent verifier, backward compatibility, and
+   hostile-input limits without changing frozen v2 bytes by accident.
 
 Scholarly-source adapters follow only after licensing/network/import-custody approval.
 A read-only agent protocol follows only after D-2 authentication. Semantic retrieval

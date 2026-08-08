@@ -15,6 +15,7 @@
 - [Claim Review v1: schema-free gaps and correction impacts](#claim-review-v1-schema-free-gaps-and-correction-impacts) — **Accepted 2026-08-08; this local read-only view only**
 - [Claim Lineage Graph v1: schema-free claim-owned provenance topology](#claim-lineage-graph-v1-schema-free-claim-owned-provenance-topology) — **Accepted 2026-08-08; this local read-only graph only**
 - [Mission Research Queue v1: schema-free structural review index](#mission-research-queue-v1-schema-free-structural-review-index) — **Accepted 2026-08-08; this non-persisted local index only**
+- [Lens v1 receipt verification and current-database reproduction](#lens-v1-receipt-verification-and-current-database-reproduction) — **Accepted 2026-08-08; these local read-only checks only**
 
 ## Milestone 1 implementation decisions
 
@@ -1075,7 +1076,7 @@ broaden any existing trust gate.
 The dependency-ordered follow-on plan now proposes (1) a derived, non-persisted,
 human-owned mission research queue and then (2) local Lens receipt
 verification/replay. Neither is authorized by the Claim Lineage acceptance itself;
-the separate Queue decision below later accepts only the first local read model. A
+the separate Queue and Lens decisions below later accept those two slices in order. A
 persistent queue, Lens-to-evidence convenience mutation, canonical PROV-O/RO-Crate
 exporter, migration, trust-model change, D-2/D-3/D-5 implementation, or packet v3
 continues to need its own recorded owner decision.
@@ -1163,8 +1164,89 @@ a family of queue operations.
   view.
 
 The next proposed dependency is local Lens receipt verification/replay, followed by a
-local review dossier. Neither is authorized by this acceptance. A durable
-assign/defer/resolve queue additionally requires a separately approved migration and
-day-one correction model. Lens-to-evidence mutation, canonical PROV-O/RO-Crate
-export, trust-model change, D-2/D-3/D-5 implementation, or packet v3 continues to need
-its own recorded owner decision.
+local review dossier. Neither is authorized by the Queue acceptance itself; the
+separate Lens decision below later accepts only the first. A durable assign/defer/
+resolve queue additionally requires a separately approved migration and day-one
+correction model. Lens-to-evidence mutation, canonical PROV-O/RO-Crate export,
+trust-model change, D-2/D-3/D-5 implementation, or packet v3 continues to need its own
+recorded owner decision.
+
+## Lens v1 receipt verification and current-database reproduction
+
+The repository owner's subsequent instruction to keep building in the accepted
+dependency order separately accepts only the next schema-free local slice: strict
+self-verification of one captured Lens search receipt and exact reproduction against
+one current local database read. This decision does not make a Lens receipt a
+canonical persisted artifact or authorize the later local review dossier.
+
+- **The public surfaces remain local and narrow.**
+  `minerva lens verify --input ...`, `minerva lens replay --db ... --input ...`, the
+  captured-receipt loader/verifier, and `LensService.replay_receipt(...)` expose
+  bounded verification/reproduction reports. There is no REST, web,
+  capability-manifest, packet, MCP, authenticated external, or other agent-facing
+  surface.
+- **The captured input is an ordinary CLI envelope, not a new export.** The parser
+  accepts exactly the existing `{"lens": {...}}` stdout shape. The shared
+  descriptor-pinned stable-file reader rejects unsafe parent components, symlinks,
+  non-regular/unreadable/changing files and caps input at 8 MiB (8,388,608 bytes)
+  before decoding. Strict UTF-8 JSON rejects duplicate fields, non-standard numbers,
+  excessive shape/fanout, omitted or unknown fields, and invalid types. Minerva never
+  writes, overwrites, persists, signs, or publishes this operator-captured file.
+- **Verification is strict but storage-independent.** It pins the v1 schema,
+  algorithm, normalization, scoring, tie-break, semantic constants, and local Unicode
+  database version; recomputes normalized-query/token relationships and query digest;
+  validates canonical filters, bounds, snapshot identities/counts/bytes and
+  snapshot-set digest; rechecks omission/truncation arithmetic; and recomputes every
+  candidate quote/text/base64/digest/span, score, explanation, rank, and the complete
+  receipt digest. Success reports internal and canonical-digest consistency while
+  explicitly saying searched snapshot content was not independently verified.
+- **The error contract is bounded and non-reflective.** File intake uses
+  `lens_receipt_input_unsafe`, `_symlink`, `_not_found`, `_unreadable`, `_changed`, and
+  `lens_receipt_too_large`; JSON uses `lens_receipt_malformed`, `_duplicate_field`,
+  `_nonstandard_number`, and `_too_complex`; semantic/version checks use
+  `lens_receipt_invalid`, `_schema_unsupported`, `_algorithm_unsupported`,
+  `_runtime_incompatible`, and `_digest_mismatch`. Exact current-state inequality is
+  `lens_replay_mismatch`. Expected refusals use the existing CLI exit status `3`.
+- **Reproduction reuses Lens, not a parallel retriever.** Replay fully verifies the
+  receipt before database construction/open, then executes the captured mission,
+  canonical filters, bounds, normalized query, and query terms through the existing
+  Lens service in one `Database.read()` snapshot with `query_only` enabled. The normal
+  snapshot-byte/import-audit verifier runs before scoring. A package-private
+  normalized-search seam passes the already-verified representation exactly after
+  proving it is the version-2 Unicode normalization fixed point; it is not a second
+  public algorithm.
+- **“Replay” is deliberately current-state exact reproduction.** The newly produced
+  and captured complete receipts must be equal. Success reports
+  `historical_corpus_replay: false`; Minerva retains no as-of database, historical
+  corpus bundle, or trusted search timestamp. Any same-mission snapshot append changes
+  mission/filter accounting and therefore returns `lens_replay_mismatch`, even if an
+  explicit filter excludes it and the candidate array is unchanged. Foreign-mission
+  changes remain isolated.
+- **Digests are not identity or truth.** Standalone verification establishes only
+  deterministic receipt self-consistency. Successful reproduction additionally
+  establishes equality to one current query-only database read whose selected source
+  content passed existing integrity checks. Neither establishes origin, external
+  authenticity, human identity, authority, approval, truth, evidence quality,
+  historical freshness, or disclosure permission; a same-OS-user producer can create
+  a different self-consistent receipt.
+- **The semantic non-effects are unchanged.** Verify/replay creates no identity, run,
+  audit event, evidence, finding, inference, status, correction, confidence, queue
+  state, packet, export, or file; modifies no source/snapshot bytes or database row;
+  reads no credential; and invokes no model, provider, network, REST/web endpoint,
+  MCP, Athena/Icarus adapter, or external agent. Adoption remains the existing
+  separate human `evidence add` mutation with normal exact-citation validation and
+  atomic audit.
+- **No persistence or trust contract changed.** Schema remains v5; no migration,
+  index, packet field/version, capability name, external principal, signature,
+  cryptographic identity, authenticated protocol, scholarly-source adapter,
+  standards exporter, or broader D-6 behavior is added. Fixture-bound evaluation may
+  measure exact reproduction, deterministic reports, hostile/tampered refusal,
+  algorithm/Unicode/corpus/result drift, isolation, source-content verification only
+  on replay, and zero mutation; it does not become an external authenticity or quality
+  claim.
+
+The next proposed dependency is a local trusted-operator review dossier composing
+existing read-only views. It is not authorized by this decision. Persistent queue
+operations, Lens-to-evidence mutation, a canonical PROV-O/RO-Crate exporter,
+trust-model change, migration, D-2/D-3/D-5 implementation, or packet v3 continues to
+need its own recorded owner decision.

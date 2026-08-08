@@ -23,7 +23,10 @@ audit state.
 
 Lens v1 adds bounded, deterministic lexical discovery over those already-imported
 immutable mission snapshots. It returns exact-byte candidate context for review and
-cannot create evidence or mutate research state.
+cannot create evidence or mutate research state. Captured Lens CLI receipts can also
+be strictly verified without a database or reproduced exactly against the current
+local database state; neither operation turns the receipt into an authenticated
+artifact or a historical corpus archive.
 
 Claim Review v1 adds a complete-or-refuse, deterministic view of one claim's
 structural evidence gaps, active support/opposition conflict, recorded-status validity,
@@ -168,6 +171,8 @@ cannot ship undocumented.
 | `minerva source import` | import one file as an immutable snapshot |
 | `minerva source show` | show snapshot metadata, or its stored bytes |
 | `minerva lens search` | search immutable mission snapshots for candidate context |
+| `minerva lens verify` | verify one captured Lens receipt without a database |
+| `minerva lens replay` | reproduce one captured Lens receipt against the current database |
 | `minerva evidence add` | cite an exact byte span of a snapshot |
 | `minerva evidence withdraw` | mark evidence as no longer standing, keeping it in the ledger |
 | `minerva finding add` | record a labeled finding, assumption, or open question |
@@ -215,6 +220,50 @@ snapshot before scoring. It creates no run, audit event, evidence, finding,
 claim-status event, inference, or export record. A useful lead enters the
 research record only through the separate existing `evidence add` command with
 an explicit claim, stance, coordinates, quote, validation, and audit trail.
+
+Capture the complete JSON envelope emitted by search, then check its canonical digest
+and internal Lens v1 invariants without opening SQLite:
+
+```bash
+minerva lens search --db research.db --mission MIS_ID \
+  --query "immutable provenance" --limit 10 > lens-receipt.json
+minerva lens verify --input lens-receipt.json
+```
+
+`verify` accepts exactly the normal `{"lens": {...}}` CLI envelope through the shared
+no-follow, stable-regular-file reader, caps it at 8 MiB (8,388,608 bytes) before JSON
+decoding, and rejects malformed, duplicate-field, non-standard-number, excessively
+shaped, incomplete/unknown-field, version-incompatible, and internally inconsistent
+input. Its bounded report confirms receipt self-consistency only. In particular,
+`searched_snapshot_content_verified` is false: no database was opened and no source
+bytes were independently rehashed.
+
+To rerun the captured normalized query, tokens, filters, and bounds against one
+current local database snapshot and require an exact whole-receipt match:
+
+```bash
+minerva lens replay --db research.db --input lens-receipt.json
+```
+
+Replay first performs the same strict standalone verification. It then uses the
+already-verified, fixed-point normalized query/token sequence directly and executes
+the existing Lens search path. Success is
+`minerva.lens-replay.v1` with `exact_receipt_match: true`,
+`current_database_snapshot_matched: true`, and `historical_corpus_replay: false`.
+Any changed selection, snapshot metadata/bytes, result, omission count, score, order,
+or digest refuses as `lens_replay_mismatch`; algorithm or Unicode-runtime drift has
+its own earlier compatibility refusal. This is exact reproduction against current
+state, not time travel or restoration of the historical corpus. Any same-mission
+snapshot append changes the receipt's mission/filter accounting and mismatches even
+when an explicit filter excludes it; foreign-mission changes remain isolated.
+
+Both commands are local and read-only. They write no artifact, research row, audit
+event, evidence, finding, inference, status, confidence, source byte, or packet; read
+no credential; and invoke no model, provider, network, REST/web endpoint, MCP, or
+external agent. Receipt hashes establish deterministic self-consistency, not origin,
+authenticity, authority, approval, truth, quality, freshness, or permission to
+disclose the quoted material.
+
 See [Lens v1](docs/LENS_V1.md) for the scoring/replay contract and
 [the competitive landscape](docs/COMPETITIVE_LANDSCAPE.md) for product context.
 

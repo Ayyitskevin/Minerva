@@ -270,7 +270,9 @@ def smoke_wheel(dist_directory: Path) -> Path:
             "from importlib.metadata import version; "
             "from pathlib import Path; "
             "import minerva; "
-            "from minerva.lens import LensService; "
+            "from minerva.integrations.lens_receipt_file import load_lens_receipt; "
+            "from minerva.lens import (LensReceiptVerificationResult, LensReplayResult, "
+            "LensService, lens_receipt_verification_result, verify_lens_receipt); "
             "from minerva.lineage import ClaimLineageService; "
             "from minerva.review import ClaimReviewService; "
             "from minerva.research_queue import MissionResearchQueueService; "
@@ -412,6 +414,149 @@ if unexpected:
             or base64.b64decode(quote_utf8_base64, validate=True) != quote.encode()
         ):
             raise SmokeError("installed Lens byte span does not round trip")
+
+        lens_receipt_payload = dict(lens)
+        lens_receipt_digest = lens_receipt_payload.pop("retrieval_receipt_sha256")
+        if lens_receipt_digest != sha256(_canonical_bytes(lens_receipt_payload)).hexdigest():
+            raise SmokeError("installed Lens retrieval receipt digest does not verify")
+
+        lens_receipt_path = smoke_directory / "lens-receipt.json"
+        lens_receipt_path.write_bytes(lens_output.encode("utf-8"))
+        if not lens_receipt_path.is_file() or lens_receipt_path.is_symlink():
+            raise SmokeError("installed Lens receipt was not captured as a regular file")
+
+        lens_state_before = _installed_database_state(
+            python,
+            demo_database,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        lens_verify_arguments = [
+            str(minerva_command),
+            "lens",
+            "verify",
+            "--input",
+            str(lens_receipt_path),
+        ]
+        lens_verify_output = _run_checked(
+            lens_verify_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if lens_verify_output != _run_checked(
+            lens_verify_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        ):
+            raise SmokeError("installed Lens receipt verification is not byte-deterministic")
+        lens_verification_envelope = _json_object(
+            lens_verify_output,
+            label="installed Lens receipt verification",
+        )
+        lens_verification = lens_verification_envelope.get("lens_receipt_verification")
+        if not isinstance(lens_verification, dict):
+            raise SmokeError("installed Lens receipt verification omitted its report")
+        verification_boundary = lens_verification.get("semantic_boundary")
+        expected_verification_boundary = {
+            "reads_research_database": False,
+            "deterministic_self_consistency_only": True,
+            "establishes_origin_or_authenticity": False,
+            "establishes_authority_or_approval": False,
+            "establishes_disclosure_permission": False,
+            "establishes_lasting_freshness": False,
+            "determines_source_truth_or_quality": False,
+            "creates_evidence_or_inference": False,
+            "alters_claims_findings_or_confidence": False,
+            "mutates_research_or_audit_state": False,
+            "writes_artifact_or_export": False,
+            "invokes_model_provider_or_network": False,
+            "exposes_external_agent_protocol": False,
+        }
+        if (
+            lens_verification.get("schema_version") != "minerva.lens-receipt-verification.v1"
+            or lens_verification.get("kind") != "receipt_verification"
+            or lens_verification.get("status") != "verified"
+            or lens_verification.get("receipt_schema_version") != lens.get("schema_version")
+            or lens_verification.get("algorithm") != lens.get("algorithm")
+            or lens_verification.get("algorithm_version") != lens.get("algorithm_version")
+            or lens_verification.get("unicode_database_version")
+            != lens.get("unicode_database_version")
+            or lens_verification.get("query_sha256") != lens.get("query_sha256")
+            or lens_verification.get("snapshot_set_sha256") != lens.get("snapshot_set_sha256")
+            or lens_verification.get("retrieval_receipt_sha256") != lens_receipt_digest
+            or lens_verification.get("searched_snapshot_count")
+            != lens.get("searched_snapshot_count")
+            or lens_verification.get("result_count") != lens.get("result_count")
+            or lens_verification.get("truncated") != lens.get("truncated")
+            or lens_verification.get("canonical_digest_verified") is not True
+            or lens_verification.get("internal_consistency_verified") is not True
+            or lens_verification.get("runtime_compatible") is not True
+            or lens_verification.get("searched_snapshot_content_verified") is not False
+            or verification_boundary != expected_verification_boundary
+            or len(lens_verify_output) >= 2_000
+        ):
+            raise SmokeError("installed Lens receipt verification report is invalid")
+
+        lens_replay_arguments = [
+            str(minerva_command),
+            "lens",
+            "replay",
+            "--db",
+            str(demo_database),
+            "--input",
+            str(lens_receipt_path),
+        ]
+        lens_replay_output = _run_checked(
+            lens_replay_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if lens_replay_output != _run_checked(
+            lens_replay_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        ):
+            raise SmokeError("installed Lens receipt replay is not byte-deterministic")
+        lens_replay_envelope = _json_object(
+            lens_replay_output,
+            label="installed Lens receipt replay",
+        )
+        lens_replay = lens_replay_envelope.get("lens_replay")
+        if not isinstance(lens_replay, dict):
+            raise SmokeError("installed Lens receipt replay omitted its report")
+        replay_boundary = lens_replay.get("semantic_boundary")
+        expected_replay_boundary = dict(expected_verification_boundary)
+        expected_replay_boundary["reads_research_database"] = True
+        if (
+            lens_replay.get("schema_version") != "minerva.lens-replay.v1"
+            or lens_replay.get("kind") != "current_database_exact_reproduction"
+            or lens_replay.get("status") != "reproduced"
+            or lens_replay.get("receipt_schema_version") != lens.get("schema_version")
+            or lens_replay.get("algorithm") != lens.get("algorithm")
+            or lens_replay.get("algorithm_version") != lens.get("algorithm_version")
+            or lens_replay.get("unicode_database_version") != lens.get("unicode_database_version")
+            or lens_replay.get("query_sha256") != lens.get("query_sha256")
+            or lens_replay.get("snapshot_set_sha256") != lens.get("snapshot_set_sha256")
+            or lens_replay.get("retrieval_receipt_sha256") != lens_receipt_digest
+            or lens_replay.get("searched_snapshot_count") != lens.get("searched_snapshot_count")
+            or lens_replay.get("result_count") != lens.get("result_count")
+            or lens_replay.get("exact_receipt_match") is not True
+            or lens_replay.get("current_database_snapshot_matched") is not True
+            or lens_replay.get("historical_corpus_replay") is not False
+            or lens_replay.get("searched_snapshot_content_verified") is not True
+            or replay_boundary != expected_replay_boundary
+            or len(lens_replay_output) >= 2_000
+        ):
+            raise SmokeError("installed Lens receipt replay report is invalid")
+        lens_state_after = _installed_database_state(
+            python,
+            demo_database,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if lens_state_before != lens_state_after:
+            raise SmokeError("installed Lens receipt verification or replay changed database state")
+
         claim_ids = demo.get("claim_ids")
         if not isinstance(claim_ids, list) or not claim_ids:
             raise SmokeError("installed demo did not return claim identifiers")

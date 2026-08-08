@@ -32,6 +32,13 @@ lens CLI --> bounded lexical query --> one query-only SQLite snapshot
                                            +--> verified immutable bytes
                                                  + deterministic candidate receipt
 
+lens verify --> no-follow 8 MiB reader --> strict receipt self-verifier
+
+lens replay --> verified captured receipt --> one current query-only SQLite snapshot
+                                                   |
+                                                   +--> normal Lens integrity/search path
+                                                        + exact whole-receipt comparison
+
 claim review CLI --> complete structural query --> one query-only SQLite snapshot
                                                      |
                                                      +--> verified citation/correction
@@ -60,8 +67,9 @@ they may not reimplement domain validation or write SQL directly.
 - `sources`: safe local-file reading, validation, secret-pattern defense, and
   immutable snapshot registration.
 - `evidence`: byte-span citations, stance, ledgers, withdrawal, and supersession.
-- `lens`: bounded, model-free candidate-context retrieval and deterministic
-  query/corpus/score receipts over verified immutable snapshots.
+- `lens`: bounded, model-free candidate-context retrieval, strict receipt
+  self-verification, and current-database exact reproduction over verified immutable
+  snapshots.
 - `review`: complete-or-refuse structural evidence-gap, active-stance-conflict,
   and correction-impact receipts over existing claim ledgers.
 - `lineage`: complete-or-refuse typed provenance topology over one existing
@@ -78,11 +86,12 @@ they may not reimplement domain validation or write SQL directly.
   validation, candidate labeling, and metadata-only invocation audit coordination.
 - `cli`: local operator commands, optional external-assistance consent, demo,
   backup/restore, doctor, and server startup.
-- `integrations`: strict, SQLite-independent research-packet and research-request DTOs,
-  parsers, canonical serializers, verifiers, shared safe standalone file reader, and
-  bounded metadata reports plus two live, narrowly reviewed provider adapters. Only
-  `integrations/ai/openai.py` and `integrations/ai/anthropic.py` may import their SDK
-  and network client; there are no live sibling-system adapters.
+- `integrations`: strict, SQLite-independent research-packet, research-request, and
+  captured-Lens-receipt parsers, canonical serializers, verifiers, shared safe
+  standalone file reader, and bounded metadata reports plus two live, narrowly
+  reviewed provider adapters. Only `integrations/ai/openai.py` and
+  `integrations/ai/anthropic.py` may import their SDK and network client; there are no
+  live sibling-system adapters.
 
 Imports point inward: adapters may import domain services; domain packages do not
 import FastAPI, Jinja, or CLI modules. Cross-domain writes are coordinated by an
@@ -168,6 +177,34 @@ clock, ID factory, audit sink, transaction writer, provider, credential, export,
 adoption dependency. Candidate text carries exact source byte coordinates but remains
 semantically distinct from `EvidenceCard`, `Finding`, and `AgentInference`. The
 existing evidence service is the only path from a reviewed lead into evidence state.
+
+Captured search output has one additional local file boundary. `lens verify` accepts
+only the normal `{"lens": {...}}` CLI envelope through the shared descriptor-pinned,
+no-follow stable regular-file reader. The 8 MiB limit is enforced before strict UTF-8
+JSON decoding; duplicate fields, non-standard numbers, excessive JSON shape and
+producer-impossible fanout, unknown fields, unsupported versions, and inconsistent
+derived values fail with bounded non-reflective errors. Verification recomputes query,
+snapshot-set, quote, score/order, omission/truncation, and whole-receipt relationships
+without constructing or opening a database. Its report consequently says snapshot
+content was not independently verified. A successful check establishes receipt
+self-consistency only, not origin, authenticity, authority, approval, truth, quality,
+freshness, or disclosure permission.
+
+`LensService.replay_receipt(...)` first applies that pure verifier, then executes the
+captured mission, canonical filters, deterministic bounds, normalized query, and token
+sequence through the normal Lens implementation in one current query-only SQLite
+snapshot. A package-private normalized-search seam preserves the exact captured
+request after verification proves it is the version-2 Unicode normalization fixed
+point; it is not a second public query contract. Snapshot bytes and import audit are re-verified as
+usual, and the newly built receipt must equal the captured receipt exactly. Any
+same-mission snapshot append changes at least the mission/filter accounting and causes
+`lens_replay_mismatch`, even when an explicit filter excludes it and the candidate
+array is unchanged. Foreign-mission changes are irrelevant. This is current-state
+exact reproduction, never an as-of or historical-corpus replay.
+
+The verify/replay reports are bounded local DTOs. They write no file or database row,
+create no identity/run/audit event, invoke no provider/credential/network, and expose
+no REST/web, MCP, capability-manifest, packet, Athena/Icarus, or external-agent seam.
 
 ## Claim Review read boundary
 
@@ -529,14 +566,16 @@ user Markdown as raw HTML.
 
 - **State lives** in the migrated SQLite database and intentionally written immutable
   export/request-result files. Provider credentials and candidate responses are
-  ephemeral and never become research state.
+  ephemeral and never become research state. An operator-captured Lens stdout file is
+  input for local checking, not an application-persisted canonical artifact.
 - **Feedback lives** in structured errors, CLI exit status, health/ready endpoints,
   doctor output, tests, and the append-only audit ledger. External assistance adds
   metadata-only requested/terminal events and explicit unknown outcomes.
 - **Deleting a snapshot breaks** evidence and brief provenance, so foreign keys and
   append-only triggers prohibit it. Deleting/rewriting the database is outside the app.
 - **Timing works** because one command owns one transaction; mutations use
-  `BEGIN IMMEDIATE`, while request fulfillment uses one query-only WAL read snapshot.
+  `BEGIN IMMEDIATE`, while request fulfillment, Lens search, and Lens reproduction
+  each use one query-only WAL read snapshot.
   Bounded busy waits expose contention and deterministic ordering removes completion-
   order ambiguity. The declared external-call exception is bracketed, not atomic: it
   has one attempt, bounded timeout, post-call context revalidation, and no automatic

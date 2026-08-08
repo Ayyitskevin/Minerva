@@ -1,4 +1,4 @@
-# Current threat model: provenance foundation through Mission Research Queue v1
+# Current threat model: provenance foundation through Lens receipt reproduction
 
 ## Boundary and assets
 
@@ -11,7 +11,10 @@ Protected assets are source snapshot contents, local filesystem paths, provenanc
 audit integrity, citation correctness, exported research artifacts, request/result
 binding integrity, provider credentials, and the operator's control over which exact
 evidence leaves the machine. Lens adds candidate quotes and deterministic retrieval
-receipts to the protected local disclosure surface. Claim Review adds claim text,
+receipts to the protected local disclosure surface. Captured receipt verification and
+current-database reproduction additionally treat the operator-selected receipt path,
+quoted receipt contents, and bounded verification result as untrusted local input and
+protected disclosure-bearing output; they add no egress. Claim Review adds claim text,
 correction reasons, finding/inference text, and deterministic structural receipts to
 that same local disclosure surface. Claim Lineage Graph adds the complete typed
 claim-owned provenance topology, exact citation bytes, source/snapshot metadata, and
@@ -36,6 +39,10 @@ receipts to the same protected local disclosure surface.
 | Lens search mutates research or silently becomes evidence | One `Database.read()` snapshot plus connection-local `query_only`; no identity, audit, writer, evidence, finding, inference, provider, or export dependency; candidate DTOs say `unassessed`/`candidate_only`; table dump and main-file digest regression tests | A human can later create evidence from the lead, but only through the separately audited evidence command and explicit stance |
 | Lens work or result amplification | Query/filter/result/snapshot/corpus-byte/quote-byte caps; deterministic whole-snapshot prefix; oversized lines omitted explicitly; bounded top-result retention; integer scoring | A corpus inside the 64 MiB maximum can contain many short lines and consume local CPU; v1 has a byte bound, not a SQLite instruction or wall-clock bound |
 | Corrupt snapshot creates plausible Lens text | Existing snapshot length/digest/UTF-8/import-audit verifier runs on every searched row before scoring; corruption fails the search rather than being omitted | No external signature detects a coordinated same-OS-user rewrite of database bytes and audit history |
+| Hostile captured Lens receipt or path exhausts/redirects verification | Shared descriptor-pinned no-follow stable regular-file reader; reject parent segments, symlinks, non-regular/changing files; 8 MiB cap before decode; strict UTF-8 JSON, duplicate/non-standard-number rejection, bounded shape/fanout, strict frozen DTOs with unknown fields forbidden; fixed non-reflective errors | A valid maximum-size receipt can still consume bounded local parse memory and disclose substantial quoted mission text to the trusted OS user |
+| A self-consistent forged receipt is mistaken for authentic history | Database-free verification recomputes schema/algorithm/runtime, query/snapshot/quote digests, score/order, counts/omissions/truncation, semantic constants, and the whole-receipt digest; output explicitly says snapshot content was not verified and authenticity/origin/authority/approval/freshness/disclosure permission are unestablished | A same-OS-user producer can construct a different internally valid receipt; there is no signature, cryptographic identity, trusted timestamp, historical database archive, or external integrity anchor |
+| Lens reproduction hides current corpus or algorithm drift | Strict receipt verification precedes DB construction/open; runtime and algorithm incompatibility fail separately; the captured normalized query/tokens, canonical filters, and bounds run through the existing query-only search/integrity path; the complete newly built receipt must equal the captured one or `lens_replay_mismatch` | Reproduction is current-state exact comparison, not as-of replay. Any same-mission snapshot append changes mission/filter accounting and therefore mismatches even if excluded by an explicit filter; only foreign-mission changes are irrelevant |
+| Lens verification/reproduction mutates state or triggers external behavior | Pure verifier plus one `Database.read()`/`query_only` replay; no identity, writer, audit, export, provider, credential, network, REST/web, MCP, packet, capability, or external-agent dependency; dump/main-file/non-invocation regressions | The operator may separately retain the shell-captured receipt or invoke an existing audited evidence command; those actions are outside verify/replay |
 | Claim Review hides adverse or cross-mission correction state | Mission and claim are both required and shape-validated; unknown/foreign claims share one non-reflective refusal; question ownership and the complete contiguous status chain are mission-verified before status text is exposed; target evidence and mission-owned affected records are selected in one query-only snapshot; success is complete-or-refuse rather than paginated; foreign-owner text is never returned | Completeness is over records admitted by their stored owner rows to the named mission. If foreign keys/triggers were defeated and an owner was moved to another mission while a target-mission relationship was forged, owner-first queries exclude it; deep doctor, not a scoped view, detects that whole-file corruption |
 | Claim Review mistakes counts or conflict for truth | Active/withdrawn stance counts are descriptive; status validity reuses the presence-only workflow rule; active support plus opposition is labeled only as a structural stance conflict; semantic-boundary fields forbid truth, confidence, or replacement-status claims | The view does not assess source quality, logical incompatibility, causal validity, or whether a human correction was justified |
 | Claim Review work or output amplification | Evidence, affected-record, citation-relationship (including inspected promotion-target rows), actual distinct-snapshot-BLOB-byte, and SQLite-VM ceilings; declared/actual snapshot length is checked before BLOB materialization; statement/reason sizes are constrained by schema; any exceeded limit refuses the whole result | The VM ceiling depends on the local SQLite version/query plan and is not a portable elapsed-time or memory bound; a successful maximum-size receipt can still be large |
@@ -93,6 +100,15 @@ receipts to the same protected local disclosure surface.
   Its stable receipt reports query/corpus digests, algorithm and Unicode versions,
   exact byte spans, configured bounds, exclusions, omissions, and truncation. It
   performs no provider/network call and leaves all database and audit state unchanged.
+- Captured Lens receipt intake is limited to one no-follow stable regular file no
+  larger than 8 MiB and strictly verifies structure, canonical digest, query/snapshot
+  relationships, quote bytes, deterministic scoring/order, and count/omission
+  arithmetic. Database-free verification explicitly does not claim snapshot-content
+  verification or authenticity.
+- Lens reproduction verifies first, then performs one normal current-database Lens
+  read with the captured normalized representation and requires exact receipt
+  equality. It is not historical/as-of replay, persists nothing, and any same-mission
+  snapshot append causes a mismatch even if a filter excludes that snapshot.
 - A Lens candidate is never evidence, a finding, an inference, confidence, or claim
   status. Adoption remains a separate explicit human mutation with normal validation
   and audit behavior.
@@ -162,7 +178,9 @@ caught-error versus process/power-loss limitation as existing export.
 Remote access, real authentication, encrypted storage, optional OS keyring support,
 multi-tenancy, signed exports, additional providers, provider-side retrieval/tools,
 and non-CLI integration authentication require a later threat model and explicit
-product/security approval. Mission Research Queue v1 does not authorize a persistent
-assign/defer/resolve queue, migration, external principal, cryptographic identity,
-Athena/Icarus adapter, MCP or other agent protocol, packet revision, Lens replay,
-Lens-to-evidence mutation, or canonical PROV-O/RO-Crate exporter.
+product/security approval. The accepted local Lens receipt verification/reproduction
+slice does not authorize a persistent assign/defer/resolve queue, migration, external
+principal, cryptographic identity, Athena/Icarus adapter, MCP or other agent protocol,
+packet revision, local review dossier, Lens-to-evidence mutation, or canonical
+PROV-O/RO-Crate exporter. The later dossier remains a separate product decision even
+though its component read views now exist.

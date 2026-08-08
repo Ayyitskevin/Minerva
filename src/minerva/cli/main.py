@@ -20,6 +20,7 @@ from minerva.core.operations import OperationsService
 from minerva.core.types import IdentityContext, local_identity
 from minerva.evidence.models import EvidenceStance
 from minerva.evidence.service import EvidenceService
+from minerva.integrations.lens_receipt_file import load_lens_receipt
 from minerva.integrations.research_packet_file import (
     load_research_packet,
     packet_inspection_report,
@@ -29,7 +30,11 @@ from minerva.integrations.research_request_file import (
     load_research_request,
     request_verification_report,
 )
-from minerva.lens import LensBounds, LensService
+from minerva.lens import (
+    LensBounds,
+    LensService,
+    lens_receipt_verification_result,
+)
 from minerva.lineage import ClaimLineageBounds, ClaimLineageService
 from minerva.research.models import ClaimStatus, FindingStatus, StatementKind
 from minerva.research.service import ResearchService
@@ -230,6 +235,22 @@ def _cmd_lens_search(args: argparse.Namespace) -> Outcome:
         ),
     )
     return _command_result("lens", result)
+
+
+def _cmd_lens_verify(args: argparse.Namespace) -> Outcome:
+    receipt = load_lens_receipt(cast(Path, args.input))
+    return _command_result(
+        "lens_receipt_verification",
+        lens_receipt_verification_result(receipt),
+    )
+
+
+def _cmd_lens_replay(args: argparse.Namespace) -> Outcome:
+    receipt = load_lens_receipt(cast(Path, args.input))
+    return _command_result(
+        "lens_replay",
+        LensService(_database(args)).replay_receipt(receipt),
+    )
 
 
 def _cmd_evidence_add(args: argparse.Namespace) -> Outcome:
@@ -707,6 +728,19 @@ def build_parser() -> argparse.ArgumentParser:
     lens_search.add_argument("--max-corpus-bytes", type=int, default=16_777_216)
     lens_search.add_argument("--max-quote-bytes", type=int, default=1_024)
     _set_handler(lens_search, _cmd_lens_search)
+    lens_verify = lens_commands.add_parser(
+        "verify",
+        help="verify one captured Lens receipt without a database",
+    )
+    lens_verify.add_argument("--input", required=True, type=Path)
+    _set_handler(lens_verify, _cmd_lens_verify)
+    lens_replay = lens_commands.add_parser(
+        "replay",
+        help="reproduce one captured Lens receipt against the current database",
+    )
+    _add_database(lens_replay)
+    lens_replay.add_argument("--input", required=True, type=Path)
+    _set_handler(lens_replay, _cmd_lens_replay)
 
     evidence_parser = commands.add_parser("evidence", help="manage exact evidence cards")
     evidence_commands = evidence_parser.add_subparsers(dest="evidence_command", required=True)

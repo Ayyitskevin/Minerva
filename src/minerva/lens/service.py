@@ -18,13 +18,19 @@ from minerva.core.errors import IntegrityError, NotFoundError
 from minerva.lens.models import (
     LENS_ALGORITHM,
     LENS_ALGORITHM_VERSION,
+    LENS_CANDIDATE_KIND,
     LENS_QUERY_NORMALIZATION,
+    LENS_RESULT_KIND,
     LENS_SCHEMA_VERSION,
+    LENS_SCORING,
+    LENS_SEMANTIC_NOTICE,
     LENS_SNAPSHOT_SET_SCHEMA_VERSION,
+    LENS_STABLE_TIE_BREAK,
     LensBounds,
     LensCandidateContext,
     LensCorpusFilter,
     LensOmissions,
+    LensReplayResult,
     LensScore,
     LensSearchResult,
     LensSemanticBoundary,
@@ -47,6 +53,7 @@ _SOURCE_ID = re.compile(r"src_[0-9a-f]{32}\Z")
 _SNAPSHOT_ID = re.compile(r"snp_[0-9a-f]{32}\Z")
 _WORD = re.compile(r"\w+", flags=re.UNICODE)
 _WHITESPACE = re.compile(r"\s+", flags=re.UNICODE)
+_NORMALIZATION_APPLICATION_CAP = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +103,43 @@ class LensService:
     ) -> LensSearchResult:
         safe_bounds = _validate_bounds(bounds)
         normalized_query, query_terms = _normalize_query(query)
+        return self._search_normalized(
+            mission_id=mission_id,
+            normalized_query=normalized_query,
+            query_terms=query_terms,
+            source_ids=source_ids,
+            snapshot_ids=snapshot_ids,
+            bounds=safe_bounds,
+        )
+
+    def replay_receipt(self, receipt: LensSearchResult) -> LensReplayResult:
+        """Verify and reproduce a captured receipt against the current database."""
+
+        # Local import keeps the pure receipt verifier dependent on the search
+        # service without creating a module-import cycle.
+        from minerva.lens.receipt import replay_lens_receipt
+
+        return replay_lens_receipt(self, receipt)
+
+    def _search_normalized(
+        self,
+        *,
+        mission_id: str,
+        normalized_query: str,
+        query_terms: tuple[str, ...],
+        source_ids: Sequence[str] | None,
+        snapshot_ids: Sequence[str] | None,
+        bounds: LensBounds,
+    ) -> LensSearchResult:
+        """Execute an already-canonical Lens request for receipt replay.
+
+        Public callers still use :meth:`search`. Receipt replay first verifies
+        the captured fixed-point text and tokens, then uses that exact request
+        representation instead of interpreting it as new raw operator input.
+        """
+
+        safe_bounds = _validate_bounds(bounds)
+        safe_query_terms = _validate_normalized_query(normalized_query, query_terms)
         safe_source_ids = _canonical_filter(source_ids, pattern=_SOURCE_ID)
         safe_snapshot_ids = _canonical_filter(snapshot_ids, pattern=_SNAPSHOT_ID)
         corpus_filter = LensCorpusFilter(
@@ -164,7 +208,7 @@ class LensService:
                     mission_id=mission_id,
                     reference=reference,
                     content=content,
-                    query_terms=query_terms,
+                    query_terms=safe_query_terms,
                     max_quote_bytes=safe_bounds.max_quote_bytes,
                     max_results=safe_bounds.max_results,
                     ranked=ranked,
@@ -202,20 +246,17 @@ class LensService:
         snapshot_set_sha256 = _snapshot_set_digest(mission_id, searched_identities)
         provisional = LensSearchResult(
             schema_version=LENS_SCHEMA_VERSION,
-            kind="candidate_context_search",
+            kind=LENS_RESULT_KIND,
             mission_id=mission_id,
             normalized_query=normalized_query,
             query_sha256=query_sha256,
-            query_terms=query_terms,
+            query_terms=safe_query_terms,
             query_normalization=LENS_QUERY_NORMALIZATION,
             unicode_database_version=unicodedata.unidata_version,
             algorithm=LENS_ALGORITHM,
             algorithm_version=LENS_ALGORITHM_VERSION,
-            scoring=(
-                "exact phrase, distinct query-term coverage, total query-term "
-                "occurrences, then integer density; all descending"
-            ),
-            stable_tie_break=("snapshot_id", "start_byte", "end_byte"),
+            scoring=LENS_SCORING,
+            stable_tie_break=LENS_STABLE_TIE_BREAK,
             bounds=safe_bounds,
             corpus_filter=corpus_filter,
             searched_snapshots=searched_identities,
@@ -227,11 +268,7 @@ class LensService:
             truncated=truncated,
             omissions=omissions,
             candidates=candidates,
-            semantic_notice=(
-                "Lens results are candidate-context leads, not evidence. Their stance is "
-                "unassessed, this search mutates no research state, and normal explicit "
-                "evidence adoption and validation remain required."
-            ),
+            semantic_notice=LENS_SEMANTIC_NOTICE,
             semantic_boundary=LensSemanticBoundary(),
             retrieval_receipt_sha256="",
         )
@@ -288,8 +325,40 @@ def _normalize_query(query: str) -> tuple[str, tuple[str, ...]]:
     return normalized, terms
 
 
+def _validate_normalized_query(
+    normalized_query: str,
+    query_terms: tuple[str, ...],
+) -> tuple[str, ...]:
+    if not isinstance(normalized_query, str) or "\x00" in normalized_query:
+        raise IntegrityError("lens_receipt_invalid", "The Lens receipt is invalid.")
+    try:
+        encoded = normalized_query.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as error:
+        raise IntegrityError("lens_receipt_invalid", "The Lens receipt is invalid.") from error
+    if (
+        not encoded
+        or len(encoded) > MAX_QUERY_BYTES
+        or _normalize_text(normalized_query) != normalized_query
+        or not isinstance(query_terms, tuple)
+        or query_terms != tuple(_WORD.findall(normalized_query))
+        or not 1 <= len(query_terms) <= MAX_QUERY_TERMS
+        or any(len(term.encode("utf-8")) > MAX_QUERY_TERM_BYTES for term in query_terms)
+    ):
+        raise IntegrityError("lens_receipt_invalid", "The Lens receipt is invalid.")
+    return query_terms
+
+
 def _normalize_text(value: str) -> str:
-    return _WHITESPACE.sub(" ", unicodedata.normalize("NFKC", value).casefold()).strip()
+    current = value
+    for _application in range(_NORMALIZATION_APPLICATION_CAP):
+        updated = unicodedata.normalize("NFKC", current).casefold()
+        if updated == current:
+            return _WHITESPACE.sub(" ", current).strip()
+        current = updated
+    raise IntegrityError(
+        "lens_normalization_unsupported",
+        "Lens Unicode normalization did not converge within its deterministic bound.",
+    )
 
 
 def _canonical_filter(
@@ -491,7 +560,6 @@ def _search_snapshot(
     ranked: list[tuple[tuple[int | str, ...], LensCandidateContext]],
     counts: _PassageCounts,
 ) -> None:
-    distinct_query_terms = tuple(dict.fromkeys(query_terms))
     for start_byte, end_byte in _line_spans(content):
         quote_bytes = content[start_byte:end_byte]
         if not quote_bytes:
@@ -502,27 +570,12 @@ def _search_snapshot(
             counts.oversized_bytes += len(quote_bytes)
             continue
         quote = quote_bytes.decode("utf-8", errors="strict")
-        candidate_terms = tuple(_WORD.findall(_normalize_text(quote)))
-        term_counts = {term: candidate_terms.count(term) for term in distinct_query_terms}
-        matched_distinct_terms = sum(count > 0 for count in term_counts.values())
-        if matched_distinct_terms == 0:
+        score = _score_quote(quote, query_terms)
+        if score is None:
             counts.nonmatching += 1
             continue
-        total_occurrences = sum(term_counts.values())
-        exact_phrase = _contains_sequence(candidate_terms, query_terms)
-        density_ppm = (
-            total_occurrences * 1_000_000 // len(candidate_terms) if candidate_terms else 0
-        )
-        score = LensScore(
-            exact_phrase_match=exact_phrase,
-            matched_distinct_terms=matched_distinct_terms,
-            query_distinct_terms=len(distinct_query_terms),
-            total_term_occurrences=total_occurrences,
-            candidate_term_count=len(candidate_terms),
-            density_ppm=density_ppm,
-        )
         candidate = LensCandidateContext(
-            kind="candidate_context",
+            kind=LENS_CANDIDATE_KIND,
             rank=0,
             mission_id=mission_id,
             source_id=reference.source_id,
@@ -540,15 +593,7 @@ def _search_snapshot(
             score=score,
             why=_why(score),
         )
-        key: tuple[int | str, ...] = (
-            -int(exact_phrase),
-            -matched_distinct_terms,
-            -total_occurrences,
-            -density_ppm,
-            reference.snapshot_id,
-            start_byte,
-            end_byte,
-        )
+        key = _candidate_rank_key(candidate)
         bisect.insort(ranked, (key, candidate), key=lambda item: item[0])
         if len(ranked) > max_results:
             ranked.pop()
@@ -573,6 +618,39 @@ def _contains_sequence(candidate: tuple[str, ...], query: tuple[str, ...]) -> bo
     return any(
         candidate[index : index + len(query)] == query
         for index in range(len(candidate) - len(query) + 1)
+    )
+
+
+def _score_quote(quote: str, query_terms: tuple[str, ...]) -> LensScore | None:
+    candidate_terms = tuple(_WORD.findall(_normalize_text(quote)))
+    distinct_query_terms = tuple(dict.fromkeys(query_terms))
+    term_counts = {term: candidate_terms.count(term) for term in distinct_query_terms}
+    matched_distinct_terms = sum(count > 0 for count in term_counts.values())
+    if matched_distinct_terms == 0:
+        return None
+    total_occurrences = sum(term_counts.values())
+    return LensScore(
+        exact_phrase_match=_contains_sequence(candidate_terms, query_terms),
+        matched_distinct_terms=matched_distinct_terms,
+        query_distinct_terms=len(distinct_query_terms),
+        total_term_occurrences=total_occurrences,
+        candidate_term_count=len(candidate_terms),
+        density_ppm=(
+            total_occurrences * 1_000_000 // len(candidate_terms) if candidate_terms else 0
+        ),
+    )
+
+
+def _candidate_rank_key(candidate: LensCandidateContext) -> tuple[int | str, ...]:
+    score = candidate.score
+    return (
+        -int(score.exact_phrase_match),
+        -score.matched_distinct_terms,
+        -score.total_term_occurrences,
+        -score.density_ppm,
+        candidate.snapshot_id,
+        candidate.start_byte,
+        candidate.end_byte,
     )
 
 
