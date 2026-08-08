@@ -12,6 +12,7 @@
 - [ADR 0010: The Athena coordination adapter seam](adr/0010-athena-coordination-adapter-seam.md) — **Proposed (gate D-2)**
 - [Workspace research-memory season](#workspace-research-memory-season-decision-0-2026-08-20) — **Accepted 2026-08-20 (Decision 0)**
 - [Lens v1: narrow local candidate retrieval](#lens-v1-narrow-local-candidate-retrieval) — **Accepted 2026-08-08; broad D-6 remains closed**
+- [Claim Review v1: schema-free gaps and correction impacts](#claim-review-v1-schema-free-gaps-and-correction-impacts) — **Accepted 2026-08-08; this local read-only view only**
 
 ## Milestone 1 implementation decisions
 
@@ -920,3 +921,102 @@ This decision does **not** authorize live web or scholarly API access, crawling,
 PDF/OCR ingestion, embeddings, vector stores, mutable indexes, background work,
 provider calls, autonomous adoption, publishing, messaging, or execution. Those
 remain under their existing owner/security gates.
+
+## Claim Review v1: schema-free gaps and correction impacts
+
+The repository owner's 2026-08-08 continuation directive accepts Claim Review v1 as
+the next planned schema-free, local, read-only research view. It does not accept a
+family of future surfaces, reopen broad D-6, or alter the accepted trust boundary.
+
+- **The public local surfaces are the CLI and Python application service.**
+  `minerva claim review --mission ... --claim ...` and
+  `ClaimReviewService.review_claim(...)` require both identifiers and resolve them in
+  one SQLite read snapshot with `query_only` enabled. The service, not the CLI, owns
+  SQL, scope validation, bounds, derivation, integrity checks, and receipt
+  construction. There is no HTTP/web, authenticated external, agent-protocol,
+  capability-manifest, or packet surface in this slice.
+- **Claim scope includes provenance relationships, not just the claim row.** The
+  question must resolve in the mission, and every claim-status event must remain in a
+  contiguous mission-owned version chain before its reason, actor, run, or timestamp
+  can enter the receipt.
+- **Completion is all or nothing.** Target evidence, correction-relevant findings and
+  inferences, citation relationships, distinct verified snapshot bytes, and SQLite
+  virtual-machine work each have explicit bounds. Crossing any bound raises the
+  stable `claim_review_work_limit` refusal. A success always says
+  `completion_policy: complete_or_refuse`, `complete: true`, and `truncated: false`;
+  no partial prefix can be mistaken for a complete ledger review.
+  Promotion-target citation rows inspected for lineage validation consume the same
+  relationship budget even when their finding is not otherwise emitted as affected.
+- **Gaps are structural absence, not epistemic scores.** `no_active_evidence`,
+  `no_active_support`, and `no_active_opposition` report only what the active ledger
+  lacks. `status_required_active_stance_missing` re-derives the existing status rule:
+  provisional support requires support, contested requires support and opposition,
+  and unsupported requires opposition. The historical status is retained and no
+  replacement is recommended.
+- **Contradiction is explicit but deliberately narrow.**
+  `active_stance_contradiction` means active supporting and opposing evidence cards
+  coexist. It does not decide logical incompatibility, evidence quality, truth,
+  sufficiency, or confidence, and evidence counts are never weights or votes.
+  Contextual and inconclusive evidence remains visible but satisfies neither required
+  stance.
+- **Supersession is lineage, not deactivation.** A newer evidence card may name the
+  older card it supersedes, but both remain active unless separately withdrawn. For a
+  withdrawn card the impact view names direct superseding cards so an operator can
+  inspect correction lineage without treating the link as a hidden status change.
+- **Corrections stay append-only and visible.** Evidence withdrawals retain exact
+  citation provenance. Retracted findings and inferences remain in the affected-record
+  history while leaving synthesis or Markdown respectively. A live material finding
+  citing withdrawn evidence is reported as blocking applicable synthesis; an
+  assumption or unresolved question retaining an optional withdrawn citation is
+  reported separately. Retracting an inference does not retract a promoted human
+  finding, which remains independently asserted until separately corrected. The
+  affected-inference record carries the promotion row's identifier, finding,
+  actor, run, timestamp, and current finding-retraction state so that independence
+  is inspectable rather than inferred from a bare finding identifier. The inverse is
+  equally non-transitive: retracting the promoted finding leaves a live source
+  inference asserted until that inference is separately retracted, and the view emits
+  an explicit effect/cue for that state.
+- **The active-inference Markdown risk is recorded, not silently repaired.** An
+  unretracted adopted inference whose evidence is later withdrawn has
+  `active_citation_policy_satisfied: false`; if it has not already been promoted,
+  promotion is blocked. A recorded promotion remains append-only history and the
+  promoted human finding is reviewed independently. Current synthesis still includes
+  the inference in the labeled Markdown inference section. Canonical
+  `minerva.research-brief.v2` JSON contains no adopted inferences. Claim Review emits
+  `live_inference_uses_withdrawn_evidence` and record-level effect codes so the
+  operator can perform an explicit retraction; changing Markdown eligibility is a
+  separate behavioral decision.
+- **Integrity is reused, never approximated.** Every result evidence card and every
+  citation of an affected record is resolved with the shared citation verifier, and
+  each distinct snapshot is digest-checked. The receipt carries source/snapshot
+  identity, exact UTF-8 coordinates, quote byte length/digest, provenance,
+  correction state, measured work, algorithm/version, semantic boundary, and a
+  whole-receipt SHA-256. Cross-mission request scope and inconsistent/tampered
+  admitted history fail closed. The owner-first mission view does not replace deep
+  doctor for foreign-owner rows created by direct referential corruption. The receipt
+  digest establishes deterministic self-consistency only, not
+  origin, authenticity, authority, approval, disclosure permission, or independent
+  research correctness.
+- **Evaluation claims stay narrower than the test suite.** The fixed synthetic
+  harness measures four structural gap labels, recorded-status validity, six
+  withdrawal-impact edge classes, repeated determinism, identifier-based mission
+  isolation, and database-dump/main-file non-mutation. UTF-8 citation/digest,
+  promotion lineage, bounds, hostile scope, non-invocation, receipt verification, and
+  installed-wheel behavior are separate tests rather than evaluation metrics.
+- **The result is an observation, not an operation.** It creates no identity, run,
+  audit event, evidence, finding, inference, status event, queue, export, or file;
+  invokes no provider, credential, network, adapter, or external system; and neither
+  determines truth nor calculates confidence. Every correction remains a separate
+  explicit human action through the existing audited services.
+- **No persistence or protocol contract changed.** Schema remains v5; no migration,
+  index, packet field/version, capability name, external principal, signature,
+  cryptographic identity, Athena/Icarus seam, MCP, agent-facing API, scholarly-source
+  adapter, or broader retrieval behavior is added.
+
+The dependency-ordered follow-on plan proposes (1) a schema-free query-only
+claim-lineage graph, (2) a derived non-persisted mission research queue, and (3) local
+Lens receipt verification/replay. The continuation directive did not accept or
+authorize those implementations; each future slice needs an explicit owner decision.
+A persistent queue, Lens-to-evidence convenience mutation, canonical PROV-O/RO-Crate
+exporter, migration, trust-model change, D-2/D-3/D-5 implementation, or packet v3
+continues to need its own recorded owner decision.

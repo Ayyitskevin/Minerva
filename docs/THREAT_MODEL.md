@@ -1,4 +1,4 @@
-# Current threat model: provenance foundation through Lens v1
+# Current threat model: provenance foundation through Claim Review v1
 
 ## Boundary and assets
 
@@ -11,7 +11,9 @@ Protected assets are source snapshot contents, local filesystem paths, provenanc
 audit integrity, citation correctness, exported research artifacts, request/result
 binding integrity, provider credentials, and the operator's control over which exact
 evidence leaves the machine. Lens adds candidate quotes and deterministic retrieval
-receipts to the protected local disclosure surface; it adds no external egress.
+receipts to the protected local disclosure surface. Claim Review adds claim text,
+correction reasons, finding/inference text, and deterministic structural receipts to
+that same local disclosure surface; neither feature adds external egress.
 
 ## Threats and controls
 
@@ -29,6 +31,11 @@ receipts to the protected local disclosure surface; it adds no external egress.
 | Lens search mutates research or silently becomes evidence | One `Database.read()` snapshot plus connection-local `query_only`; no identity, audit, writer, evidence, finding, inference, provider, or export dependency; candidate DTOs say `unassessed`/`candidate_only`; table dump and main-file digest regression tests | A human can later create evidence from the lead, but only through the separately audited evidence command and explicit stance |
 | Lens work or result amplification | Query/filter/result/snapshot/corpus-byte/quote-byte caps; deterministic whole-snapshot prefix; oversized lines omitted explicitly; bounded top-result retention; integer scoring | A corpus inside the 64 MiB maximum can contain many short lines and consume local CPU; v1 has a byte bound, not a SQLite instruction or wall-clock bound |
 | Corrupt snapshot creates plausible Lens text | Existing snapshot length/digest/UTF-8/import-audit verifier runs on every searched row before scoring; corruption fails the search rather than being omitted | No external signature detects a coordinated same-OS-user rewrite of database bytes and audit history |
+| Claim Review hides adverse or cross-mission correction state | Mission and claim are both required and shape-validated; unknown/foreign claims share one non-reflective refusal; question ownership and the complete contiguous status chain are mission-verified before status text is exposed; target evidence and mission-owned affected records are selected in one query-only snapshot; success is complete-or-refuse rather than paginated; foreign-owner text is never returned | Completeness is over records admitted by their stored owner rows to the named mission. If foreign keys/triggers were defeated and an owner was moved to another mission while a target-mission relationship was forged, owner-first queries exclude it; deep doctor, not a scoped view, detects that whole-file corruption |
+| Claim Review mistakes counts or conflict for truth | Active/withdrawn stance counts are descriptive; status validity reuses the presence-only workflow rule; active support plus opposition is labeled only as a structural stance conflict; semantic-boundary fields forbid truth, confidence, or replacement-status claims | The view does not assess source quality, logical incompatibility, causal validity, or whether a human correction was justified |
+| Claim Review work or output amplification | Evidence, affected-record, citation-relationship (including inspected promotion-target rows), actual distinct-snapshot-BLOB-byte, and SQLite-VM ceilings; declared/actual snapshot length is checked before BLOB materialization; statement/reason sizes are constrained by schema; any exceeded limit refuses the whole result | The VM ceiling depends on the local SQLite version/query plan and is not a portable elapsed-time or memory bound; a successful maximum-size receipt can still be large |
+| Corrupt correction dependency creates plausible Claim Review output | Every admitted target/dependent citation uses the shared exact-byte verifier and snapshot cache; mission-composite correction links, citation scope, acyclic supersession scope, status derivation, and selected promotion target/content/citation/retraction lineage are checked or fail closed | The view does not independently reconcile every correction/audit event or foreign-mission owner row; deep doctor remains the whole-database referential/audit-integrity surface. Snapshot and receipt hashes are not an external signature |
+| Claim Review mutates state or triggers external behavior | `Database.read()` plus `query_only`; no identity, writer, audit, export, provider, credential, network, adapter, or queue dependency; database dump and main-file-byte regression checks | The local operator may separately invoke existing audited correction commands after review |
 | Excessive work or text materialization during fulfillment | Bounded claim-history/preflight queries, one connection-local progress budget over the complete query-only snapshot, targeted audit and claim-scoped finding indexes (migration 0003) whose selection is asserted by an `EXPLAIN QUERY PLAN` regression test, and an exact-multiplicity NUL-safe storage-byte lower bound before full database text or snapshot content is returned to Python; exhaustion becomes non-reflective `brief_work_limit` before file writes | The SQLite budget limits virtual-machine instructions, not elapsed time; aggregate length queries inspect stored values and are not an SQLite-memory limit; final canonical byte validation remains authoritative; same-mission audit history that the claim-scoped query must examine row by row still consumes budget; the plan test is the only guard on index selection — `INDEXED BY` names `idx_findings_claim` so its absence fails at preparation, but `idx_audit_event_entity` is planner-selected and its absence degrades silently to a scan, and neither hint forces a seek if a predicate is later dropped |
 | Script/HTML/Markdown injection | Jinja autoescape; CSP; stored text rendered as text/`pre`; no raw HTML Markdown mode | Future rich rendering requires a reviewed sanitizer policy |
 | SQL injection | Parameterized SQL; dynamic choices selected from fixed enums/queries only | A future ad hoc query could violate the rule; tests and review remain necessary |
@@ -75,6 +82,13 @@ receipts to the protected local disclosure surface; it adds no external egress.
 - A Lens candidate is never evidence, a finding, an inference, confidence, or claim
   status. Adoption remains a separate explicit human mutation with normal validation
   and audit behavior.
+- Claim Review returns one complete-or-refuse, mission-and-claim-scoped structural
+  receipt from a query-only snapshot. Every cited snapshot is re-verified; success
+  reports configured bounds, measured admitted work, correction/promotion provenance,
+  semantic non-effects, and a whole-receipt digest without mutating any table or file.
+- A Claim Review gap, active stance conflict, status-validity warning, or correction
+  impact is not truth, confidence, quality, sufficiency, a status recommendation, or a
+  correction. Human corrections remain separate audited operations.
 - Retraction deletes nothing. Surfaces that read findings still return a retracted
   finding, marked with its reason, timestamp, and actor; synthesis surfaces exclude
   it from the brief rather than presenting it as asserted. Neither path can make the

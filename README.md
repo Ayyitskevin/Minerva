@@ -25,6 +25,12 @@ Lens v1 adds bounded, deterministic lexical discovery over those already-importe
 immutable mission snapshots. It returns exact-byte candidate context for review and
 cannot create evidence or mutate research state.
 
+Claim Review v1 adds a complete-or-refuse, deterministic view of one claim's
+structural evidence gaps, active support/opposition conflict, recorded-status validity,
+and append-only withdrawal/retraction impacts. It is local and read-only: review cues
+do not determine truth, calculate confidence, recommend a status, or perform a
+correction.
+
 Milestone 2B adds one deliberately narrow, optional assistance surface. A local CLI
 operator can preview a bounded request made from one claim and its active evidence,
 then explicitly authorize that exact request for OpenAI or Anthropic using their own
@@ -102,6 +108,7 @@ minerva source import --db research.db --mission MIS_ID --root ./sources \
 minerva evidence add --db research.db --mission MIS_ID --claim CLM_ID \
   --snapshot SNP_ID --start 0 --end 42 --quote "EXACT QUOTE" --stance supports
 minerva claim show --db research.db --claim CLM_ID
+minerva claim review --db research.db --mission MIS_ID --claim CLM_ID
 minerva brief export --db research.db --mission MIS_ID --output-dir ./export
 minerva audit list --db research.db --mission MIS_ID
 minerva doctor --db research.db --deep
@@ -141,6 +148,7 @@ undocumented.
 | `minerva claim add` | add a falsifiable claim under a question |
 | `minerva claim show` | show one claim, its status, and its findings |
 | `minerva claim ledger` | show a claim's complete evidence ledger, withdrawals included |
+| `minerva claim review` | show complete evidence gaps and correction impacts for one claim |
 | `minerva claim status` | append a claim status, never overwriting one |
 | `minerva source import` | import one file as an immutable snapshot |
 | `minerva source show` | show snapshot metadata, or its stored bytes |
@@ -194,6 +202,59 @@ research record only through the separate existing `evidence add` command with
 an explicit claim, stance, coordinates, quote, validation, and audit trail.
 See [Lens v1](docs/LENS_V1.md) for the scoring/replay contract and
 [the competitive landscape](docs/COMPETITIVE_LANDSCAPE.md) for product context.
+
+## Claim gaps and correction impacts
+
+Inspect one claim's complete evidence ledger and every correction-relevant
+finding/inference relationship admitted by explicit deterministic bounds:
+
+```bash
+minerva claim review --db research.db --mission MIS_ID --claim CLM_ID
+```
+
+The `minerva.claim-review.v1` receipt reports active and withdrawn stance counts,
+missing support/opposition, any active support-and-opposition conflict, whether the
+recorded workflow status still has its required active stances, and the effects of
+evidence withdrawals and finding/inference retractions. Evidence entries retain source
+and snapshot identity, digest, exact UTF-8 byte coordinates, quote digest,
+supersession, provenance, and correction history. Supersession is historical lineage;
+it does not deactivate the superseded evidence card, so only an explicit withdrawal
+removes a card from the active stance set.
+
+The view is complete-or-refuse. If all target evidence, affected records, citation
+relationships, verified snapshot bytes, or SQLite instruction work cannot fit the
+configured bounds, it returns `claim_review_work_limit` instead of a partial result.
+Success is always `complete: true` and `truncated: false`, with measured work and a
+whole-receipt SHA-256.
+
+That digest establishes deterministic receipt self-consistency only. It is not a
+signature or proof of origin, authenticity, authority, approval, or permission to
+disclose the claim and correction data.
+
+Review observations are structural, not conclusions. Supporting and opposing cards
+coexisting is reported as a stance contradiction, not a vote or truth judgment;
+counts never become confidence or sufficiency. A still-live adopted inference whose
+evidence was later withdrawn is explicitly flagged as failing its active-citation
+policy. If it was not already promoted, promotion is now blocked; an earlier promotion
+remains append-only history and its human finding is reviewed separately. The reverse
+boundary is explicit too: retracting that finding does not retract a still-live source
+inference. A live inference with withdrawn evidence currently remains in the Markdown
+brief until a human explicitly retracts it, while adopted inferences remain absent
+from canonical v2 JSON. Claim Review makes that reading-surface risk inspectable but
+changes nothing.
+
+The command uses one query-only SQLite snapshot, verifies every referenced citation
+and distinct source snapshot, and writes no run, audit, evidence, finding, inference,
+status, export, or queue state. See [Claim Review v1](docs/CLAIM_REVIEW_V1.md) for the
+receipt, bound, correction, and semantic-non-effect contract.
+
+Repository evaluation is deliberately scoped. `scripts/evaluate_claim_review.py`
+measures fixed structural gap labels, recorded-status validity, six withdrawal-impact
+edge classes, repeated-run determinism, identifier-based mission isolation, and zero
+database-dump/main-file mutation. UTF-8 citation coordinates and quote digests,
+promotion lineage, hostile scope, bounds, and installed-wheel behavior are covered by
+the Claim Review unit, CLI, and distribution tests rather than reported as evaluation
+metrics.
 
 ## Canonical research packet
 
@@ -505,5 +566,6 @@ content and integrity metadata is outside the Milestone 1 detection boundary.
 - [Decision log](docs/DECISIONS.md)
 - [Roadmap and explicit non-goals](docs/ROADMAP.md)
 - [Lens v1 retrieval and receipt contract](docs/LENS_V1.md)
+- [Claim Review v1 gap and correction-impact contract](docs/CLAIM_REVIEW_V1.md)
 - [Competitive landscape and dependency roadmap](docs/COMPETITIVE_LANDSCAPE.md)
 - [Contributing](CONTRIBUTING.md)

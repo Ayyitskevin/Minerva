@@ -31,6 +31,11 @@ lens CLI --> bounded lexical query --> one query-only SQLite snapshot
                                            |
                                            +--> verified immutable bytes
                                                  + deterministic candidate receipt
+
+claim review CLI --> complete structural query --> one query-only SQLite snapshot
+                                                     |
+                                                     +--> verified citation/correction
+                                                          impact receipt
 ```
 
 The SQLite database is authoritative for structured research state and source
@@ -47,6 +52,8 @@ they may not reimplement domain validation or write SQL directly.
 - `evidence`: byte-span citations, stance, ledgers, withdrawal, and supersession.
 - `lens`: bounded, model-free candidate-context retrieval and deterministic
   query/corpus/score receipts over verified immutable snapshots.
+- `review`: complete-or-refuse structural evidence-gap, active-stance-conflict,
+  and correction-impact receipts over existing claim ledgers.
 - `synthesis`: canonical research-packet assembly, citation verification,
   claim-scoped request fulfillment, Markdown/JSON rendering, digesting, and contained
   file export.
@@ -147,6 +154,57 @@ clock, ID factory, audit sink, transaction writer, provider, credential, export,
 adoption dependency. Candidate text carries exact source byte coordinates but remains
 semantically distinct from `EvidenceCard`, `Finding`, and `AgentInference`. The
 existing evidence service is the only path from a reviewed lead into evidence state.
+
+## Claim Review read boundary
+
+`ClaimReviewService` is a query application service over the existing claim,
+evidence, finding, and adopted-inference ledgers. The CLI supplies an explicit mission,
+claim, and deterministic bounds; all SQL, scope validation, derivation, integrity
+checking, and receipt construction remain in the service. One `Database.read()`
+transaction with `PRAGMA query_only=ON` owns the complete operation.
+
+Before using the shared claim reader, the review service verifies that the claim's
+question resolves in the mission and that its complete status-event chain starts at
+version one, remains contiguous, and contains no foreign-mission event. The selected
+status DTO must then match the verified latest event exactly.
+
+The service first bounds the target evidence ledger and every correction-relevant
+finding, inference, and citation relationship. It also caps distinct snapshot bytes
+and cumulative local SQLite virtual-machine work. Stored BLOB length is checked
+against declared snapshot length and the configured byte ceiling before snapshot
+content is returned to Python. A limit that would omit required admitted state raises
+`claim_review_work_limit`; no partial prefix is returned. Every referenced evidence
+card then passes the shared exact-citation and immutable-snapshot verifier with one
+snapshot cache. Stable entity ordering and compact sorted-key JSON produce a
+whole-result SHA-256 receipt with no generated ID or observation time.
+
+The derived status check reuses the existing presence-only rule: provisional support
+requires active support, contested requires active support and opposition, and
+unsupported requires active opposition. Coexisting active support and opposition is
+reported separately as a structural stance conflict. Neither condition is a truth,
+quality, confidence, sufficiency, or replacement-status judgment. Supersession remains
+lineage rather than deactivation; only an explicit withdrawal changes the active
+stance set.
+
+Affected records retain withdrawal, retraction, and inference-promotion provenance.
+Selected promotion targets must resolve in the same mission and claim with the copied
+statement, uncertainty, statement kind, and citation set before that provenance is
+returned. Promotion-target citation rows count against the relationship ceiling even
+when that finding is not otherwise an affected output record. Supersession self-links
+and cycles are rejected.
+The receipt describes current synthesis/promotion consequences but performs no
+correction and creates no queue. The service has no identity, writer, audit, export,
+provider, credential, network, packet, capability-manifest, HTTP/external/agent API,
+or web dependency. Its local Python application-service interface is public. See
+[`CLAIM_REVIEW_V1.md`](CLAIM_REVIEW_V1.md) for the versioned read contract.
+
+Claim Review is not a replacement for deep doctor. Its complete-or-refuse promise is
+over the records admitted to the named mission by their stored owner rows. If a
+same-OS-user attacker has already disabled foreign keys/triggers and moved an owner
+record into another mission while forging a target-mission relationship row, the
+owner-first query excludes that foreign owner rather than scanning every mission.
+Deep doctor remains responsible for detecting such whole-database referential
+corruption; the view never returns the foreign record's text.
 
 ## Exact citations
 

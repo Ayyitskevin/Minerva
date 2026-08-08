@@ -131,11 +131,92 @@
 - A checked-in synthetic harness measures precision/recall, exact byte round trips,
   byte-identical determinism, mission isolation, and zero unauthorized mutation.
 
+## Claim Review v1: evidence gaps and correction impacts
+
+- `minerva claim review` derives one deterministic
+  `minerva.claim-review.v1` receipt from an explicitly named mission and claim.
+- The view reports active/withdrawn stance counts, missing support or opposition,
+  active support-and-opposition conflict, recorded-status requirements, and the
+  impacts of evidence withdrawal and finding/inference retraction. These are
+  structural observations, never truth, evidence quality, confidence, sufficiency,
+  or a recommended status.
+- The complete target-claim evidence ledger retains snapshot digest, exact UTF-8
+  coordinates, quote digest, supersession lineage, provenance, and correction state.
+  Supersession does not deactivate an older card; only an explicit withdrawal removes
+  it from the active stance set.
+- Correction-relevant findings and inferences show retained retraction history,
+  synthesis effects, promotion relationships, and live citations that became
+  inactive. A retracted inference does not retract its promoted human finding, and
+  retracting that finding does not retract a still-live source inference.
+- The view is complete-or-refuse. Evidence, affected-record, relationship,
+  distinct-snapshot-byte, and SQLite-work bounds return
+  `claim_review_work_limit` instead of a truncated result; success always records
+  `complete: true`, `truncated: false`, measured work, and a whole-receipt SHA-256.
+  That hash establishes deterministic self-consistency only, not origin,
+  authenticity, authority, approval, disclosure permission, or research correctness.
+- One query-only SQLite snapshot owns scope and reads. Shared citation/snapshot
+  integrity checks run before the receipt returns. There is no identity, audit,
+  evidence, finding, inference, status, queue, provider, network, export, packet, or
+  capability-manifest side effect, and no migration or index is added.
+- A current risk is made explicit rather than repaired: an unretracted adopted
+  inference remains in the Markdown brief after one of its citations is withdrawn,
+  although an unpromoted inference can no longer be promoted. An earlier promotion
+  remains append-only history and its finding is reviewed separately. Claim Review
+  flags the inactive-citation condition; canonical v2 JSON still contains no adopted
+  inferences, and correction remains a separate human retraction.
+- The fixed synthetic Claim Review harness measures four structural gap labels,
+  recorded-status validity, six withdrawal-impact edge classes, repeated determinism,
+  identifier-based mission isolation, and database-dump/main-file non-mutation.
+  UTF-8 citation/digest, promotion, bounds, hostile scope, non-invocation, digest
+  verification, and installed-wheel behavior remain separate tests, not evaluation
+  metrics.
+
 ## Next dependency-ordered capabilities
 
-1. Read-only evidence-gap and retraction-impact views derived from existing ledgers.
-2. Claim-graph navigation and human-owned mission research queues using those views.
-3. A decision packet for lossless PROV-O/RO-Crate mappings and canonical export.
+The following is a proposed dependency order, not implementation authorization. Each
+future slice needs an explicit owner decision, including the schema-free local
+read-only items. No migration, trust-model, external-principal,
+cryptographic-identity, adapter, external/agent-facing API, packet-version, or broad
+D-6 gate is open.
+
+1. **Claim lineage graph v1:** a bounded, deterministic graph over the existing
+   question, claim/status, snapshot/evidence, supersession, finding,
+   inference, promotion, withdrawal, and retraction records. It must retain corrected
+   nodes, verify citations, expose explicit truncation/refusal semantics, remain
+   mission-isolated, and write nothing.
+2. **Derived mission research queue v1:** turn Claim Review and graph reason codes
+   into a deterministic human worklist without assignments, completion state,
+   confidence, autonomous prioritization, or persistence. A durable
+   assign/defer/resolve queue requires a separately approved migration and a day-one
+   correction model.
+3. **Lens receipt verification/replay:** safely verify a bounded Lens receipt and
+   replay it against the exact local snapshot set, detecting receipt,
+   Unicode/algorithm, corpus, and snapshot drift without changing research state or
+   advertising a new agent protocol.
+4. **Local review dossier:** compose the gap, graph, queue, and Lens provenance views
+   for the existing trusted-operator surface. No new external/agent-facing API,
+   mutation control, or capability-manifest claim follows from this item.
+5. **PROV-O/RO-Crate decision packet (design only):** prove a lossless mapping for
+   exact spans, stance, corrections, inference labels, activities, and audit lineage;
+   decide canonicalization, context pinning, and source-byte disclosure before any new
+   canonical exporter is accepted.
+6. **Explicit Lens-to-evidence bridge (owner-gated):** if approved, require a
+   verified receipt, selected candidate, claim, stance, and exact digest confirmation,
+   then reuse normal evidence validation/audit. It may never make search itself
+   mutating or perform autonomous/bulk adoption.
+7. **Authenticated Athena seam (gate D-2):** first reverify the counterpart, then
+   separately decide ADRs 0009/0010, the external-principal migration, asymmetric
+   verification dependency, revocation, replay, and transport. No external research
+   mutation is implied.
+8. **Icarus artifact exchange (gate D-3 after D-2):** requires its own canonical
+   request/result and import-before-evidence decision, likely including a migration;
+   Minerva still performs no experiment or automatic adoption.
+9. **Read-only agent protocol (gate D-5 after D-2/D-3):** MCP or any new agent-facing
+   API starts with authenticated, bounded read tools backed by existing services and
+   exposes no correction, adoption, assistance, publication, or execution verbs.
+10. **Packet v3 (separate decision after a real consumer exists):** define the exact
+    correction/inference delta, independent verifier, backward compatibility, and
+    hostile-input limits without changing frozen v2 bytes by accident.
 
 Scholarly-source adapters follow only after licensing/network/import-custody approval.
 A read-only agent protocol follows only after D-2 authentication. Semantic retrieval

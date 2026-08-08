@@ -226,6 +226,7 @@ def smoke_wheel(dist_directory: Path) -> Path:
             "from pathlib import Path; "
             "import minerva; "
             "from minerva.lens import LensService; "
+            "from minerva.review import ClaimReviewService; "
             "print(version('minerva-research')); "
             "print(Path(minerva.__file__).resolve())"
         )
@@ -368,6 +369,74 @@ if unexpected:
         if not isinstance(claim_ids, list) or not claim_ids or not isinstance(claim_ids[0], str):
             raise SmokeError("installed demo did not return a claim identifier")
         claim_id = claim_ids[0]
+        claim_review_arguments = [
+            str(minerva_command),
+            "claim",
+            "review",
+            "--db",
+            str(demo_database),
+            "--mission",
+            mission_id,
+            "--claim",
+            claim_id,
+        ]
+        claim_review_output = _run_checked(
+            claim_review_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if claim_review_output != _run_checked(
+            claim_review_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        ):
+            raise SmokeError("installed Claim Review is not byte-deterministic")
+        claim_review_envelope = _json_object(
+            claim_review_output,
+            label="installed Claim Review",
+        )
+        claim_review = claim_review_envelope.get("claim_review")
+        if not isinstance(claim_review, dict):
+            raise SmokeError("installed Claim Review omitted its review receipt")
+        review_receipt = claim_review.get("review_receipt_sha256")
+        review_boundary = claim_review.get("semantic_boundary")
+        if (
+            claim_review.get("schema_version") != "minerva.claim-review.v1"
+            or claim_review.get("kind") != "evidence_gap_and_retraction_impact"
+            or claim_review.get("algorithm") != "structural-ledger-review"
+            or claim_review.get("algorithm_version") != "1"
+            or claim_review.get("completion_policy") != "complete_or_refuse"
+            or claim_review.get("complete") is not True
+            or claim_review.get("truncated") is not False
+            or claim_review.get("mission_id") != mission_id
+            or claim_review.get("claim_id") != claim_id
+            or not isinstance(review_receipt, str)
+            or len(review_receipt) != 64
+            or not isinstance(review_boundary, dict)
+            or review_boundary.get("read_only") is not True
+            or review_boundary.get("structural_observations_only") is not True
+            or review_boundary.get("determines_truth") is not False
+            or review_boundary.get("calculates_confidence") is not False
+            or review_boundary.get("alters_claim_status") is not False
+            or review_boundary.get("creates_or_withdraws_evidence") is not False
+            or review_boundary.get("writes_audit_event") is not False
+            or review_boundary.get("invokes_model_provider") is not False
+            or review_boundary.get("invokes_network") is not False
+        ):
+            raise SmokeError("installed Claim Review receipt or semantic boundary is invalid")
+        review_receipt_payload = dict(claim_review)
+        review_receipt_payload.pop("review_receipt_sha256")
+        expected_review_receipt = sha256(
+            json.dumps(
+                review_receipt_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        if review_receipt != expected_review_receipt:
+            raise SmokeError("installed Claim Review receipt digest does not verify")
         evidence_ids = demo.get("evidence_ids")
         if (
             not isinstance(evidence_ids, list)

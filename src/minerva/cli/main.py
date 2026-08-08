@@ -32,6 +32,7 @@ from minerva.integrations.research_request_file import (
 from minerva.lens import LensBounds, LensService
 from minerva.research.models import ClaimStatus, FindingStatus, StatementKind
 from minerva.research.service import ResearchService
+from minerva.review import ClaimReviewBounds, ClaimReviewService
 from minerva.sources.service import SourceService
 from minerva.synthesis.request_fulfillment import ResearchRequestFulfillmentService
 from minerva.synthesis.service import SynthesisService
@@ -125,6 +126,21 @@ def _cmd_claim_add(args: argparse.Namespace) -> Outcome:
 
 def _cmd_claim_show(args: argparse.Namespace) -> Outcome:
     return _claim_with_ledger(_database(args), cast(str, args.claim))
+
+
+def _cmd_claim_review(args: argparse.Namespace) -> Outcome:
+    result = ClaimReviewService(_database(args)).review_claim(
+        mission_id=cast(str, args.mission),
+        claim_id=cast(str, args.claim),
+        bounds=ClaimReviewBounds(
+            max_evidence_cards=cast(int, args.max_evidence_cards),
+            max_affected_records=cast(int, args.max_affected_records),
+            max_relationships=cast(int, args.max_relationships),
+            max_snapshot_bytes=cast(int, args.max_snapshot_bytes),
+            max_sqlite_vm_steps=cast(int, args.max_sqlite_vm_steps),
+        ),
+    )
+    return _command_result("claim_review", result)
 
 
 def _cmd_claim_status(args: argparse.Namespace) -> Outcome:
@@ -547,6 +563,19 @@ def build_parser() -> argparse.ArgumentParser:
             "ledger", help="show a claim's complete evidence ledger, withdrawals included"
         )
     )
+    claim_review = claim_commands.add_parser(
+        "review",
+        help="show complete evidence gaps and correction impacts for one claim",
+    )
+    _add_database(claim_review)
+    claim_review.add_argument("--mission", required=True)
+    claim_review.add_argument("--claim", required=True)
+    claim_review.add_argument("--max-evidence-cards", type=int, default=200)
+    claim_review.add_argument("--max-affected-records", type=int, default=200)
+    claim_review.add_argument("--max-relationships", type=int, default=2_000)
+    claim_review.add_argument("--max-snapshot-bytes", type=int, default=16_777_216)
+    claim_review.add_argument("--max-sqlite-vm-steps", type=int, default=4_000_000)
+    _set_handler(claim_review, _cmd_claim_review)
     claim_status = claim_commands.add_parser(
         "status", help="append a claim status, never overwriting one"
     )
