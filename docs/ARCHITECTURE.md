@@ -36,6 +36,11 @@ claim review CLI --> complete structural query --> one query-only SQLite snapsho
                                                      |
                                                      +--> verified citation/correction
                                                           impact receipt
+
+claim lineage CLI --> complete claim-owned closure --> one query-only SQLite snapshot
+                                                        |
+                                                        +--> verified typed nodes/edges
+                                                             + deterministic JSON receipt
 ```
 
 The SQLite database is authoritative for structured research state and source
@@ -54,6 +59,8 @@ they may not reimplement domain validation or write SQL directly.
   query/corpus/score receipts over verified immutable snapshots.
 - `review`: complete-or-refuse structural evidence-gap, active-stance-conflict,
   and correction-impact receipts over existing claim ledgers.
+- `lineage`: complete-or-refuse typed provenance topology over one existing
+  claim-owned ledger closure, with exact citation and snapshot verification.
 - `synthesis`: canonical research-packet assembly, citation verification,
   claim-scoped request fulfillment, Markdown/JSON rendering, digesting, and contained
   file export.
@@ -205,6 +212,57 @@ record into another mission while forging a target-mission relationship row, the
 owner-first query excludes that foreign owner rather than scanning every mission.
 Deep doctor remains responsible for detecting such whole-database referential
 corruption; the view never returns the foreign record's text.
+
+## Claim Lineage Graph read boundary
+
+`ClaimLineageService.build_graph(...)` is a public local query application service
+over the existing research, evidence, correction, and adopted-inference ledgers. The
+CLI supplies an explicit mission, claim, and deterministic bounds and emits the
+returned receipt inside a JSON-only `claim_lineage` envelope. All SQL, scope checks,
+closure discovery, integrity resolution, ordering, and digest construction remain in
+the service. One
+`Database.read()` transaction with connection-local `PRAGMA query_only=ON` owns the
+complete operation.
+
+The versioned algorithm is `structural-ledger-lineage` with scope
+`claim_owned_closure_v1`. Starting at the target claim, it admits the owning question,
+complete status chain, every claim-owned evidence card, finding, and adopted inference,
+their withdrawals/retractions/promotions and citation relationships, plus exactly the
+referenced immutable snapshots. Snapshot nodes carry source identity/metadata and both
+source and snapshot provenance. Evidence nodes carry exact quote text/base64 bytes,
+UTF-8 coordinates, quote/snapshot digests, stance, supersession, and provenance. The
+typed edges preserve status order, citation, supersession, correction, and promotion
+topology without interpreting any edge as truth, causality, confidence, or priority.
+
+The excluded record classes are explicit in the receipt:
+`sibling_claims`, `claimless_findings`, `unreferenced_snapshots`, `audit_events`,
+`research_runs`, `brief_exports`, `lens_candidates`,
+`ephemeral_assistance_candidates`, and `reverse_dependents`. Creator/run/time values
+remain attached as provenance, but audit and run records do not become graph nodes.
+Claimless findings stay excluded even when they cite target-claim evidence, and the
+service never follows reverse dependents or expands to a sibling claim.
+
+The service preflights and measures all required nodes, edges, citation bytes,
+distinct snapshot bytes, canonical output bytes, and cumulative SQLite virtual-machine
+work. Crossing any configured ceiling raises `claim_lineage_work_limit`; invalid bounds
+or scope raise `claim_lineage_bounds_invalid` or `claim_lineage_scope_invalid`, and
+inconsistent admitted ledger state raises `claim_lineage_inconsistent` or the existing
+exact citation/snapshot integrity error. Success is always complete and untruncated.
+
+Determinism does not depend on SQL row order. Node kinds use their fixed enum order;
+status events then order by `(version, id)`, snapshots by `(recorded_at, id)`, and other
+same-kind records by `(recorded_at, id)`. Edges order by fixed relation-enum order,
+then source and target node ID. Compact sorted-key serialization produces node-set,
+edge-set, snapshot-set, and whole-receipt SHA-256 values without a generated ID or
+observation time.
+
+The lineage service has no identity, clock, ID factory, writer, audit sink, export,
+queue, provider, credential, network, packet, capability-manifest, HTTP/web, MCP, or
+other external-agent dependency. It makes no truth, quality, confidence, sufficiency,
+score, or status recommendation and performs no correction or adoption. Its scoped
+owner-first closure is not a replacement for deep doctor's whole-database referential
+and audit-integrity scan. See [`CLAIM_LINEAGE_V1.md`](CLAIM_LINEAGE_V1.md) for the
+receipt and semantic contract.
 
 ## Exact citations
 

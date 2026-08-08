@@ -1,4 +1,4 @@
-# Current threat model: provenance foundation through Claim Review v1
+# Current threat model: provenance foundation through Claim Lineage Graph v1
 
 ## Boundary and assets
 
@@ -13,7 +13,10 @@ binding integrity, provider credentials, and the operator's control over which e
 evidence leaves the machine. Lens adds candidate quotes and deterministic retrieval
 receipts to the protected local disclosure surface. Claim Review adds claim text,
 correction reasons, finding/inference text, and deterministic structural receipts to
-that same local disclosure surface; neither feature adds external egress.
+that same local disclosure surface. Claim Lineage Graph adds the complete typed
+claim-owned provenance topology, exact citation bytes, source/snapshot metadata, and
+correction/promotion relationships to that local disclosure surface; none of these
+views adds external egress.
 
 ## Threats and controls
 
@@ -36,6 +39,10 @@ that same local disclosure surface; neither feature adds external egress.
 | Claim Review work or output amplification | Evidence, affected-record, citation-relationship (including inspected promotion-target rows), actual distinct-snapshot-BLOB-byte, and SQLite-VM ceilings; declared/actual snapshot length is checked before BLOB materialization; statement/reason sizes are constrained by schema; any exceeded limit refuses the whole result | The VM ceiling depends on the local SQLite version/query plan and is not a portable elapsed-time or memory bound; a successful maximum-size receipt can still be large |
 | Corrupt correction dependency creates plausible Claim Review output | Every admitted target/dependent citation uses the shared exact-byte verifier and snapshot cache; mission-composite correction links, citation scope, acyclic supersession scope, status derivation, and selected promotion target/content/citation/retraction lineage are checked or fail closed | The view does not independently reconcile every correction/audit event or foreign-mission owner row; deep doctor remains the whole-database referential/audit-integrity surface. Snapshot and receipt hashes are not an external signature |
 | Claim Review mutates state or triggers external behavior | `Database.read()` plus `query_only`; no identity, writer, audit, export, provider, credential, network, adapter, or queue dependency; database dump and main-file-byte regression checks | The local operator may separately invoke existing audited correction commands after review |
+| Claim Lineage silently expands scope or hides history | Both mission and claim are required and shape-validated; the owner question and complete status chain are mission-verified; all claim-owned evidence/findings/inferences/corrections/promotions and their citations are included or the build refuses; fixed exclusions name sibling claims, claimless findings, unreferenced snapshots, audit/run/export/candidate nodes, and reverse dependents | Completeness is the explicit owner-first `claim_owned_closure_v1`, not mission-wide or whole-database closure. Foreign-owner corruption and hidden reverse dependents remain deep-doctor concerns |
+| Claim Lineage work or output amplification | Positive node, edge, citation-byte, actual distinct-snapshot-byte, final canonical-output-byte, and cumulative SQLite-VM ceilings; any exceeded bound raises `claim_lineage_work_limit` and returns no partial graph | The VM budget is SQLite-version/query-plan local rather than a wall-clock or memory bound; a successful maximum-size JSON receipt can still disclose substantial local text |
+| Corrupt citation or correction topology creates a plausible graph | One query-only snapshot; complete scope/status resolution; shared exact citation and immutable-snapshot verification; mission/claim ownership and correction/promotion relationships checked before output; typed total ordering and node/edge/snapshot/whole-receipt digests | The scoped graph does not replace whole-database audit reconciliation, and no external signature detects a coordinated same-OS-user rewrite of graph state and integrity metadata |
+| Claim Lineage is mistaken for truth or triggers action | Receipt fields say structural topology only and forbid truth/confidence/status recommendation; service has no identity, writer, audit, queue, export, provider, credential, network, packet, HTTP/web, MCP, or external-agent dependency | A human may make a separate audited correction after inspecting the graph; that later judgment and action are outside the graph receipt |
 | Excessive work or text materialization during fulfillment | Bounded claim-history/preflight queries, one connection-local progress budget over the complete query-only snapshot, targeted audit and claim-scoped finding indexes (migration 0003) whose selection is asserted by an `EXPLAIN QUERY PLAN` regression test, and an exact-multiplicity NUL-safe storage-byte lower bound before full database text or snapshot content is returned to Python; exhaustion becomes non-reflective `brief_work_limit` before file writes | The SQLite budget limits virtual-machine instructions, not elapsed time; aggregate length queries inspect stored values and are not an SQLite-memory limit; final canonical byte validation remains authoritative; same-mission audit history that the claim-scoped query must examine row by row still consumes budget; the plan test is the only guard on index selection — `INDEXED BY` names `idx_findings_claim` so its absence fails at preparation, but `idx_audit_event_entity` is planner-selected and its absence degrades silently to a scan, and neither hint forces a seek if a predicate is later dropped |
 | Script/HTML/Markdown injection | Jinja autoescape; CSP; stored text rendered as text/`pre`; no raw HTML Markdown mode | Future rich rendering requires a reviewed sanitizer policy |
 | SQL injection | Parameterized SQL; dynamic choices selected from fixed enums/queries only | A future ad hoc query could violate the rule; tests and review remain necessary |
@@ -89,6 +96,19 @@ that same local disclosure surface; neither feature adds external egress.
 - A Claim Review gap, active stance conflict, status-validity warning, or correction
   impact is not truth, confidence, quality, sufficiency, a status recommendation, or a
   correction. Human corrections remain separate audited operations.
+- Claim Lineage returns one complete-or-refuse `claim_owned_closure_v1` from a single
+  query-only snapshot. Success includes every admitted claim-owned status, evidence,
+  finding, adopted inference, withdrawal, retraction, promotion, citation edge, and
+  referenced snapshot, with exact quote text/base64 bytes, UTF-8 coordinates, digests,
+  source/snapshot metadata, provenance, measured work, exclusions, and set/receipt
+  hashes.
+- Claim Lineage never silently expands to claimless findings, sibling claims,
+  unreferenced snapshots, audit/run/export/candidate nodes, or reverse dependents. It
+  never truncates a required node or edge; a bound exhaustion refuses the whole graph.
+- A Claim Lineage node, edge, lifecycle state, count, or digest is structural recorded
+  provenance, not truth, confidence, evidence quality, sufficiency, priority, a status
+  recommendation, a correction, an adoption, or a work queue. Every mutation remains a
+  separate explicit audited human operation.
 - Retraction deletes nothing. Surfaces that read findings still return a retracted
   finding, marked with its reason, timestamp, and actor; synthesis surfaces exclude
   it from the brief rather than presenting it as asserted. Neither path can make the
@@ -123,4 +143,6 @@ caught-error versus process/power-loss limitation as existing export.
 Remote access, real authentication, encrypted storage, optional OS keyring support,
 multi-tenancy, signed exports, additional providers, provider-side retrieval/tools,
 and non-CLI integration authentication require a later threat model and explicit
-product/security approval.
+product/security approval. Claim Lineage Graph v1 does not authorize a persistent
+queue, migration, external principal, cryptographic identity, Athena/Icarus adapter,
+MCP or other agent protocol, packet revision, or canonical PROV-O/RO-Crate exporter.

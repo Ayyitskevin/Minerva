@@ -13,6 +13,7 @@
 - [Workspace research-memory season](#workspace-research-memory-season-decision-0-2026-08-20) — **Accepted 2026-08-20 (Decision 0)**
 - [Lens v1: narrow local candidate retrieval](#lens-v1-narrow-local-candidate-retrieval) — **Accepted 2026-08-08; broad D-6 remains closed**
 - [Claim Review v1: schema-free gaps and correction impacts](#claim-review-v1-schema-free-gaps-and-correction-impacts) — **Accepted 2026-08-08; this local read-only view only**
+- [Claim Lineage Graph v1: schema-free claim-owned provenance topology](#claim-lineage-graph-v1-schema-free-claim-owned-provenance-topology) — **Accepted 2026-08-08; this local read-only graph only**
 
 ## Milestone 1 implementation decisions
 
@@ -1013,10 +1014,66 @@ family of future surfaces, reopen broad D-6, or alter the accepted trust boundar
   cryptographic identity, Athena/Icarus seam, MCP, agent-facing API, scholarly-source
   adapter, or broader retrieval behavior is added.
 
-The dependency-ordered follow-on plan proposes (1) a schema-free query-only
-claim-lineage graph, (2) a derived non-persisted mission research queue, and (3) local
-Lens receipt verification/replay. The continuation directive did not accept or
-authorize those implementations; each future slice needs an explicit owner decision.
-A persistent queue, Lens-to-evidence convenience mutation, canonical PROV-O/RO-Crate
-exporter, migration, trust-model change, D-2/D-3/D-5 implementation, or packet v3
-continues to need its own recorded owner decision.
+## Claim Lineage Graph v1: schema-free claim-owned provenance topology
+
+The repository owner's 2026-08-08 continuation accepts the next planned capability
+only: a local, schema-free, query-only graph over the complete provenance closure owned
+by one explicitly named mission and claim. It does not accept later roadmap items or
+broaden any existing trust gate.
+
+- **The public surfaces remain local and narrow.**
+  `minerva claim lineage --mission ... --claim ...` and
+  `minerva.lineage.ClaimLineageService.build_graph(...)` expose the same receipt; the
+  CLI wraps it in one JSON-only `claim_lineage` envelope. The service, not the CLI,
+  owns SQL, scope validation, bounds, integrity verification, ordering, and receipt
+  construction in one `Database.read()` snapshot with `query_only` enabled. There is
+  no HTTP, web, packet, capability-manifest, MCP, or authenticated external surface.
+- **The graph has one named closure.** `claim_owned_closure_v1` includes the owning
+  question, complete status history, every claim-owned evidence card, finding, and
+  adopted inference, all withdrawal/retraction/promotion records and citation or
+  supersession relationships, and every referenced immutable snapshot with source
+  metadata. Corrected records stay visible as nodes rather than disappearing.
+- **Exclusion is part of the receipt.** The fixed exclusions are
+  `sibling_claims`, `claimless_findings`, `unreferenced_snapshots`, `audit_events`,
+  `research_runs`, `brief_exports`, `lens_candidates`,
+  `ephemeral_assistance_candidates`, and `reverse_dependents`. Run and audit IDs may
+  remain attached as provenance, but neither becomes a graph node. A target-evidence
+  citation does not pull a claimless finding into scope.
+- **Completion is all or nothing.** Positive `max_nodes`, `max_edges`,
+  `max_citation_bytes`, `max_snapshot_bytes`, `max_output_bytes`, and
+  `max_sqlite_vm_steps` bounds cover the complete admitted graph. Crossing a ceiling
+  raises `claim_lineage_work_limit`; invalid bounds/scope and inconsistent admitted
+  state fail with `claim_lineage_bounds_invalid`, `claim_lineage_scope_invalid`, or
+  `claim_lineage_inconsistent` as applicable. Success always says
+  `completion_policy: complete_or_refuse`, `complete: true`, and `truncated: false`.
+- **Exact citation custody is retained.** Included citations carry exact quote text and
+  base64 UTF-8 bytes, half-open byte coordinates, quote length/digest, snapshot digest,
+  source/snapshot metadata, stance, and provenance. Every card and distinct referenced
+  snapshot passes the shared exact citation and immutable-snapshot verifier before the
+  receipt returns.
+- **Topology is deterministic, not scored.** `minerva.claim-lineage.v1` names the
+  `structural-ledger-lineage` algorithm and version. Fixed node-kind order, status
+  `(version, id)`, snapshot `(recorded_at, id)`, other same-kind
+  `(recorded_at, id)`, and relation/source/target edge order produce canonical node,
+  edge, snapshot-set, and whole-receipt SHA-256 values with no generated ID or
+  observation time. The hashes establish self-consistency only, not authenticity,
+  authority, approval, truth, freshness, or disclosure permission.
+- **The result is structural observation, not adjudication or operation.** No node,
+  edge, lifecycle state, count, or digest determines truth, quality, confidence,
+  sufficiency, priority, or a replacement status. The service creates no identity,
+  run, audit event, evidence, finding, inference, correction, promotion, queue, export,
+  file, or packet; modifies no source/snapshot bytes; and invokes no provider,
+  credential, network, or external system. Human correction/adoption remains separate
+  and audited.
+- **No persistence or trust contract changed.** Schema remains v5; no migration,
+  index, packet field/version, capability name, external principal, signature,
+  cryptographic identity, Athena/Icarus seam, MCP, agent-facing API, scholarly-source
+  adapter, standards exporter, or broad D-6 behavior is added. Deep doctor remains the
+  whole-database surface for foreign-owner or hidden reverse-dependency corruption.
+
+The dependency-ordered follow-on plan now proposes (1) a derived, non-persisted,
+human-owned mission research queue and then (2) local Lens receipt
+verification/replay. Neither is authorized by this acceptance. A persistent queue,
+Lens-to-evidence convenience mutation, canonical PROV-O/RO-Crate exporter, migration,
+trust-model change, D-2/D-3/D-5 implementation, or packet v3 continues to need its own
+recorded owner decision.

@@ -226,6 +226,7 @@ def smoke_wheel(dist_directory: Path) -> Path:
             "from pathlib import Path; "
             "import minerva; "
             "from minerva.lens import LensService; "
+            "from minerva.lineage import ClaimLineageService; "
             "from minerva.review import ClaimReviewService; "
             "print(version('minerva-research')); "
             "print(Path(minerva.__file__).resolve())"
@@ -437,6 +438,160 @@ if unexpected:
         ).hexdigest()
         if review_receipt != expected_review_receipt:
             raise SmokeError("installed Claim Review receipt digest does not verify")
+
+        claim_lineage_arguments = [
+            str(minerva_command),
+            "claim",
+            "lineage",
+            "--db",
+            str(demo_database),
+            "--mission",
+            mission_id,
+            "--claim",
+            claim_id,
+        ]
+        claim_lineage_output = _run_checked(
+            claim_lineage_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if claim_lineage_output != _run_checked(
+            claim_lineage_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        ):
+            raise SmokeError("installed Claim Lineage is not byte-deterministic")
+        claim_lineage_envelope = _json_object(
+            claim_lineage_output,
+            label="installed Claim Lineage",
+        )
+        claim_lineage = claim_lineage_envelope.get("claim_lineage")
+        if not isinstance(claim_lineage, dict):
+            raise SmokeError("installed Claim Lineage omitted its lineage receipt")
+        lineage_nodes = claim_lineage.get("nodes")
+        lineage_edges = claim_lineage.get("edges")
+        lineage_receipt = claim_lineage.get("lineage_receipt_sha256")
+        lineage_boundary = claim_lineage.get("semantic_boundary")
+        if (
+            claim_lineage.get("schema_version") != "minerva.claim-lineage.v1"
+            or claim_lineage.get("kind") != "claim_lineage_graph"
+            or claim_lineage.get("algorithm") != "structural-ledger-lineage"
+            or claim_lineage.get("algorithm_version") != "1"
+            or claim_lineage.get("scope") != "claim_owned_closure_v1"
+            or claim_lineage.get("completion_policy") != "complete_or_refuse"
+            or claim_lineage.get("complete") is not True
+            or claim_lineage.get("truncated") is not False
+            or claim_lineage.get("mission_id") != mission_id
+            or claim_lineage.get("claim_id") != claim_id
+            or claim_lineage.get("root_node_id") != claim_id
+            or not isinstance(lineage_receipt, str)
+            or len(lineage_receipt) != 64
+            or not isinstance(claim_lineage.get("node_set_sha256"), str)
+            or len(claim_lineage["node_set_sha256"]) != 64
+            or not isinstance(claim_lineage.get("edge_set_sha256"), str)
+            or len(claim_lineage["edge_set_sha256"]) != 64
+            or not isinstance(claim_lineage.get("snapshot_set_sha256"), str)
+            or len(claim_lineage["snapshot_set_sha256"]) != 64
+            or not isinstance(lineage_nodes, list)
+            or not lineage_nodes
+            or not isinstance(lineage_edges, list)
+            or not lineage_edges
+            or not isinstance(lineage_boundary, dict)
+            or lineage_boundary.get("read_only") is not True
+            or lineage_boundary.get("structural_topology_only") is not True
+            or lineage_boundary.get("complete_claim_owned_scope") is not True
+            or lineage_boundary.get("determines_truth") is not False
+            or lineage_boundary.get("calculates_confidence") is not False
+            or lineage_boundary.get("recommends_or_alters_claim_status") is not False
+            or lineage_boundary.get("creates_or_changes_research_state") is not False
+            or lineage_boundary.get("writes_audit_event_or_export") is not False
+            or lineage_boundary.get("modifies_source_or_snapshot_bytes") is not False
+            or lineage_boundary.get("invokes_model_provider") is not False
+            or lineage_boundary.get("invokes_network") is not False
+        ):
+            raise SmokeError("installed Claim Lineage receipt or semantic boundary is invalid")
+        lineage_receipt_payload = dict(claim_lineage)
+        lineage_receipt_payload.pop("lineage_receipt_sha256")
+        expected_lineage_receipt = sha256(
+            json.dumps(
+                lineage_receipt_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        if lineage_receipt != expected_lineage_receipt:
+            raise SmokeError("installed Claim Lineage receipt digest does not verify")
+
+        if not all(isinstance(node, dict) for node in lineage_nodes):
+            raise SmokeError("installed Claim Lineage contains an invalid node")
+        lineage_node_ids = [node.get("node_id") for node in lineage_nodes]
+        if (
+            any(not isinstance(node_id, str) for node_id in lineage_node_ids)
+            or len(set(lineage_node_ids)) != len(lineage_node_ids)
+            or claim_id not in lineage_node_ids
+        ):
+            raise SmokeError("installed Claim Lineage node identities are invalid")
+        if not all(isinstance(edge, dict) for edge in lineage_edges):
+            raise SmokeError("installed Claim Lineage contains an invalid edge")
+        lineage_node_id_set = set(lineage_node_ids)
+        if any(
+            not isinstance(edge.get("relation"), str)
+            or edge.get("source_node_id") not in lineage_node_id_set
+            or edge.get("target_node_id") not in lineage_node_id_set
+            for edge in lineage_edges
+        ):
+            raise SmokeError("installed Claim Lineage contains a dangling graph edge")
+
+        lineage_evidence_nodes = [node for node in lineage_nodes if node.get("kind") == "evidence"]
+        if not lineage_evidence_nodes:
+            raise SmokeError("installed Claim Lineage omitted target-claim evidence")
+        lineage_evidence = lineage_evidence_nodes[0].get("payload")
+        if not isinstance(lineage_evidence, dict):
+            raise SmokeError("installed Claim Lineage evidence payload is invalid")
+        lineage_snapshot_id = lineage_evidence.get("snapshot_id")
+        lineage_start = lineage_evidence.get("start_byte")
+        lineage_end = lineage_evidence.get("end_byte")
+        lineage_quote = lineage_evidence.get("quote")
+        lineage_quote_base64 = lineage_evidence.get("quote_utf8_base64")
+        if (
+            not isinstance(lineage_snapshot_id, str)
+            or not isinstance(lineage_start, int)
+            or not isinstance(lineage_end, int)
+            or lineage_start < 0
+            or lineage_end <= lineage_start
+            or not isinstance(lineage_quote, str)
+            or not isinstance(lineage_quote_base64, str)
+        ):
+            raise SmokeError("installed Claim Lineage evidence provenance is incomplete")
+        lineage_source = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "source",
+                    "show",
+                    "--db",
+                    str(demo_database),
+                    "--snapshot",
+                    lineage_snapshot_id,
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed Claim Lineage snapshot round trip",
+        )
+        lineage_source_text = lineage_source.get("text")
+        lineage_quote_bytes = lineage_quote.encode("utf-8")
+        if (
+            not isinstance(lineage_source_text, str)
+            or lineage_source_text.encode("utf-8")[lineage_start:lineage_end] != lineage_quote_bytes
+            or base64.b64decode(lineage_quote_base64, validate=True) != lineage_quote_bytes
+            or lineage_evidence.get("quote_byte_length") != len(lineage_quote_bytes)
+            or lineage_evidence.get("quote_sha256") != sha256(lineage_quote_bytes).hexdigest()
+        ):
+            raise SmokeError("installed Claim Lineage evidence byte span does not round trip")
+
         evidence_ids = demo.get("evidence_ids")
         if (
             not isinstance(evidence_ids, list)

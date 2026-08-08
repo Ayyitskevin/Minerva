@@ -30,6 +30,7 @@ from minerva.integrations.research_request_file import (
     request_verification_report,
 )
 from minerva.lens import LensBounds, LensService
+from minerva.lineage import ClaimLineageBounds, ClaimLineageService
 from minerva.research.models import ClaimStatus, FindingStatus, StatementKind
 from minerva.research.service import ResearchService
 from minerva.review import ClaimReviewBounds, ClaimReviewService
@@ -141,6 +142,22 @@ def _cmd_claim_review(args: argparse.Namespace) -> Outcome:
         ),
     )
     return _command_result("claim_review", result)
+
+
+def _cmd_claim_lineage(args: argparse.Namespace) -> Outcome:
+    result = ClaimLineageService(_database(args)).build_graph(
+        mission_id=cast(str, args.mission),
+        claim_id=cast(str, args.claim),
+        bounds=ClaimLineageBounds(
+            max_nodes=cast(int, args.max_nodes),
+            max_edges=cast(int, args.max_edges),
+            max_citation_bytes=cast(int, args.max_citation_bytes),
+            max_snapshot_bytes=cast(int, args.max_snapshot_bytes),
+            max_output_bytes=cast(int, args.max_output_bytes),
+            max_sqlite_vm_steps=cast(int, args.max_sqlite_vm_steps),
+        ),
+    )
+    return _command_result("claim_lineage", result)
 
 
 def _cmd_claim_status(args: argparse.Namespace) -> Outcome:
@@ -576,6 +593,20 @@ def build_parser() -> argparse.ArgumentParser:
     claim_review.add_argument("--max-snapshot-bytes", type=int, default=16_777_216)
     claim_review.add_argument("--max-sqlite-vm-steps", type=int, default=4_000_000)
     _set_handler(claim_review, _cmd_claim_review)
+    claim_lineage = claim_commands.add_parser(
+        "lineage",
+        help="show the complete provenance lineage graph for one claim",
+    )
+    _add_database(claim_lineage)
+    claim_lineage.add_argument("--mission", required=True)
+    claim_lineage.add_argument("--claim", required=True)
+    claim_lineage.add_argument("--max-nodes", type=int, default=1_000)
+    claim_lineage.add_argument("--max-edges", type=int, default=2_000)
+    claim_lineage.add_argument("--max-citation-bytes", type=int, default=16_777_216)
+    claim_lineage.add_argument("--max-snapshot-bytes", type=int, default=16_777_216)
+    claim_lineage.add_argument("--max-output-bytes", type=int, default=67_108_864)
+    claim_lineage.add_argument("--max-sqlite-vm-steps", type=int, default=4_000_000)
+    _set_handler(claim_lineage, _cmd_claim_lineage)
     claim_status = claim_commands.add_parser(
         "status", help="append a claim status, never overwriting one"
     )

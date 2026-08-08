@@ -13,13 +13,13 @@ an internal implementation lacks it.
 | Discovery and ingestion | **D:** 138M-paper and trials search, PubMed, imports, uploads | **D:** 220M+ paper index, publisher/full-text access, uploads | **D:** PDF, text, Office, code, metadata APIs | **D:** configurable web and corpus retrievers | **D:** public web, uploaded files, connected apps | **D:** explicit local UTF-8 import only |
 | Local corpus and web retrieval | **D:** hosted corpus and user data | **D:** hosted corpus, collections, full text | **D:** local full-text index; optional APIs/models | **D:** web and local vector-retriever configurations | **D:** hosted web/app research | **D:** Lens searches only mission-owned immutable snapshots; no web fetch |
 | Exact citation provenance | **D:** sentence/figure-backed quotes. **I:** immutable bytes, content hashes, and byte coordinates were not documented | **D:** papers, inline citations, extracted answers. **I:** immutable bytes and byte coordinates were not documented | **D:** passage/page citations. **I:** no immutable-byte coordinate contract was found | **D:** report citations. **I:** no exact immutable span contract was found | **D:** citations and source links. **I:** no immutable-byte coordinate contract was found | **D:** snapshot SHA-256 plus exact half-open UTF-8 byte span, quote text, base64 bytes, and quote digest |
-| Claim/evidence relationship | **D:** screening/extraction decisions and claims backed by source sentences | **D:** Claims & Evidence, paper-level answers, cited synthesis | **D:** chunk evidence selected for generated answers | **D:** cited report synthesis | **D:** cited structured reports | **D:** explicit claim, evidence-card, stance, finding, and labeled-inference types; Lens candidates are separate |
-| Contradiction, correction, retraction | **D:** screening decisions are editable; API defaults to excluding retracted papers | **D:** Yes/No/Possibly/Mixed meter; retracted badge and exclusion from analyses | **D:** `contracrow` and metadata retraction checks | **I:** no durable correction/retraction lifecycle was found | **I:** no append-only correction/retraction lifecycle was found | **D:** four evidence stances, append-only withdrawals/retractions, supersession lineage, retained history, and Claim Review's complete structural contradiction/correction-impact receipt |
+| Claim/evidence relationship | **D:** screening/extraction decisions and claims backed by source sentences | **D:** Claims & Evidence, paper-level answers, cited synthesis | **D:** chunk evidence selected for generated answers | **D:** cited report synthesis | **D:** cited structured reports | **D:** explicit claim, evidence-card, stance, finding, and labeled-inference types; Lens candidates are separate; Claim Lineage exposes their complete typed claim-owned topology |
+| Contradiction, correction, retraction | **D:** screening decisions are editable; API defaults to excluding retracted papers | **D:** Yes/No/Possibly/Mixed meter; retracted badge and exclusion from analyses | **D:** `contracrow` and metadata retraction checks | **I:** no durable correction/retraction lifecycle was found | **I:** no append-only correction/retraction lifecycle was found | **D:** four evidence stances, append-only withdrawals/retractions, supersession lineage, retained history, Claim Review's correction impacts, and Claim Lineage's retained corrected nodes/edges |
 | Human review and adoption | **D:** override, dual review, collaborative screening, PRISMA audit | **D:** saved collections, visible classifications, feedback and exports | **D:** manual and agentic modes | **D:** Co-STORM supports human steering | **D:** user reviews/edits the plan, can interrupt, and receives activity/source history | **D:** local human mutation authority; generated candidates require separate explicit adoption/promotion; Claim Review supplies cues but never corrects or recommends status |
-| Agent-facing interface | **D:** REST API and OAuth MCP | **D:** REST API, ChatGPT app, OAuth MCP | **D:** Python API, CLI, agent tools | **D:** Python application/retriever interfaces | **D:** ChatGPT UI and connected-app reads | **D:** deterministic CLI, public local Python application services, and strict packet/request files; authenticated external APIs and MCP remain owner-gated |
-| Local/offline operation | **I:** hosted service is the documented primary surface | **I:** hosted service is the documented primary surface | **D:** local files and local model/embedding configurations are supported | **D:** code is locally runnable; normal workflows use models/retrievers | **I:** hosted service is required | **D:** core research, Lens, and Claim Review are offline after installation; provider assistance is a narrow opt-in exception |
-| Deterministic replay/export | **D:** keyword search is described as reproducible/deterministic; PRISMA and data exports. **I:** no full retrieval receipt was found | **D:** Paper Search is called deterministic; CSV/RIS/bibliography/PDF exports. **I:** corpus/algorithm replay receipt not documented | **I:** mutable files, configurable models, and agent workflows do not establish byte-identical replay | **I:** live retrieval and LLM generation do not establish byte-identical replay | **D:** Markdown/Word/PDF export. **I:** byte-identical replay was not documented | **D:** canonical packet bytes plus Lens and Claim Review receipts use stable ordering, explicit algorithm versions, complete-or-refuse bounds, and SHA-256 digests |
-| Auditability | **D:** PRISMA flow, exclusion reasons, criteria scores, quotes, search strategies | **D:** cited inputs and visible contributing papers; library/history surfaces | **D:** stored indexes/answers and configurable callbacks | **D:** cited report and Co-STORM working state | **D:** source list and activity history | **D:** append-only mutation audit plus independently inspectable retrieval/review receipts, correction impacts, promotion lineage, and inference provenance |
+| Agent-facing interface | **D:** REST API and OAuth MCP | **D:** REST API, ChatGPT app, OAuth MCP | **D:** Python API, CLI, agent tools | **D:** Python application/retriever interfaces | **D:** ChatGPT UI and connected-app reads | **D:** deterministic CLI, public local Python review/lineage services, and strict packet/request files; authenticated external APIs and MCP remain owner-gated |
+| Local/offline operation | **I:** hosted service is the documented primary surface | **I:** hosted service is the documented primary surface | **D:** local files and local model/embedding configurations are supported | **D:** code is locally runnable; normal workflows use models/retrievers | **I:** hosted service is required | **D:** core research, Lens, Claim Review, and Claim Lineage are offline after installation; provider assistance is a narrow opt-in exception |
+| Deterministic replay/export | **D:** keyword search is described as reproducible/deterministic; PRISMA and data exports. **I:** no full retrieval receipt was found | **D:** Paper Search is called deterministic; CSV/RIS/bibliography/PDF exports. **I:** corpus/algorithm replay receipt not documented | **I:** mutable files, configurable models, and agent workflows do not establish byte-identical replay | **I:** live retrieval and LLM generation do not establish byte-identical replay | **D:** Markdown/Word/PDF export. **I:** byte-identical replay was not documented | **D:** canonical packet bytes plus Lens, Claim Review, and Claim Lineage receipts use stable ordering, explicit algorithm versions, bounded completion semantics, and SHA-256 digests |
+| Auditability | **D:** PRISMA flow, exclusion reasons, criteria scores, quotes, search strategies | **D:** cited inputs and visible contributing papers; library/history surfaces | **D:** stored indexes/answers and configurable callbacks | **D:** cited report and Co-STORM working state | **D:** source list and activity history | **D:** append-only mutation audit plus independently inspectable retrieval/review receipts and a typed exact-citation lineage graph retaining corrections, promotions, and inference provenance |
 | Interoperability | **D:** CSV/RIS/BibTeX-style workflows, REST, MCP | **D:** CSV/RIS/bibliographies, REST, MCP | **D:** Python ecosystem, multiple file/index/model backends | **D:** retriever and model adapters | **D:** source links and document exports | **D:** strict v2 packet and v1 request/result artifacts; PROV-O/RO-Crate mappings are designed, not implemented |
 
 Minerva's receipt and artifact digests establish deterministic self-consistency,
@@ -68,27 +68,31 @@ Delivered foundation:
    validity, six withdrawal-impact edge classes, determinism, identifier isolation,
    and database non-mutation; UTF-8 citation and promotion checks remain tests rather
    than evaluation metrics.
+4. **Claim Lineage Graph v1:** a schema-free, complete-or-refuse typed topology for one
+   `claim_owned_closure_v1`, retaining complete status/correction/promotion history and
+   exact citation bytes plus source/snapshot metadata. It excludes claimless and
+   sibling-claim state, scores nothing, writes nothing, and exposes no external agent
+   protocol.
 
 Next, in dependency order:
 
-1. **Claim lineage graph v1:** a bounded deterministic view of existing provenance
-   and correction edges, retaining corrected nodes and exact citation custody.
-2. **Derived mission research queue v1:** a non-persisted, human-owned worklist made
+1. **Derived mission research queue v1:** a non-persisted, human-owned worklist made
    only from review/graph reason codes; no confidence, assignment, completion state,
    or autonomous mutation.
-3. **Lens receipt verification/replay:** safe local verification and database-backed
+2. **Lens receipt verification/replay:** safe local verification and database-backed
    replay against the exact snapshot set, with explicit algorithm/corpus drift.
-4. **Local review dossier:** compose those read-only views for the trusted operator
+3. **Local review dossier:** compose those read-only views for the trusted operator
    without creating a new external/agent-facing API or capability claim.
-5. **PROV-O/RO-Crate decision packet:** define and test a lossless mapping before any
+4. **PROV-O/RO-Crate decision packet:** define and test a lossless mapping before any
    canonical exporter is owner-approved.
-6. **Authenticated external seams and protocols:** D-2 Athena identity/crypto first,
+5. **Authenticated external seams and protocols:** D-2 Athena identity/crypto first,
    D-3 Icarus artifacts second, and D-5 read-only MCP/API only after authentication.
-7. **Packet v3 decision:** only after a real authenticated consumer establishes the
+6. **Packet v3 decision:** only after a real authenticated consumer establishes the
    correction/inference requirements; v2 remains frozen meanwhile.
 
-This is a proposed dependency order, not implementation authorization. Every next
-slice needs an explicit owner decision, including schema-free local read-only work. A
+Claim Lineage Graph v1 is the only newly accepted slice in this continuation. The
+remaining order is a proposal, not implementation authorization. Every next slice
+needs an explicit owner decision, including schema-free local read-only work. A
 persisted queue or adoption bridge, migration, external principal, crypto, adapter,
 external/agent-facing API, packet version, or canonical standards export remains
 under its recorded owner gate. Scholarly-source adapters additionally require

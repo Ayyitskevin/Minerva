@@ -171,50 +171,73 @@
   verification, and installed-wheel behavior remain separate tests, not evaluation
   metrics.
 
+## Claim Lineage Graph v1: complete claim-owned provenance topology
+
+- The repository owner's 2026-08-08 continuation narrowly accepts
+  `minerva claim lineage` and the public local
+  `minerva.lineage.ClaimLineageService.build_graph` application service. No family of
+  graph APIs or later roadmap item is accepted by implication.
+- `minerva.claim-lineage.v1` uses algorithm `structural-ledger-lineage`, scope
+  `claim_owned_closure_v1`, fixed typed node/edge order, compact canonical JSON, and
+  node-set, edge-set, snapshot-set, and whole-receipt SHA-256 values.
+- The graph retains the owning question, complete status history, all claim-owned
+  evidence, findings, adopted inferences, withdrawals, retractions, promotions, and
+  every referenced snapshot. Exact citation text/base64 bytes, UTF-8 coordinates,
+  quote/snapshot digests, source/snapshot metadata, stance, and provenance remain
+  inspectable.
+- Fixed exclusions prevent silent expansion to sibling claims, claimless findings,
+  unreferenced snapshots, audit/run/export/candidate nodes, or reverse dependents.
+  Creator/run/time values remain attached as provenance rather than becoming run or
+  audit nodes.
+- Node, edge, citation-byte, actual distinct-snapshot-byte, output-byte, and cumulative
+  SQLite-VM bounds are complete-or-refuse. One query-only read snapshot supplies the
+  whole graph; an exceeded bound returns `claim_lineage_work_limit`, never a partial
+  topology.
+- The graph is structural recorded provenance only. It assigns no truth, evidence
+  quality, confidence, sufficiency, score, priority, or recommended status and creates
+  no correction, research state, queue, audit event, export/file/packet, provider call,
+  network activity, protocol, migration, index, or capability claim.
+
 ## Next dependency-ordered capabilities
 
-The following is a proposed dependency order, not implementation authorization. Each
-future slice needs an explicit owner decision, including the schema-free local
-read-only items. No migration, trust-model, external-principal,
+Claim Lineage Graph v1 is now the accepted completed dependency. The following
+remaining order is proposed, not implementation authorization. Each future slice needs
+an explicit owner decision, including the schema-free local read-only items. No
+migration, trust-model, external-principal,
 cryptographic-identity, adapter, external/agent-facing API, packet-version, or broad
 D-6 gate is open.
 
-1. **Claim lineage graph v1:** a bounded, deterministic graph over the existing
-   question, claim/status, snapshot/evidence, supersession, finding,
-   inference, promotion, withdrawal, and retraction records. It must retain corrected
-   nodes, verify citations, expose explicit truncation/refusal semantics, remain
-   mission-isolated, and write nothing.
-2. **Derived mission research queue v1:** turn Claim Review and graph reason codes
+1. **Derived mission research queue v1:** turn Claim Review and graph reason codes
    into a deterministic human worklist without assignments, completion state,
    confidence, autonomous prioritization, or persistence. A durable
    assign/defer/resolve queue requires a separately approved migration and a day-one
    correction model.
-3. **Lens receipt verification/replay:** safely verify a bounded Lens receipt and
+2. **Lens receipt verification/replay:** safely verify a bounded Lens receipt and
    replay it against the exact local snapshot set, detecting receipt,
    Unicode/algorithm, corpus, and snapshot drift without changing research state or
    advertising a new agent protocol.
-4. **Local review dossier:** compose the gap, graph, queue, and Lens provenance views
+3. **Local review dossier:** compose the gap, graph, queue, and Lens provenance views
    for the existing trusted-operator surface. No new external/agent-facing API,
    mutation control, or capability-manifest claim follows from this item.
-5. **PROV-O/RO-Crate decision packet (design only):** prove a lossless mapping for
+4. **PROV-O/RO-Crate decision packet (design only):** prove a lossless mapping for
    exact spans, stance, corrections, inference labels, activities, and audit lineage;
    decide canonicalization, context pinning, and source-byte disclosure before any new
    canonical exporter is accepted.
-6. **Explicit Lens-to-evidence bridge (owner-gated):** if approved, require a
+5. **Explicit Lens-to-evidence bridge (owner-gated):** if approved, require a
    verified receipt, selected candidate, claim, stance, and exact digest confirmation,
    then reuse normal evidence validation/audit. It may never make search itself
    mutating or perform autonomous/bulk adoption.
-7. **Authenticated Athena seam (gate D-2):** first reverify the counterpart, then
+6. **Authenticated Athena seam (gate D-2):** first reverify the counterpart, then
    separately decide ADRs 0009/0010, the external-principal migration, asymmetric
    verification dependency, revocation, replay, and transport. No external research
    mutation is implied.
-8. **Icarus artifact exchange (gate D-3 after D-2):** requires its own canonical
+7. **Icarus artifact exchange (gate D-3 after D-2):** requires its own canonical
    request/result and import-before-evidence decision, likely including a migration;
    Minerva still performs no experiment or automatic adoption.
-9. **Read-only agent protocol (gate D-5 after D-2/D-3):** MCP or any new agent-facing
+8. **Read-only agent protocol (gate D-5 after D-2/D-3):** MCP or any new agent-facing
    API starts with authenticated, bounded read tools backed by existing services and
    exposes no correction, adoption, assistance, publication, or execution verbs.
-10. **Packet v3 (separate decision after a real consumer exists):** define the exact
+9. **Packet v3 (separate decision after a real consumer exists):** define the exact
     correction/inference delta, independent verifier, backward compatibility, and
     hostile-input limits without changing frozen v2 bytes by accident.
 

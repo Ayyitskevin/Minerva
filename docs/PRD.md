@@ -1,4 +1,4 @@
-# Minerva product requirements: provenance foundation through Lens v1
+# Minerva product requirements: provenance foundation through Claim Lineage Graph v1
 
 ## Product identity
 
@@ -71,6 +71,30 @@ existing separate evidence workflow and its normal human identity, validation, s
 and audit behavior. Lens adds no schema migration, provider/model runtime, network
 fetch, crawl, OCR, embedding, vector index, API, web, MCP, or packet revision.
 
+## Claim Lineage Graph v1 outcome
+
+An offline human or local application-service consumer can name one mission and claim
+and receive the complete bounded topology of that claim's recorded provenance. The
+`minerva.claim-lineage.v1` receipt retains the owning question, complete claim-status
+history, all claim-owned evidence, findings, adopted inferences, withdrawals,
+retractions, promotions, and every immutable snapshot referenced by their citations.
+Every citation retains exact UTF-8 byte coordinates, quote text and base64 bytes,
+quote/snapshot digests, source/snapshot metadata, stance, and creator/run/time
+provenance.
+
+The versioned `structural-ledger-lineage` algorithm uses scope
+`claim_owned_closure_v1` and one query-only SQLite snapshot. Explicit node, edge,
+citation-byte, distinct-snapshot-byte, canonical-output-byte, and SQLite-work bounds
+are complete-or-refuse: success is never a partial or silently truncated graph.
+Claimless findings, sibling claims, unreferenced snapshots, audit/run nodes, and
+reverse dependents are intentionally outside this claim-owned closure.
+
+The graph is structural provenance, not adjudication or work coordination. It assigns
+no truth, quality, confidence, sufficiency, relevance score, or recommended status;
+creates no correction, research state, queue, audit event, export, file, or packet;
+and invokes no provider, credential, network, or external-agent protocol. Human
+correction and adoption remain separate explicit audited operations.
+
 ## Milestone 2B outcome
 
 A local CLI operator can optionally ask OpenAI or Anthropic to draft finding
@@ -126,6 +150,10 @@ publication, messaging, or autonomous research.
 - **Candidate context:** a deterministic Lens lead locating potentially relevant
   bytes in an immutable snapshot. Its stance is unassessed and its evidence status is
   candidate-only; it is neither a citation nor an evidence card.
+- **Claim lineage graph:** a deterministic, typed, complete-or-refuse view of the
+  provenance records and append-only relationships owned by one claim. It preserves
+  corrected history and exact citation custody but is neither a truth graph nor a
+  correction, status, adoption, or queue operation.
 
 ## Statement classes
 
@@ -235,6 +263,14 @@ unresolved question under the same citation rules as human-authored material.
     before scoring original bytes. Its versioned integer scoring has a total tie-break;
     the receipt names every exclusion and omission class. Lens returns DTOs only and
     leaves every database table and the database main-file bytes unchanged.
+19. Claim Lineage Graph resolves one explicit mission/claim in one query-only read
+    snapshot and emits the complete `claim_owned_closure_v1` or refuses. All
+    claim-owned status, evidence, finding, inference, correction, promotion, and cited
+    snapshot records are represented as typed, stably ordered nodes and edges; every
+    citation and distinct snapshot is re-verified. Claimless findings, sibling claims,
+    unreferenced snapshots, audit/run nodes, and reverse dependents are excluded by
+    contract. The result creates no state and makes no truth, confidence, scoring,
+    status-recommendation, correction, queue, provider, network, or protocol claim.
 
 ## User surfaces
 
@@ -247,6 +283,10 @@ unresolved question under the same citation rules as human-authored material.
   read-only with respect to Minerva state.
 - `minerva lens search` returns compact deterministic JSON candidate receipts over one
   immutable mission corpus. No equivalent REST, web, provider, or MCP operation exists.
+- `minerva claim lineage` and the public local
+  `minerva.lineage.ClaimLineageService.build_graph` application service return one
+  deterministic, complete-or-refuse claim provenance graph. No equivalent REST, web,
+  provider, packet, capability, or MCP operation exists.
 - `minerva-demo` creates a disposable synthetic mission and exports its brief without
   contacting a network service. It refuses an existing database.
 - The web interface is a restrained, server-rendered review surface.

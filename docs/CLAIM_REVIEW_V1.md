@@ -256,12 +256,13 @@ permission to disclose research.
 
 ## Authorization boundary and next dependencies
 
-The 2026-08-08 continuation directive authorizes Claim Review itself. The
-dependency-ordered follow-on plan proposes a claim-lineage graph, derived
-mission research queue, Lens receipt verification/replay, and local review
-dossier, but recording that plan does not authorize implementation. Each future
-slice needs an explicit owner decision before work begins, even if it remains
-schema-free, local, and read-only.
+The first 2026-08-08 continuation directive authorized Claim Review itself. The
+repository owner's subsequent continuation separately accepts Claim Lineage Graph v1
+only. The remaining dependency-ordered plan proposes a derived non-persisted mission
+research queue, then Lens receipt verification/replay and a local review dossier, but
+recording that plan does not authorize implementation. Each future slice needs an
+explicit owner decision before work begins, even if it remains schema-free, local, and
+read-only.
 
 A persisted queue, schema migration, external principal, cryptographic identity,
 Athena/Icarus adapter, MCP or other external/agent-facing API, packet v3,

@@ -31,6 +31,12 @@ and append-only withdrawal/retraction impacts. It is local and read-only: review
 do not determine truth, calculate confidence, recommend a status, or perform a
 correction.
 
+Claim Lineage Graph v1 adds the corresponding complete, typed provenance topology for
+one claim. It retains every claim-owned status, evidence, finding, adopted inference,
+withdrawal, retraction, promotion, and exact referenced snapshot while excluding
+claimless and sibling-claim state. The graph is deterministic, local, and read-only;
+it is neither a truth graph nor a correction or queue operation.
+
 Milestone 2B adds one deliberately narrow, optional assistance surface. A local CLI
 operator can preview a bounded request made from one claim and its active evidence,
 then explicitly authorize that exact request for OpenAI or Anthropic using their own
@@ -109,6 +115,7 @@ minerva evidence add --db research.db --mission MIS_ID --claim CLM_ID \
   --snapshot SNP_ID --start 0 --end 42 --quote "EXACT QUOTE" --stance supports
 minerva claim show --db research.db --claim CLM_ID
 minerva claim review --db research.db --mission MIS_ID --claim CLM_ID
+minerva claim lineage --db research.db --mission MIS_ID --claim CLM_ID
 minerva brief export --db research.db --mission MIS_ID --output-dir ./export
 minerva audit list --db research.db --mission MIS_ID
 minerva doctor --db research.db --deep
@@ -134,9 +141,9 @@ reconciled against its `research.finding.retracted` audit event.
 ## Command reference
 
 Every verb the CLI exposes. `--help` on any of them lists its arguments, and the
-sections below cover the packet, request, assistance, and operations verbs in
-depth. A test asserts this table stays complete, so a new verb cannot ship
-undocumented.
+sections below cover retrieval, review, lineage, packet, request, assistance, and
+operations verbs in depth. A test asserts this table stays complete, so a new verb
+cannot ship undocumented.
 
 | Command | Purpose |
 | --- | --- |
@@ -149,6 +156,7 @@ undocumented.
 | `minerva claim show` | show one claim, its status, and its findings |
 | `minerva claim ledger` | show a claim's complete evidence ledger, withdrawals included |
 | `minerva claim review` | show complete evidence gaps and correction impacts for one claim |
+| `minerva claim lineage` | show the complete provenance lineage graph for one claim |
 | `minerva claim status` | append a claim status, never overwriting one |
 | `minerva source import` | import one file as an immutable snapshot |
 | `minerva source show` | show snapshot metadata, or its stored bytes |
@@ -255,6 +263,44 @@ database-dump/main-file mutation. UTF-8 citation coordinates and quote digests,
 promotion lineage, hostile scope, bounds, and installed-wheel behavior are covered by
 the Claim Review unit, CLI, and distribution tests rather than reported as evaluation
 metrics.
+
+## Claim provenance lineage
+
+Build the complete claim-owned provenance closure without changing the database:
+
+```bash
+minerva claim lineage --db research.db --mission MIS_ID --claim CLM_ID
+```
+
+The `minerva.claim-lineage.v1` receipt is produced by the versioned
+`structural-ledger-lineage` algorithm with scope `claim_owned_closure_v1`. Its typed
+nodes retain the owning question, claim, complete status chain, all claim-owned
+evidence/findings/adopted inferences, withdrawals, retractions, promotions, and every
+referenced immutable snapshot. Typed edges preserve status sequence, citations,
+supersession, correction, and promotion relationships. Mission-level claimless
+findings, sibling claims, unreferenced snapshots, audit/run nodes, and reverse
+dependents are outside this deliberately narrow closure. The CLI prints one JSON-only
+`claim_lineage` envelope around the receipt.
+
+Every citation carries its exact quote as text and base64 bytes, half-open UTF-8 byte
+coordinates, quote length/digest, snapshot digest, source/snapshot metadata, stance,
+and provenance. Stable node/edge ordering and set/receipt SHA-256 values make identical
+successful inputs byte-identical. These hashes establish self-consistency, not truth,
+authenticity, authority, approval, or disclosure permission.
+
+The command uses one query-only SQLite snapshot and is complete-or-refuse. Node, edge,
+citation-byte, distinct-snapshot-byte, output-byte, and SQLite-work bounds cannot cause
+partial topology: an exceeded bound refuses instead of truncating. Graph construction
+creates no run, audit event, evidence, finding, inference, status, correction,
+promotion, queue, export, file, packet, provider request, or network activity. It does
+not score, calculate confidence, recommend a claim status, or expose a new agent
+protocol. See [Claim Lineage Graph v1](docs/CLAIM_LINEAGE_V1.md) for the exact receipt,
+scope, bounds, integrity, and semantic-non-effect contract.
+
+Run `uv run python scripts/evaluate_claim_lineage.py` for the fixed synthetic topology
+evaluation: typed node and owner-link precision/recall, edge precision/recall, exact
+citation-byte accuracy, deterministic output, mission/claim isolation, and zero
+unauthorized mutation.
 
 ## Canonical research packet
 
@@ -567,5 +613,6 @@ content and integrity metadata is outside the Milestone 1 detection boundary.
 - [Roadmap and explicit non-goals](docs/ROADMAP.md)
 - [Lens v1 retrieval and receipt contract](docs/LENS_V1.md)
 - [Claim Review v1 gap and correction-impact contract](docs/CLAIM_REVIEW_V1.md)
+- [Claim Lineage Graph v1 provenance-topology contract](docs/CLAIM_LINEAGE_V1.md)
 - [Competitive landscape and dependency roadmap](docs/COMPETITIVE_LANDSCAPE.md)
 - [Contributing](CONTRIBUTING.md)
