@@ -29,6 +29,7 @@ from minerva.integrations.research_request_file import (
     load_research_request,
     request_verification_report,
 )
+from minerva.lens import LensBounds, LensService
 from minerva.research.models import ClaimStatus, FindingStatus, StatementKind
 from minerva.research.service import ResearchService
 from minerva.sources.service import SourceService
@@ -155,6 +156,22 @@ def _cmd_source_show(args: argparse.Namespace) -> Outcome:
     if not cast(bool, args.metadata_only):
         payload["text"] = snapshot.content.decode("utf-8", errors="strict")
     return Outcome(payload)
+
+
+def _cmd_lens_search(args: argparse.Namespace) -> Outcome:
+    result = LensService(_database(args)).search(
+        mission_id=cast(str, args.mission),
+        query=cast(str, args.query),
+        source_ids=cast(list[str] | None, args.source),
+        snapshot_ids=cast(list[str] | None, args.snapshot),
+        bounds=LensBounds(
+            max_results=cast(int, args.limit),
+            max_snapshots=cast(int, args.max_snapshots),
+            max_corpus_bytes=cast(int, args.max_corpus_bytes),
+            max_quote_bytes=cast(int, args.max_quote_bytes),
+        ),
+    )
+    return _command_result("lens", result)
 
 
 def _cmd_evidence_add(args: argparse.Namespace) -> Outcome:
@@ -561,6 +578,26 @@ def build_parser() -> argparse.ArgumentParser:
     source_show.add_argument("--snapshot", required=True)
     source_show.add_argument("--metadata-only", action="store_true")
     _set_handler(source_show, _cmd_source_show)
+
+    lens_parser = commands.add_parser(
+        "lens",
+        help="search immutable snapshots for candidate context",
+    )
+    lens_commands = lens_parser.add_subparsers(dest="lens_command", required=True)
+    lens_search = lens_commands.add_parser(
+        "search",
+        help="search immutable mission snapshots for candidate context",
+    )
+    _add_database(lens_search)
+    lens_search.add_argument("--mission", required=True)
+    lens_search.add_argument("--query", required=True)
+    lens_search.add_argument("--source", action="append")
+    lens_search.add_argument("--snapshot", action="append")
+    lens_search.add_argument("--limit", type=int, default=20)
+    lens_search.add_argument("--max-snapshots", type=int, default=50)
+    lens_search.add_argument("--max-corpus-bytes", type=int, default=16_777_216)
+    lens_search.add_argument("--max-quote-bytes", type=int, default=1_024)
+    _set_handler(lens_search, _cmd_lens_search)
 
     evidence_parser = commands.add_parser("evidence", help="manage exact evidence cards")
     evidence_commands = evidence_parser.add_subparsers(dest="evidence_command", required=True)

@@ -11,6 +11,7 @@
 - [ADR 0009: External principals and signed request attribution](adr/0009-external-principals-and-request-attribution.md) — **Proposed (gate D-2)**
 - [ADR 0010: The Athena coordination adapter seam](adr/0010-athena-coordination-adapter-seam.md) — **Proposed (gate D-2)**
 - [Workspace research-memory season](#workspace-research-memory-season-decision-0-2026-08-20) — **Accepted 2026-08-20 (Decision 0)**
+- [Lens v1: narrow local candidate retrieval](#lens-v1-narrow-local-candidate-retrieval) — **Accepted 2026-08-08; broad D-6 remains closed**
 
 ## Milestone 1 implementation decisions
 
@@ -881,3 +882,41 @@ What this does not authorize:
 - Editing another seat's clone or writing Minerva state into ORACLE.
 
 The written form is [VISION.md](VISION.md) and [WORKSPACE.md](WORKSPACE.md).
+
+## Lens v1: narrow local candidate retrieval
+
+The repository owner's 2026-08-08 directive authorizes one deliberately narrow
+exception to the otherwise closed D-6 retrieval/ingestion gate: deterministic,
+model-free lexical search over immutable snapshots already imported into one
+Minerva mission.
+
+- **Search returns leads, not research state.** The public object is
+  `candidate_context` with `unassessed` stance and `candidate_only` evidence
+  status. It is not an `EvidenceCard`, finding, claim update, confidence value,
+  or persisted inference. Moving useful bytes into the record remains a
+  separate explicit evidence operation with normal validation and audit.
+- **The existing custody boundary is reused.** One query-only SQLite read
+  snapshot resolves mission and corpus allowlists, selects a bounded total-order
+  prefix, and runs the existing snapshot-integrity verifier before pure-Python
+  scoring. SQL belongs to `LensService`, never the CLI. No schema migration or
+  parallel source/evidence domain model is introduced.
+- **Replay meaning is explicit.** The v1 receipt binds normalized query and
+  SHA-256, Unicode database, algorithm/scoring version, sorted filters, bounds,
+  searched snapshot identities and snapshot-set SHA-256, exact quote bytes and
+  coordinates, score components, rank/tie-break, exclusions, omissions,
+  truncation, semantic non-effects, and a complete receipt digest. It contains
+  no random ID or timestamp.
+- **Source correction semantics do not change.** Minerva models no source or
+  snapshot retraction state, and immutable deletion remains forbidden. Evidence
+  withdrawal and finding/inference retraction do not retract source bytes, so
+  they do not remove a snapshot from Lens. The receipt says source-retraction
+  metadata is not modeled; tampering fails closed.
+- **No capability-manifest or packet change.** Lens is an operator/query CLI,
+  not an authenticated external protocol surface. `minerva.capabilities.v2` and
+  `minerva.research-brief.v2` remain byte/semantics unchanged; packet v3, MCP,
+  Athena/external principals, signing, and cryptographic identity remain gated.
+
+This decision does **not** authorize live web or scholarly API access, crawling,
+PDF/OCR ingestion, embeddings, vector stores, mutable indexes, background work,
+provider calls, autonomous adoption, publishing, messaging, or execution. Those
+remain under their existing owner/security gates.

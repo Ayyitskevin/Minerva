@@ -28,6 +28,10 @@ loading, publication, or messaging surface. URL values are inert metadata. Miles
 2B adds only the reviewed CLI assistance exception described below; it does not add an
 API or web invocation surface.
 
+Lens v1 remains inside the offline boundary. It searches only snapshot bytes already
+stored in one local mission and performs no URL dereference, provider/model call, or
+external egress.
+
 ## Standalone packet verification
 
 `minerva packet verify` and `minerva packet inspect` are offline, file-only commands.
@@ -102,6 +106,30 @@ mutation and has no network/provider dependency. Fixed `research-brief.json` and
 write failures remove only files created by that operation. SQLite and filesystem
 writes are not crash-atomic, so process or power loss can leave a partial new output
 directory that Minerva will refuse to overwrite.
+
+## Lens candidate retrieval
+
+`minerva lens search` validates its query, bounds, and source/snapshot allowlists
+before opening one read transaction, then enables SQLite `query_only` for the complete
+mission-scoped operation. Explicit source and snapshot filters intersect; unknown and
+cross-mission IDs fail with the same non-reflective error. Every searched snapshot is
+rechecked against its recorded length, SHA-256, UTF-8 bytes, and import audit before
+lexical scoring.
+
+The corpus is bounded by snapshot count and total bytes, quotes/results are bounded,
+ranking uses versioned integer components and a stable tie-break, and the receipt
+reports exclusions, oversized passages, result omissions, and truncation. A valid
+candidate intentionally reveals exact matching source bytes to the local operator.
+The maximum 64 MiB corpus can still contain many short lines and consume local CPU;
+v1 does not claim a wall-clock or SQLite-instruction bound.
+
+Lens has no identity, audit sink, writer, provider, network, or adoption dependency.
+It leaves all database tables and main-file bytes unchanged. Its output is explicitly
+unassessed candidate context, not evidence, a finding, confidence, claim status, or a
+persisted inference. A human who adopts a lead does so separately through `evidence
+add`, with an explicit claim/stance, exact-span validation, and the normal atomic audit
+record. Receipt hashes prove deterministic self-consistency, not source truth,
+authenticity, or protection from coordinated same-OS-user database rewriting.
 
 ## Publication durability
 

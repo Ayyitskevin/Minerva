@@ -21,6 +21,10 @@ offline, then resolve it against one local database snapshot and write a claim-s
 canonical v2 brief plus a digest-bound result manifest without changing research or
 audit state.
 
+Lens v1 adds bounded, deterministic lexical discovery over those already-imported
+immutable mission snapshots. It returns exact-byte candidate context for review and
+cannot create evidence or mutate research state.
+
 Milestone 2B adds one deliberately narrow, optional assistance surface. A local CLI
 operator can preview a bounded request made from one claim and its active evidence,
 then explicitly authorize that exact request for OpenAI or Anthropic using their own
@@ -140,6 +144,7 @@ undocumented.
 | `minerva claim status` | append a claim status, never overwriting one |
 | `minerva source import` | import one file as an immutable snapshot |
 | `minerva source show` | show snapshot metadata, or its stored bytes |
+| `minerva lens search` | search immutable mission snapshots for candidate context |
 | `minerva evidence add` | cite an exact byte span of a snapshot |
 | `minerva evidence withdraw` | mark evidence as no longer standing, keeping it in the ledger |
 | `minerva finding add` | record a labeled finding, assumption, or open question |
@@ -163,6 +168,32 @@ There is no verb that deletes a mission, claim, snapshot, citation, finding, or
 audit event. Corrections extend the record: `claim status` appends, `evidence
 withdraw` and `finding retract` mark without removing, and `backup` refuses to
 overwrite. That absence is the contract, not an unfinished surface.
+
+## Lens candidate retrieval
+
+Search the immutable snapshots already imported into one mission without a
+model, provider, index, schema change, or network call:
+
+```bash
+minerva lens search --db research.db --mission MIS_ID \
+  --query "immutable provenance" --limit 10
+```
+
+Repeat `--source SRC_ID` and/or `--snapshot SNP_ID` to narrow the permitted
+corpus; supplying both searches their intersection. Results are deterministic
+`candidate_context` leads, not evidence. Each compact JSON receipt records the
+normalized query and digest, Unicode/algorithm versions, ordered searched
+snapshot identities and corpus digest, configured bounds, exclusions and
+omissions, integer score components, stable rank, and the exact quoted UTF-8
+bytes as text, base64, SHA-256, and half-open byte coordinates.
+
+Lens uses one query-only SQLite snapshot and re-verifies every searched source
+snapshot before scoring. It creates no run, audit event, evidence, finding,
+claim-status event, inference, or export record. A useful lead enters the
+research record only through the separate existing `evidence add` command with
+an explicit claim, stance, coordinates, quote, validation, and audit trail.
+See [Lens v1](docs/LENS_V1.md) for the scoring/replay contract and
+[the competitive landscape](docs/COMPETITIVE_LANDSCAPE.md) for product context.
 
 ## Canonical research packet
 
@@ -473,4 +504,6 @@ content and integrity metadata is outside the Milestone 1 detection boundary.
 - [Threat model](docs/THREAT_MODEL.md)
 - [Decision log](docs/DECISIONS.md)
 - [Roadmap and explicit non-goals](docs/ROADMAP.md)
+- [Lens v1 retrieval and receipt contract](docs/LENS_V1.md)
+- [Competitive landscape and dependency roadmap](docs/COMPETITIVE_LANDSCAPE.md)
 - [Contributing](CONTRIBUTING.md)

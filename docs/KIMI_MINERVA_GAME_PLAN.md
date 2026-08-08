@@ -113,6 +113,19 @@ DECISIONS.md, ROADMAP.md, ARCHITECTURE.md, and README updated.
 - **D-4, D-6, D-7, D-8:** remain closed (multi-user/remote, retrieval &
   ingestion expansion, signing, confidence methods). No work without Kevin.
 
+### 2026-08-08 scope addendum: Lens v1 only
+
+Kevin's 2026-08-08 directive opens a narrow, schema-free exception inside the
+otherwise closed D-6 area: model-free lexical search of immutable snapshots already
+imported into one mission, returning deterministic candidate context that cannot
+silently become evidence or research state. This authorizes `Lens v1` only. Broad D-6
+remains closed: no web/scholarly API retrieval, URL fetching, crawling, PDF/OCR
+ingestion, embeddings, vector database, background index, provider/model call, or
+autonomous adoption follows from this addendum. D-2/D-3/D-5, packet v3, external
+principals, Athena, signatures, and cryptographic identity remain exactly as gated
+above. The accepted implementation boundary is recorded in `docs/DECISIONS.md`; the
+algorithm and receipt are specified in `docs/LENS_V1.md`.
+
 ## 4. Execution phases
 
 Each phase is one or more reviewed PRs on `kimi/*` branches, full AGENTS.md

@@ -113,6 +113,34 @@
 - `minerva.research-brief.v2` is unchanged: a retracted finding is absent from
   the packet rather than flagged inside it.
 
+## Lens v1: bounded local retrieval (narrow D-6 exception)
+
+- `minerva lens search` performs deterministic, model-free lexical retrieval only
+  over immutable snapshots already imported into one named mission.
+- One query-only SQLite snapshot owns mission/filter validation, deterministic
+  `(imported_at, snapshot_id)` corpus selection, and shared snapshot integrity checks.
+- Every `candidate_context` lead carries exact UTF-8 bytes and half-open coordinates,
+  source/snapshot identity, normalized query and digest, searched snapshot-set digest,
+  algorithm/Unicode versions, integer score components, total rank, configured bounds,
+  omissions, truncation, and a whole-receipt digest.
+- Candidate stance is unassessed and evidence status is candidate-only. Search has no
+  identity, audit, mutation, evidence, finding, inference, provider, network, export,
+  or packet side effect; normal evidence creation remains separate and explicit.
+- No migration or index is added. Legacy databases still follow the normal explicit
+  migration contract; packet v2 and the capability manifest are unchanged.
+- A checked-in synthetic harness measures precision/recall, exact byte round trips,
+  byte-identical determinism, mission isolation, and zero unauthorized mutation.
+
+## Next dependency-ordered capabilities
+
+1. Read-only evidence-gap and retraction-impact views derived from existing ledgers.
+2. Claim-graph navigation and human-owned mission research queues using those views.
+3. A decision packet for lossless PROV-O/RO-Crate mappings and canonical export.
+
+Scholarly-source adapters follow only after licensing/network/import-custody approval.
+A read-only agent protocol follows only after D-2 authentication. Semantic retrieval
+follows only when a pinned local index/model receipt can preserve deterministic custody.
+
 ## Later milestones, not implemented now
 - Authenticated Athena mission/identity coordination adapter that may produce the
   existing request artifact only after a separately reviewed identity/authorization

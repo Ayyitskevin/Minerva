@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import shutil
@@ -224,6 +225,7 @@ def smoke_wheel(dist_directory: Path) -> Path:
             "from importlib.metadata import version; "
             "from pathlib import Path; "
             "import minerva; "
+            "from minerva.lens import LensService; "
             "print(version('minerva-research')); "
             "print(Path(minerva.__file__).resolve())"
         )
@@ -271,6 +273,97 @@ if unexpected:
         mission_id = demo.get("mission_id")
         if not isinstance(mission_id, str):
             raise SmokeError("installed demo did not return a mission identifier")
+
+        lens_arguments = [
+            str(minerva_command),
+            "lens",
+            "search",
+            "--db",
+            str(demo_database),
+            "--mission",
+            mission_id,
+            "--query",
+            "runtime",
+            "--limit",
+            "3",
+        ]
+        lens_output = _run_checked(
+            lens_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if lens_output != _run_checked(
+            lens_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        ):
+            raise SmokeError("installed Lens search is not byte-deterministic")
+        lens_envelope = _json_object(lens_output, label="installed Lens search")
+        lens = lens_envelope.get("lens")
+        if not isinstance(lens, dict):
+            raise SmokeError("installed Lens search omitted its retrieval receipt")
+        candidates = lens.get("candidates")
+        semantic_boundary = lens.get("semantic_boundary")
+        if (
+            lens.get("schema_version") != "minerva.lens-search.v1"
+            or lens.get("kind") != "candidate_context_search"
+            or lens.get("mission_id") != mission_id
+            or lens.get("algorithm") != "bounded-unicode-line-lexical"
+            or not isinstance(lens.get("query_sha256"), str)
+            or len(lens["query_sha256"]) != 64
+            or not isinstance(lens.get("snapshot_set_sha256"), str)
+            or len(lens["snapshot_set_sha256"]) != 64
+            or not isinstance(lens.get("retrieval_receipt_sha256"), str)
+            or len(lens["retrieval_receipt_sha256"]) != 64
+            or not isinstance(candidates, list)
+            or not candidates
+            or not isinstance(semantic_boundary, dict)
+            or semantic_boundary.get("candidate_context_only") is not True
+            or semantic_boundary.get("creates_evidence") is not False
+            or semantic_boundary.get("persists_agent_inference") is not False
+        ):
+            raise SmokeError("installed Lens retrieval receipt is invalid")
+        candidate = candidates[0]
+        if not isinstance(candidate, dict):
+            raise SmokeError("installed Lens candidate context is invalid")
+        snapshot_id = candidate.get("snapshot_id")
+        quote = candidate.get("quote")
+        start_byte = candidate.get("start_byte")
+        end_byte = candidate.get("end_byte")
+        quote_utf8_base64 = candidate.get("quote_utf8_base64")
+        if (
+            candidate.get("kind") != "candidate_context"
+            or candidate.get("mission_id") != mission_id
+            or not isinstance(snapshot_id, str)
+            or not isinstance(quote, str)
+            or not isinstance(start_byte, int)
+            or not isinstance(end_byte, int)
+            or not isinstance(quote_utf8_base64, str)
+        ):
+            raise SmokeError("installed Lens candidate provenance is incomplete")
+        shown = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "source",
+                    "show",
+                    "--db",
+                    str(demo_database),
+                    "--snapshot",
+                    snapshot_id,
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed Lens snapshot round trip",
+        )
+        source_text = shown.get("text")
+        if (
+            not isinstance(source_text, str)
+            or source_text.encode()[start_byte:end_byte] != quote.encode()
+            or base64.b64decode(quote_utf8_base64, validate=True) != quote.encode()
+        ):
+            raise SmokeError("installed Lens byte span does not round trip")
         claim_ids = demo.get("claim_ids")
         if not isinstance(claim_ids, list) or not claim_ids or not isinstance(claim_ids[0], str):
             raise SmokeError("installed demo did not return a claim identifier")

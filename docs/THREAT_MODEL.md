@@ -1,4 +1,4 @@
-# Current threat model: Milestones 1 through 1.5 and 2B
+# Current threat model: provenance foundation through Lens v1
 
 ## Boundary and assets
 
@@ -10,7 +10,8 @@ pretend a caller-supplied header is an authenticated identity.
 Protected assets are source snapshot contents, local filesystem paths, provenance and
 audit integrity, citation correctness, exported research artifacts, request/result
 binding integrity, provider credentials, and the operator's control over which exact
-evidence leaves the machine.
+evidence leaves the machine. Lens adds candidate quotes and deterministic retrieval
+receipts to the protected local disclosure surface; it adds no external egress.
 
 ## Threats and controls
 
@@ -24,6 +25,10 @@ evidence leaves the machine.
 | Hostile offline research request | Same no-follow stable-file boundary; 64 KiB cap before decode; strict canonical DTO/digest; duplicate/non-standard/shape/fanout defenses; exact prefix/hex IDs; unknown fields rejected | Digest self-consistency does not establish origin, authenticity, authority, disclosure permission, or freshness against a later database snapshot |
 | Evidence cherry-picking or stale request | Only `complete_claim_ledger`; requested sorted active set must exactly equal the target claim's snapshot ledger; no stance filtering; withdrawn history retained | A producer can choose which claim to request; policy does not assess whether the mission itself is complete or research is true |
 | Request scope crosses mission/claim boundary | Mission and claim resolved by parameterized primary-key lookups in one query-only read snapshot; claim mission checked; all missing/out-of-scope evidence fails closed with non-reflective errors | The trusted OS user who owns the database remains the security principal; no remote authorization exists |
+| Lens query expands scope or injects SQL | Query and limits validated before DB open; parameterized values; allowlisted SQL composition only; source/snapshot allowlists intersect; every filter ID must resolve inside the named mission with the same non-reflective error | Candidate quotes intentionally disclose matching mission bytes to the local operator; an operator with database access already shares that boundary |
+| Lens search mutates research or silently becomes evidence | One `Database.read()` snapshot plus connection-local `query_only`; no identity, audit, writer, evidence, finding, inference, provider, or export dependency; candidate DTOs say `unassessed`/`candidate_only`; table dump and main-file digest regression tests | A human can later create evidence from the lead, but only through the separately audited evidence command and explicit stance |
+| Lens work or result amplification | Query/filter/result/snapshot/corpus-byte/quote-byte caps; deterministic whole-snapshot prefix; oversized lines omitted explicitly; bounded top-result retention; integer scoring | A corpus inside the 64 MiB maximum can contain many short lines and consume local CPU; v1 has a byte bound, not a SQLite instruction or wall-clock bound |
+| Corrupt snapshot creates plausible Lens text | Existing snapshot length/digest/UTF-8/import-audit verifier runs on every searched row before scoring; corruption fails the search rather than being omitted | No external signature detects a coordinated same-OS-user rewrite of database bytes and audit history |
 | Excessive work or text materialization during fulfillment | Bounded claim-history/preflight queries, one connection-local progress budget over the complete query-only snapshot, targeted audit and claim-scoped finding indexes (migration 0003) whose selection is asserted by an `EXPLAIN QUERY PLAN` regression test, and an exact-multiplicity NUL-safe storage-byte lower bound before full database text or snapshot content is returned to Python; exhaustion becomes non-reflective `brief_work_limit` before file writes | The SQLite budget limits virtual-machine instructions, not elapsed time; aggregate length queries inspect stored values and are not an SQLite-memory limit; final canonical byte validation remains authoritative; same-mission audit history that the claim-scoped query must examine row by row still consumes budget; the plan test is the only guard on index selection — `INDEXED BY` names `idx_findings_claim` so its absence fails at preparation, but `idx_audit_event_entity` is planner-selected and its absence degrades silently to a scan, and neither hint forces a seek if a predicate is later dropped |
 | Script/HTML/Markdown injection | Jinja autoescape; CSP; stored text rendered as text/`pre`; no raw HTML Markdown mode | Future rich rendering requires a reviewed sanitizer policy |
 | SQL injection | Parameterized SQL; dynamic choices selected from fixed enums/queries only | A future ad hoc query could violate the rule; tests and review remain necessary |
@@ -63,6 +68,13 @@ evidence leaves the machine.
   database, credential source, provider, or network. Fulfillment validates first, then
   uses one query-only snapshot under one cumulative SQLite work guard. Exhaustion creates
   no artifacts, Minerva state, or audit record.
+- Lens resolves filters and searches verified bytes in one query-only mission snapshot.
+  Its stable receipt reports query/corpus digests, algorithm and Unicode versions,
+  exact byte spans, configured bounds, exclusions, omissions, and truncation. It
+  performs no provider/network call and leaves all database and audit state unchanged.
+- A Lens candidate is never evidence, a finding, an inference, confidence, or claim
+  status. Adoption remains a separate explicit human mutation with normal validation
+  and audit behavior.
 - Retraction deletes nothing. Surfaces that read findings still return a retracted
   finding, marked with its reason, timestamp, and actor; synthesis surfaces exclude
   it from the brief rather than presenting it as asserted. Neither path can make the

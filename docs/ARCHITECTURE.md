@@ -26,6 +26,11 @@ request fulfill --> verified inert request --> one query-only SQLite snapshot
                                                   |
                                                   +--> claim-scoped canonical v2
                                                        + digest-bound result file
+
+lens CLI --> bounded lexical query --> one query-only SQLite snapshot
+                                           |
+                                           +--> verified immutable bytes
+                                                 + deterministic candidate receipt
 ```
 
 The SQLite database is authoritative for structured research state and source
@@ -40,6 +45,8 @@ they may not reimplement domain validation or write SQL directly.
 - `sources`: safe local-file reading, validation, secret-pattern defense, and
   immutable snapshot registration.
 - `evidence`: byte-span citations, stance, ledgers, withdrawal, and supersession.
+- `lens`: bounded, model-free candidate-context retrieval and deterministic
+  query/corpus/score receipts over verified immutable snapshots.
 - `synthesis`: canonical research-packet assembly, citation verification,
   claim-scoped request fulfillment, Markdown/JSON rendering, digesting, and contained
   file export.
@@ -116,6 +123,30 @@ context, or a caught provider failure. No database transaction can include the r
 operation. Process termination can leave only the requested event, and a timeout or
 connection loss is recorded as an unknown provider outcome because the provider may
 have processed the request. Minerva does not retry it automatically.
+
+## Lens read boundary
+
+`LensService` is a query application service, not a source importer or evidence
+service. Its SQL remains inside the service layer; the CLI only parses bounds and
+presents the returned DTO. Search validates query, limits, and canonical allowlists
+before opening one `Database.read()` transaction, then enables connection-local
+`PRAGMA query_only=ON`. Mission lookup, allowlist validation, deterministic corpus
+selection, snapshot loading, integrity verification, and scoring all occur against
+that same consistent read snapshot.
+
+Snapshot selection is a bounded prefix ordered by `(imported_at, snapshot_id)`.
+Source and snapshot filters intersect and every requested identifier must resolve in
+the mission. The existing source-integrity verifier checks stored bytes, length,
+SHA-256, UTF-8 decoding, and import-audit provenance before Lens sees text. Ranking is
+pure Python over original bytes using the versioned lexical rule in
+[`LENS_V1.md`](LENS_V1.md); SQLite collation, `LIKE`, FTS, provider code, and mutable
+indexes are not part of the result.
+
+The service returns immutable candidate DTOs and a receipt only. It has no identity,
+clock, ID factory, audit sink, transaction writer, provider, credential, export, or
+adoption dependency. Candidate text carries exact source byte coordinates but remains
+semantically distinct from `EvidenceCard`, `Finding`, and `AgentInference`. The
+existing evidence service is the only path from a reviewed lead into evidence state.
 
 ## Exact citations
 

@@ -1,4 +1,4 @@
-# Minerva product requirements: Milestones 1 through 1.5 and 2B
+# Minerva product requirements: provenance foundation through Lens v1
 
 ## Product identity
 
@@ -55,6 +55,22 @@ disclosure. No Athena adapter, transport, shared database/run envelope, Icarus r
 MCP surface, execution, orchestration, publication, messaging, or automatic adoption
 is implemented.
 
+## Lens v1 outcome
+
+An offline human or agent can search only the immutable snapshots already imported
+into one mission and receive bounded, deterministically ranked candidate context.
+Every lead identifies its mission/source/snapshot, exact UTF-8 byte span and bytes,
+query and snapshot-set digests, algorithm/Unicode versions, score components, bounds,
+and omissions. Identical valid inputs against identical state produce byte-identical
+CLI output.
+
+Lens is discovery, not adjudication. It has no identity or mutation path, creates no
+audit event, stance, evidence, finding, confidence, or inference, and cannot expand
+the explicit mission/corpus scope. A reviewed lead becomes evidence only through the
+existing separate evidence workflow and its normal human identity, validation, stance,
+and audit behavior. Lens adds no schema migration, provider/model runtime, network
+fetch, crawl, OCR, embedding, vector index, API, web, MCP, or packet revision.
+
 ## Milestone 2B outcome
 
 A local CLI operator can optionally ask OpenAI or Anthropic to draft finding
@@ -107,6 +123,9 @@ publication, messaging, or autonomous research.
   authenticated work coordination or authorization.
 - **Research result manifest:** a minimal canonical file binding one verified request
   digest to the schema and exact SHA-256 of its fulfilled brief bytes.
+- **Candidate context:** a deterministic Lens lead locating potentially relevant
+  bytes in an immutable snapshot. Its stance is unassessed and its evidence status is
+  candidate-only; it is neither a citation nor an evidence card.
 
 ## Statement classes
 
@@ -211,6 +230,11 @@ unresolved question under the same citation rules as human-authored material.
     is returned to Python when the exact-multiplicity NUL-safe storage-byte lower bound
     for emitted strings exceeds the export byte cap. SQLite may inspect those values;
     canonical serialization remains the final byte check.
+18. Lens validates all bounds and filters, resolves one mission in one query-only read
+    snapshot, searches a deterministic bounded prefix, and re-verifies every snapshot
+    before scoring original bytes. Its versioned integer scoring has a total tie-break;
+    the receipt names every exclusion and omission class. Lens returns DTOs only and
+    leaves every database table and the database main-file bytes unchanged.
 
 ## User surfaces
 
@@ -221,6 +245,8 @@ unresolved question under the same citation rules as human-authored material.
 - `minerva request verify` is a file-only offline command. `minerva request fulfill`
   adds one explicitly supplied local database and output directory while remaining
   read-only with respect to Minerva state.
+- `minerva lens search` returns compact deterministic JSON candidate receipts over one
+  immutable mission corpus. No equivalent REST, web, provider, or MCP operation exists.
 - `minerva-demo` creates a disposable synthetic mission and exports its brief without
   contacting a network service. It refuses an existing database.
 - The web interface is a restrained, server-rendered review surface.
