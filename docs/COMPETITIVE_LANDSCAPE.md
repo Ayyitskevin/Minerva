@@ -1,0 +1,88 @@
+# Competitive landscape: provenance-first research systems
+
+Reviewed 2026-08-08 from official product documentation, specifications, and
+primary repositories. **D** means the cited source documents the capability.
+**I** means a Minerva product inference, usually that the reviewed material did
+not document a stronger guarantee; absence from documentation is not proof that
+an internal implementation lacks it.
+
+## Research products and adjacent open systems
+
+| Dimension | Elicit | Consensus | PaperQA2 | STORM / Co-STORM | ChatGPT deep research | Minerva |
+| --- | --- | --- | --- | --- | --- | --- |
+| Discovery and ingestion | **D:** 138M-paper and trials search, PubMed, imports, uploads | **D:** 220M+ paper index, publisher/full-text access, uploads | **D:** PDF, text, Office, code, metadata APIs | **D:** configurable web and corpus retrievers | **D:** public web, uploaded files, connected apps | **D:** explicit local UTF-8 import only |
+| Local corpus and web retrieval | **D:** hosted corpus and user data | **D:** hosted corpus, collections, full text | **D:** local full-text index; optional APIs/models | **D:** web and local vector-retriever configurations | **D:** hosted web/app research | **D:** Lens searches only mission-owned immutable snapshots; no web fetch |
+| Exact citation provenance | **D:** sentence/figure-backed quotes. **I:** immutable bytes, content hashes, and byte coordinates were not documented | **D:** papers, inline citations, extracted answers. **I:** immutable bytes and byte coordinates were not documented | **D:** passage/page citations. **I:** no immutable-byte coordinate contract was found | **D:** report citations. **I:** no exact immutable span contract was found | **D:** citations and source links. **I:** no immutable-byte coordinate contract was found | **D:** snapshot SHA-256 plus exact half-open UTF-8 byte span, quote text, base64 bytes, and quote digest |
+| Claim/evidence relationship | **D:** screening/extraction decisions and claims backed by source sentences | **D:** Claims & Evidence, paper-level answers, cited synthesis | **D:** chunk evidence selected for generated answers | **D:** cited report synthesis | **D:** cited structured reports | **D:** explicit claim, evidence-card, stance, finding, and labeled-inference types; Lens candidates are separate |
+| Contradiction, correction, retraction | **D:** screening decisions are editable; API defaults to excluding retracted papers | **D:** Yes/No/Possibly/Mixed meter; retracted badge and exclusion from analyses | **D:** `contracrow` and metadata retraction checks | **I:** no durable correction/retraction lifecycle was found | **I:** no append-only correction/retraction lifecycle was found | **D:** four evidence stances, append-only withdrawals/retractions, supersession, and retained history |
+| Human review and adoption | **D:** override, dual review, collaborative screening, PRISMA audit | **D:** saved collections, visible classifications, feedback and exports | **D:** manual and agentic modes | **D:** Co-STORM supports human steering | **D:** user reviews/edits the plan, can interrupt, and receives activity/source history | **D:** local human mutation authority; generated candidates require separate explicit adoption/promotion |
+| Agent-facing interface | **D:** REST API and OAuth MCP | **D:** REST API, ChatGPT app, OAuth MCP | **D:** Python API, CLI, agent tools | **D:** Python application/retriever interfaces | **D:** ChatGPT UI and connected-app reads | **D:** deterministic CLI and strict packet/request files; MCP remains owner-gated |
+| Local/offline operation | **I:** hosted service is the documented primary surface | **I:** hosted service is the documented primary surface | **D:** local files and local model/embedding configurations are supported | **D:** code is locally runnable; normal workflows use models/retrievers | **I:** hosted service is required | **D:** core research and Lens are offline after installation; provider assistance is a narrow opt-in exception |
+| Deterministic replay/export | **D:** keyword search is described as reproducible/deterministic; PRISMA and data exports. **I:** no full retrieval receipt was found | **D:** Paper Search is called deterministic; CSV/RIS/bibliography/PDF exports. **I:** corpus/algorithm replay receipt not documented | **I:** mutable files, configurable models, and agent workflows do not establish byte-identical replay | **I:** live retrieval and LLM generation do not establish byte-identical replay | **D:** Markdown/Word/PDF export. **I:** byte-identical replay was not documented | **D:** canonical packet bytes and Lens receipts use stable ordering, integer scores, explicit versions, and SHA-256 digests |
+| Auditability | **D:** PRISMA flow, exclusion reasons, criteria scores, quotes, search strategies | **D:** cited inputs and visible contributing papers; library/history surfaces | **D:** stored indexes/answers and configurable callbacks | **D:** cited report and Co-STORM working state | **D:** source list and activity history | **D:** append-only mutation audit plus independently inspectable candidate receipts and inference provenance |
+| Interoperability | **D:** CSV/RIS/BibTeX-style workflows, REST, MCP | **D:** CSV/RIS/bibliographies, REST, MCP | **D:** Python ecosystem, multiple file/index/model backends | **D:** retriever and model adapters | **D:** source links and document exports | **D:** strict v2 packet and v1 request/result artifacts; PROV-O/RO-Crate mappings are designed, not implemented |
+
+## Standards and scholarly data infrastructure
+
+| System | Documented contribution | What Minerva should reuse | Boundary or gap for Minerva |
+| --- | --- | --- | --- |
+| W3C PROV-O | **D:** interoperable Entity/Activity/Agent provenance, derivation, attribution, quotation, revision, invalidation, roles, and plans | Map snapshots/evidence/artifacts to entities, imports/search/adoption to activities, and local identities to agents | **I:** PROV-O does not itself define Minerva's evidence stance, sufficiency, exact byte coordinates, or canonical replay rules |
+| RO-Crate 1.3 | **D:** JSON-LD research-object metadata; attached/detached crates; data/context entities; provenance actions; optional human preview; compatibility with ZIP, BagIt, OCFL, and checksums | A future export profile can package canonical artifacts and snapshot references for exchange without replacing Minerva's internal model | **D/I:** the base spec says metadata need not be an exhaustive fixity manifest; it does not supply Minerva's stance or byte-span semantics |
+| Semantic Scholar API | **D:** graph search, recommendations, dated dataset releases/diffs, and snippet text with offsets plus `retrievalVersion` | A future gated adapter could pin a dataset release/retrieval version and import returned material through normal snapshot custody | **I:** reviewed docs do not define snippet offset units as UTF-8 bytes or promise immutable publisher bytes; license/auth/network review remains necessary |
+
+## Defensible position
+
+Elicit and Consensus are increasingly complete research products, while
+PaperQA2, STORM, and ChatGPT deep research are strong discovery and synthesis
+systems. Competing on “answer a question with citations” would therefore be a
+weak position. Minerva's durable role is the custody and adjudication substrate
+under those experiences:
+
+1. Freeze the exact bytes that were actually reviewed.
+2. Locate every adopted citation in those bytes, not merely at paper or page level.
+3. Preserve stance, contradiction, withdrawal, retraction, and supersession as
+   explicit history rather than recomputing a single current answer.
+4. Keep retrieval leads, model inferences, evidence, and human findings as
+   different semantic objects with explicit promotion boundaries.
+5. Make search and export receipts deterministic enough to inspect and replay
+   without a model, network, or hidden mutable corpus.
+6. Interoperate outward through mappings and versioned artifacts without
+   weakening the internal source-custody contract.
+
+## Dependency-ordered product plan
+
+1. **Lens v1:** deterministic lexical candidate retrieval over existing immutable
+   mission snapshots, including exact byte provenance and a zero-mutation receipt.
+2. **Evaluation and explanation:** checked-in recall/precision, span-accuracy,
+   determinism, mission-isolation, and mutation tests; explanations derive only
+   from score components.
+3. **Read-only evidence-gap and retraction-impact views:** expose missing/opposing/
+   withdrawn support using existing records; no new truth or confidence score.
+4. **Claim-graph navigation and mission research queues:** human-owned views that
+   turn gaps and candidates into explicit work, without autonomous mutation.
+5. **PROV-O/RO-Crate decision packet:** define a lossless mapping and canonical
+   export profile before implementing any interoperability surface.
+6. **Gated scholarly-source adapter:** only after source licensing, network,
+   authentication, custody, and import/adoption rules are owner-approved.
+7. **Read-only agent protocol:** only after the external-principal/authentication
+   decision; MCP does not precede that boundary.
+8. **Semantic retrieval:** only after a pinned local model/index receipt can meet
+   the determinism and audit standard; it never replaces exact snapshot custody.
+
+## Primary sources
+
+- [Elicit systematic literature reviews](https://elicit.com/solutions/literature-review),
+  [Elicit API](https://docs.elicit.com/), and
+  [Elicit systematic-review evaluation](https://elicit.com/blog/evaluating-elicit-slr)
+- [How Consensus works](https://help.consensus.app/en/articles/9922673-how-consensus-works),
+  [Consensus research database](https://help.consensus.app/en/articles/10055108-consensus-research-database),
+  [Consensus Meter](https://help.consensus.app/en/articles/10069920-the-consensus-meter), and
+  [Consensus MCP](https://docs.consensus.app/docs/mcp)
+- [PaperQA2 primary repository](https://github.com/future-house/paper-qa)
+- [STORM / Co-STORM primary repository](https://github.com/stanford-oval/storm)
+- [ChatGPT deep research](https://help.openai.com/en/articles/10500283-deep-research)
+- [W3C PROV-O](https://www.w3.org/TR/prov-o/)
+- [RO-Crate 1.3](https://www.researchobject.org/ro-crate/specification/1.3/index.html)
+- [Semantic Scholar API](https://www.semanticscholar.org/product/api),
+  [snippet API](https://api.semanticscholar.org/api-docs/graph#tag/Snippet-Text), and
+  [datasets API](https://api.semanticscholar.org/api-docs/datasets)
