@@ -527,11 +527,14 @@ def test_security_documents_do_not_present_a_control_the_code_lacks() -> None:
     absence or as a requirement on a form that does not exist yet, never as
     something Minerva has.
 
-    The qualifier rule is the net that fails closed, because a sentence that
-    asserts a missing control flatly carries no qualifier at all.
-    `_PRESENT_TENSE_CLAIMS` is a second, weaker net for sentences carrying both
-    a qualifier and an existence claim ("a CSRF primitive exists and must be
-    wired into any future form"); being a denylist, it cannot be complete.
+    Both rules are heuristics over prose and neither is complete. The qualifier
+    requirement catches a flat assertion, which carries no qualifier at all;
+    `_PRESENT_TENSE_CLAIMS` catches the "exists and must be wired into any
+    future form" shape that actually shipped. A sentence asserting presence
+    inside a qualified clause escapes both, and "every unsafe form must carry
+    the CSRF token Minerva provides" passes today. Natural-language
+    completeness is not reachable here, so the guarantee is that these shapes
+    fire -- not that no false claim can be written.
     """
 
     documents = _security_documents()
