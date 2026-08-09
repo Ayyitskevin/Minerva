@@ -1,7 +1,7 @@
 ---
 repository: Ayyitskevin/Minerva
 phase: FABLE_PLANNING
-status: READY_FOR_OPUS
+status: PHASE_0E_DELIVERED (PR #33, main 259ee17); remaining work is gated on D-2
 base_commit: b650c01 (merge of PR #31)
 supersedes: docs/FABLE_MINERVA_GAME_PLAN_2.md
 ---
@@ -51,11 +51,13 @@ state). No migration, no new surface, no contract change. Entirely
 within Opus's standing authority, with the two judgment calls flagged
 for Kevin inside the PR rather than silently absorbed.
 
-Beyond Phase 0E, every increment of value still runs through gate D-2,
-and the facts around D-2 have changed since plan 2 wrote "hold D-2
-until Athena can hold a keypair" — Athena now ships credential
-primitives. Section 4 is decision material for Kevin, not work: this
-plan does not begin D-2.
+Beyond Phase 0E, every increment of value still runs through gate D-2.
+This section originally reported that the facts around D-2 had changed
+because "Athena now ships credential primitives"; **that was wrong and
+is retracted in section 4**, which now carries the verified reading of
+Athena's crypto code. Plan 2's hold condition stands unchanged: Athena
+holds no private key and has nowhere to keep one. Section 4 is decision
+material for Kevin, not work: this plan does not begin D-2.
 
 ## 2. What landed since plan 2 (verified)
 
@@ -188,43 +190,102 @@ this entry is the record.
 
 ## 4. Gate D-2 readiness (decision material for Kevin — not work)
 
-Plan 2 closed with "hold D-2 until Athena can hold a keypair." Verified
-2026-08-09 against Athena at `6235ec9`: Athena now ships scoped agent
-tokens, OIDC, signed webhooks, run lineage, MCP, and a credential kill
-switch as product primitives, and `cryptography` is already in its
-transitive dependency set. The precondition is no longer hypothetical;
-the five-item Athena-side gap list in the Kimi plan (0600 key store,
-principal URNs, signing call-site, out-of-band public-key export,
-artifact seam) is real but bounded work.
+**Correction, 2026-08-09, same day as publication.** This section originally
+concluded that because Athena "now ships scoped agent tokens, OIDC, signed
+webhooks, run lineage, MCP, and a credential kill switch," and because
+`cryptography` "is already in its transitive dependency set," plan 2's keypair
+precondition "is no longer hypothetical" and the Athena-side gap list was "real
+but bounded work." **That conclusion was wrong.** It was inferred from a
+feature-level grep rather than read out of Athena's crypto code, and the grep
+matched three things that are not asymmetric signing: `webhooks.sign` (HMAC over
+a shared secret), the plaintext `secret` columns, and an `algorithms=[RS256, …]`
+allow-list that constrains a *verifier*. The feature list is accurate; the
+inference from it was not. Corrected here rather than silently edited, per this
+repository's convention for a claim that was published and acted on.
 
-ADRs 0009 and 0010 are drafted and internally consistent. Before
-recording D-2, the acceptance should resolve, explicitly rather than by
+A direct read of Athena at `6235ec9` establishes the following, with file
+evidence:
+
+- **No private key, and no signing anywhere.** Athena's only asymmetric
+  operation is ID-token *verification* against the identity provider's public
+  JWKS, delegated entirely to PyJWT (`core/oidc_flow.py:193,220`). There is no
+  `jwt.encode`, no Ed25519 key, and no `sign()` over a private key in the tree.
+- **No secret-at-rest store.** Every secret is read from the environment
+  (`config.py`); there is no `.env` loader and no keyring. The explicit `0o600`
+  calls live in the backup/restore staging engine (`core/recovery.py`), not in
+  any credential path. The one reusable precedent is the plaintext `secret`
+  column on webhooks (`migrations/0021_webhooks.sql:15`), guarded by a
+  column allow-list so it never escapes a read path (`core/webhooks.py:58-62`).
+- **The HMAC site is shape-only precedent.** `webhooks.sign`
+  (`core/webhooks.py:180-186`) takes a `str` secret into `hmac.new` and cannot
+  be parameterized into a key object. Its canonical-bytes discipline and
+  `dispatch.envelope` (`core/dispatch.py:367-389`) transfer as templates; the
+  key handling does not, and both call sites attach the signature to an HTTP
+  header on a live POST, never to a file.
+- **`cryptography` is transitive only**, arriving as an extra of `pyjwt[crypto]`
+  (`pyproject.toml:21-23`). Promoting it to a direct dependency is a gated
+  change under Athena's constraints procedure (`constraints/README.md:29-33`),
+  not a free one, and today the signing library would be a side effect of the
+  OIDC feature. PyNaCl is absent.
+- **No principal URN concept.** An agent is an ordinary user row with an
+  `is_agent` flag (`migrations/0028_user_is_agent.sql:11`); the nearest named
+  sub-identity, `agent_workers.worker_key`, is documented as self-declared
+  opaque client text that Athena never routes, schedules, or authorizes on
+  (`migrations/0065_agent_workers.sql:35-37`). `athena:planner-1` is new
+  construction, not a rename of something that exists.
+- **An artifact writer exists but is unsigned and CLI-only**
+  (`core/run_replay.py:47-73`, `core/portability.py:60-85`). There is no outbox
+  directory, no emit trigger analogous to `deliver_pending`, and no signature
+  field in any artifact schema. Note also that the artifact writer canonicalizes
+  as `indent=2, sort_keys=True` while both HMAC sites use compact
+  `separators=(",", ":")` — so "sign the artifact bytes" requires deciding which
+  canonical form is authoritative before anything is signed.
+
+**Revised readiness: ABSENT.** Plan 2's hold condition stands unchanged and
+unweakened: D-2 waits until Athena can hold a keypair, and it cannot yet. Of the
+Athena-side work, the two items carrying the cryptographic weight — possessing a
+private key and having somewhere to keep it — are new construction, not
+integration.
+
+Before recording D-2, the acceptance should resolve, explicitly rather than by
 silence:
 
-1. **The scope narrowing.** ADR 0009 is deliberately narrower than plan
-   2 §15 briefed: transport selection, capability-grant vocabulary,
-   nonce/expiry replay defense, and per-principal rate bounds are all
-   deferred. The drafts substitute a digest-uniqueness registry for
-   replay defense and a file drop-box for transport. Accepting them as
-   drafted should either adopt those substitutes on the record or name
-   the follow-up ADRs that will carry the deferred concerns.
-2. **Key validity.** The ed25519 CHECK validates 64-hex shape, not
-   curve validity; registration must parse the key with the chosen
-   library and refuse garbage.
-3. **Rotation.** Revoke-and-re-register forces URN churn; attribution
-   continuity across rotation is explicitly punted. Say so in the
-   acceptance or fix the shape first.
-4. **Trust-on-first-registration.** The registry is only as strong as
-   the operator's manual key delivery; the runbook is part of the
-   boundary.
-5. **The sidecar/envelope format** for the signature is unspecified in
-   both ADRs and will need its own strict parser with hostile-input
-   tests.
-6. **Minerva's first crypto runtime dependency** (ed25519 verification)
-   needs naming, pinning, and a static-gate allowlist decision — a
-   review-gated surface.
+1. **The scope narrowing.** ADR 0009 is deliberately narrower than plan 2 §15
+   briefed: transport selection, capability-grant vocabulary, nonce/expiry
+   replay defense, and per-principal rate bounds are all deferred. The drafts
+   substitute a digest-uniqueness registry for replay defense and a file
+   drop-box for transport. Accepting them as drafted should either adopt those
+   substitutes on the record or name the follow-up ADRs that will carry the
+   deferred concerns.
+2. **Key validity.** The ed25519 CHECK validates 64-hex shape, not curve
+   validity; registration must parse the key with the chosen library and refuse
+   garbage.
+3. **Rotation.** Revoke-and-re-register forces URN churn; attribution continuity
+   across rotation is explicitly punted. Say so in the acceptance or fix the
+   shape first. Note that Athena has no rotation precedent to copy either: both
+   of its shared secrets are one-shot-at-creation with no rotation command.
+4. **Trust-on-first-registration.** The registry is only as strong as the
+   operator's manual key delivery; the runbook is part of the boundary.
+5. **The sidecar/envelope format** for the signature is unspecified in both ADRs
+   and will need its own strict parser with hostile-input tests.
+6. **Minerva's first crypto runtime dependency** (ed25519 verification) needs
+   naming, pinning, and a static-gate allowlist decision — a review-gated
+   surface. The same decision falls on Athena, where `cryptography` is currently
+   only an implicit extra.
+7. **Two fleet doctrines that read as contradictory (new, surfaced 2026-08-09).**
+   Athena records a deliberate decision *not* to sign its own events:
+   `core/activity_chain.py:11-14` — "minus the signatures, on purpose… Athena's
+   server holds every credential, so a server-side signature would attest
+   nothing a hash does not." ADR 0009's entire case for ed25519 over Athena's
+   HMAC idiom is the opposite premise: that the verifier must not be able to
+   forge, so that an auditor can check attribution independently. These are
+   probably reconcilable — signing *across* a system boundary to a verifier that
+   does not hold your credential is a genuinely different proposition from
+   signing your own log for yourself — but the distinction is currently unstated
+   on both sides. D-2's acceptance should make it explicitly, so the fleet does
+   not carry two written doctrines that appear to contradict each other.
 
-This plan does not begin D-2, and Phase 0E must not either.
+This plan does not begin D-2, and no phase of it may.
 
 ## 5. Phase 0E — ordered implementation issues (ungated)
 
@@ -316,7 +377,7 @@ requires (R12: entropy is the enemy).
 | D-9 | Finding retraction | Decided, delivered, verified |
 | D-10 | CLI-only correction boundary | Decided 2026-07-30, implemented |
 | D-11 | Staged restore migration | Decided 2026-07-30, implemented |
-| **D-2** | **Athena principals + adapter** | **Proposed (ADRs 0009/0010); section 4 is the acceptance checklist** |
+| **D-2** | **Athena principals + adapter** | **Proposed (ADRs 0009/0010). Athena-side readiness verified ABSENT 2026-08-09 — plan 2's hold condition stands. Section 4 is the acceptance checklist** |
 | D-3 | Icarus artifacts | Unopened; follows D-2's shape |
 | D-4 | Remote/multi-user | Unopened; stays banned |
 | D-5 | MCP | Unopened; blocked on D-2 auth |
