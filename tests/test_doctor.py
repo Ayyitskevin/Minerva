@@ -531,18 +531,19 @@ def _adopt_inference(
     evidence: EvidenceCard,
     *,
     statement: str = "The bounded evidence supports a cautious adopted inference.",
+    candidate_index: int = 0,
 ) -> str:
     assistance = AssistanceService(lab.database, clock=fixed_clock, id_factory=lab.ids)
     preview = assistance.preview_finding_candidates(
         claim_id=seed.claim.id,
         selection=ProviderSelection(ModelProvider.OPENAI, "test-model-1", "test"),
-        max_candidates=2,
+        max_candidates=3,
         max_output_tokens=512,
     )
     adoption = AdoptionService(lab.database, clock=fixed_clock, id_factory=lab.ids)
     inference = adoption.adopt_inference(
         preview=preview,
-        candidate_index=0,
+        candidate_index=candidate_index,
         candidate=FindingCandidate(
             statement=statement,
             statement_kind=StatementKind.AGENT_INFERENCE,
@@ -640,6 +641,182 @@ def test_deep_doctor_detects_withdrawn_evidence_behind_an_asserted_inference(lab
 
     assert not report.ok
     assert not checks["inference_integrity"].ok
+
+
+def _tamper_under_restored_triggers(
+    lab: Lab,
+    *,
+    tables: tuple[str, ...],
+    deletions: tuple[tuple[str, tuple[str, ...]], ...],
+) -> None:
+    """Delete append-only rows and put the guarding triggers back byte-identically.
+
+    This is the tamper the trigger fingerprint cannot see: the guards are
+    restored exactly as the packaged migration defines them, so
+    `append_only_triggers` stays green and only audit reconciliation is left to
+    report the missing row.
+    """
+
+    with lab.database.transaction() as connection:
+        definitions: list[str] = []
+        for table in tables:
+            definitions.extend(
+                str(row["sql"])
+                for row in connection.execute(
+                    "SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = ?",
+                    (table,),
+                )
+            )
+            connection.execute(f"DROP TRIGGER {table}_no_update")
+            connection.execute(f"DROP TRIGGER {table}_no_delete")
+        for statement, parameters in deletions:
+            connection.execute(statement, parameters)
+        for definition in definitions:
+            connection.execute(definition)
+
+    assert _checks_by_name(run_doctor(lab.database))["append_only_triggers"].ok
+
+
+def _seed_inference_lifecycle(lab: Lab) -> tuple[str, str, str, str]:
+    """Adopt three inferences and leave one plain, one retracted, one promoted."""
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    adoption = AdoptionService(lab.database, clock=fixed_clock, id_factory=lab.ids)
+    plain = _adopt_inference(lab, seed, evidence)
+    retracted = _adopt_inference(
+        lab,
+        seed,
+        evidence,
+        statement="An inference the operator later retracted.",
+        candidate_index=1,
+    )
+    adoption.retract_inference(
+        inference_id=retracted,
+        reason="Superseded by a corrected analysis.",
+        identity=lab.identity,
+    )
+    promoted = _adopt_inference(
+        lab,
+        seed,
+        evidence,
+        statement="An inference the operator later promoted.",
+        candidate_index=2,
+    )
+    adoption.promote_inference_to_finding(
+        inference_id=promoted,
+        status=FindingStatus.SUPPORTED,
+        identity=lab.identity,
+    )
+    return seed.mission.id, plain, retracted, promoted
+
+
+def test_deep_doctor_reconciles_adopted_retracted_and_promoted_inferences(lab: Lab) -> None:
+    _seed_inference_lifecycle(lab)
+
+    report = run_doctor(lab.database, deep=True)
+    checks = _checks_by_name(report)
+
+    assert report.ok
+    assert checks["material_audit_integrity"].ok
+
+
+def test_deep_doctor_detects_a_deleted_inference_retraction_under_restored_triggers(
+    lab: Lab,
+) -> None:
+    """Deleting an inference retraction must not silently resurrect the inference.
+
+    The retraction row is what removes an adopted inference from the Markdown
+    brief. Deleting it leaves the `assist.inference.retracted` event dangling
+    and returns model-drafted text to the brief as an asserted statement — the
+    laundering ADR 0008 exists to prevent, surviving on the surface whose job
+    is to catch it.
+    """
+
+    mission_id, _plain, retracted, _promoted = _seed_inference_lifecycle(lab)
+    assert run_doctor(lab.database, deep=True).ok
+    before = lab.synthesis.build_brief(mission_id).markdown.decode("utf-8")
+
+    _tamper_under_restored_triggers(
+        lab,
+        tables=("agent_inference_retractions",),
+        deletions=(
+            ("DELETE FROM agent_inference_retractions WHERE inference_id = ?", (retracted,)),
+        ),
+    )
+
+    report = run_doctor(lab.database, deep=True)
+    checks = _checks_by_name(report)
+    after = lab.synthesis.build_brief(mission_id).markdown.decode("utf-8")
+
+    assert retracted not in before
+    assert retracted in after, "the tamper must really resurrect the inference"
+    assert not report.ok
+    assert checks["append_only_triggers"].ok
+    assert not checks["material_audit_integrity"].ok
+
+
+def test_deep_doctor_detects_a_deleted_inference_row_under_restored_triggers(lab: Lab) -> None:
+    """An adopted inference deleted out from under its adoption event is tampering."""
+
+    _mission_id, plain, _retracted, _promoted = _seed_inference_lifecycle(lab)
+
+    _tamper_under_restored_triggers(
+        lab,
+        tables=("agent_inferences", "agent_inference_citations"),
+        deletions=(
+            ("DELETE FROM agent_inference_citations WHERE inference_id = ?", (plain,)),
+            ("DELETE FROM agent_inferences WHERE id = ?", (plain,)),
+        ),
+    )
+
+    report = run_doctor(lab.database, deep=True)
+    checks = _checks_by_name(report)
+
+    assert not report.ok
+    assert checks["append_only_triggers"].ok
+    assert not checks["material_audit_integrity"].ok
+
+
+def test_deep_doctor_detects_a_deleted_inference_promotion_under_restored_triggers(
+    lab: Lab,
+) -> None:
+    """A deleted promotion link leaves the human finding without its recorded provenance."""
+
+    _mission_id, _plain, _retracted, promoted = _seed_inference_lifecycle(lab)
+
+    _tamper_under_restored_triggers(
+        lab,
+        tables=("agent_inference_promotions",),
+        deletions=(("DELETE FROM agent_inference_promotions WHERE inference_id = ?", (promoted,)),),
+    )
+
+    report = run_doctor(lab.database, deep=True)
+    checks = _checks_by_name(report)
+
+    assert not report.ok
+    assert checks["append_only_triggers"].ok
+    assert not checks["material_audit_integrity"].ok
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    ["assist.inference.adopted", "assist.inference.retracted", "assist.inference.promoted"],
+)
+def test_deep_doctor_detects_a_deleted_inference_audit_event(lab: Lab, event_type: str) -> None:
+    """The other direction: an inference row whose audit event was removed."""
+
+    _seed_inference_lifecycle(lab)
+    with lab.database.transaction() as connection:
+        connection.execute("DROP TRIGGER audit_no_delete")
+        connection.execute("DELETE FROM audit_events WHERE event_type = ?", (event_type,))
+
+    report = run_doctor(lab.database, deep=True)
+    checks = _checks_by_name(report)
+
+    assert not report.ok
+    assert checks["audit_integrity"].ok
+    assert not checks["material_audit_integrity"].ok
 
 
 def test_deep_doctor_skips_retracted_inferences_symmetric_with_findings(lab: Lab) -> None:
