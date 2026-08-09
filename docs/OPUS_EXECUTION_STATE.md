@@ -96,9 +96,10 @@ Recorded here rather than edited in place, per this file's own rule.
   eleven: `inference_integrity` joined them in PR #31.
 - **Counts are historical snapshots, again.** The "635 tests, 177
   security-marked, 90.18%" correction above was true after slice 7. At
-  this commit the suite collects **772 tests, 224 security-marked, 90.50%
-  branch coverage** against the 88% floor; the Phase 0E final figure is
-  in the PR's gate table.
+  the end of Phase 0E the suite collects **769 tests, 217 security-marked,
+  90.55% branch coverage** against the 88% floor. (The count fell by three
+  and the security-marked count by seven when the unwired `CsrfProtector`
+  and its tests were deleted; see plan 3 issue 6.)
 - **The frontmatter is stale by design, not by drift.** `plan:` still
   names plan 2 and `base_commit:` the merge of PR #14, which is what this
   file's execution phase actually ran against. Phase 0E runs against

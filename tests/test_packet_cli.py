@@ -268,7 +268,7 @@ def test_packet_reader_rejects_content_change_between_pinned_reads(
     _failure(capsys, "verify", _GOLDEN, "packet_input_changed")
 
 
-@pytest.mark.parametrize("token", [b"NaN", b"Infinity", b"-Infinity"])
+@pytest.mark.parametrize("token", [b"NaN", b"Infinity", b"-Infinity", b"1e400", b"-1e400"])
 def test_packet_command_rejects_each_nonstandard_json_number(
     token: bytes,
     tmp_path: Path,

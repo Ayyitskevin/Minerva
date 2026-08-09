@@ -57,6 +57,15 @@ release here is a tag plus this record.
   backups are not refused, and retracting the inference remains the operator's
   judgment rather than something Minerva does on their behalf. A missing,
   tampered, or wrong-claim citation still fails the check.
+- A JSON number that *overflows* to infinity (`1e400`) in a research packet or
+  request now reports `packet_nonstandard_number` / `request_nonstandard_number`
+  like `Infinity` does, instead of the generic malformed-document code. Both
+  were always rejected; only one said why.
+- A claim carrying more active evidence than a request may enumerate refuses
+  with "The claim has more active evidence than a request may enumerate."
+  instead of "The active evidence selection has changed." Nothing had changed in
+  that case, and the old wording sent the operator looking for drift. The
+  refusal, its class, and its code are unchanged.
 
 ### Security
 
