@@ -413,8 +413,11 @@ visible wherever findings are read: `mission show`, `claim show`,
 `GET /api/v1/missions/{id}/findings`, the web review page, and their own clearly
 labeled section of the Markdown brief, which retracted inferences leave exactly as
 retracted findings do. The canonical `minerva.research-brief.v2` JSON is unchanged by
-adoption. `doctor --deep` verifies inference citation integrity symmetric with
-findings.
+adoption. `doctor --deep` verifies inference citation integrity: a citation that is
+missing, tampered with, or scoped to another claim fails the check. Evidence withdrawn
+*after* adoption is reported as state rather than corruption — the brief marks that
+citation `WITHDRAWN`, `doctor` stays green, and retracting the inference remains the
+operator's judgment, never Minerva's.
 
 ## Web and API
 

@@ -738,6 +738,34 @@ def test_markdown_brief_labels_inferences_without_changing_the_v2_bytes(lab: Lab
     assert "_No agent inferences adopted._" in before.markdown.decode("utf-8")
 
 
+def test_withdrawn_inference_citations_are_marked_inline_like_the_evidence_ledger(
+    lab: Lab,
+) -> None:
+    """A machine inference must not out-assert a human finding on the same surface.
+
+    Evidence withdrawn after adoption used to render exactly like active
+    evidence in this section, while the ledger and the citation-resolution
+    sections both marked it. Retraction remains the operator's call; the brief's
+    job is to stop presenting the citation as if it still stood.
+    """
+
+    preview, seed, support = _seed_preview(lab)
+    _adopt(lab, preview, _candidate(support))
+    active = lab.synthesis.build_brief(seed.mission.id).markdown.decode("utf-8")
+    assert f"- Citations: **[{support.id}]**\n" in active
+
+    lab.evidence.withdraw_evidence(
+        evidence_id=support.id,
+        reason="The observation was measured incorrectly.",
+        identity=lab.identity,
+    )
+    withdrawn = lab.synthesis.build_brief(seed.mission.id).markdown.decode("utf-8")
+
+    assert f"- Citations: **[{support.id}]** **WITHDRAWN**" in withdrawn
+    # The same marker the citation-resolution section has always used.
+    assert f"### **[{support.id}]** **WITHDRAWN**" in withdrawn
+
+
 def test_retracted_inferences_leave_the_markdown_brief(lab: Lab) -> None:
     """Retraction follows the finding precedent: absent from the brief, not flagged."""
 

@@ -1470,9 +1470,18 @@ def _assemble_brief(
                 (str(row["id"]),),
             )
         ]
+        # Withdrawal state travels with each citation. Evidence may be withdrawn
+        # after adoption -- an honest correction, not a reason to auto-retract
+        # the inference -- and a machine inference must not out-assert a human
+        # finding by rendering a withdrawn citation as if it were active.
+        inference_citations: list[dict[str, Any]] = []
         for evidence_id in evidence_ids:
-            if verified_by_id.get(evidence_id) is None:
+            verified = verified_by_id.get(evidence_id)
+            if verified is None:
                 raise IntegrityError("citation_tampered", "Stored citation integrity failed.")
+            inference_citations.append(
+                {"citation_id": evidence_id, "withdrawn": verified.withdrawn}
+            )
         promoted_finding_id = row["promoted_finding_id"]
         agent_inferences.append(
             {
@@ -1482,7 +1491,7 @@ def _assemble_brief(
                 "uncertainty": str(row["uncertainty"]),
                 "provider": str(row["provider"]),
                 "model": str(row["model"]),
-                "citation_ids": evidence_ids,
+                "citations": inference_citations,
                 "created_at": str(row["created_at"]),
                 "promoted_finding_id": (
                     str(promoted_finding_id) if promoted_finding_id is not None else None
@@ -1683,7 +1692,10 @@ def _render_markdown(
     if not agent_inferences:
         lines.append("_No agent inferences adopted._")
     for inference in agent_inferences:
-        citation_text = " ".join(f"**[{item}]**" for item in inference["citation_ids"])
+        citation_text = " ".join(
+            f"**[{item['citation_id']}]**" + (" **WITHDRAWN**" if item["withdrawn"] else "")
+            for item in inference["citations"]
+        )
         entry = [
             f"### Agent inference **{inference['id']}**",
             "",

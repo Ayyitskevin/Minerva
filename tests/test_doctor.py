@@ -16,6 +16,7 @@ from minerva.assist.models import FindingCandidate, ModelProvider, ProviderSelec
 from minerva.assist.service import AssistanceService
 from minerva.core.db import Database
 from minerva.core.doctor import DoctorCheck, DoctorReport, run_doctor
+from minerva.core.operations import OperationsService
 from minerva.evidence.models import EvidenceCard, EvidenceStance
 from minerva.research.models import FindingStatus, StatementKind
 
@@ -627,7 +628,19 @@ def test_deep_doctor_detects_a_wrong_claim_inference_citation_after_trigger_drop
     assert not checks["inference_integrity"].ok
 
 
-def test_deep_doctor_detects_withdrawn_evidence_behind_an_asserted_inference(lab: Lab) -> None:
+def test_evidence_withdrawn_after_adoption_is_state_not_corruption(
+    lab: Lab, tmp_path: Path
+) -> None:
+    """Withdrawing evidence an older inference cites is honest use, not tampering.
+
+    Both verbs are documented and first-class, and D-9's rule is that Minerva
+    never auto-retracts on the operator's behalf. Reading the sequence as a
+    citation-policy failure produced a clean-looking export, a deep-doctor
+    failure, and a refused backup, with no guidance toward the actual remedy
+    (retract the inference). The withdrawal is now visible state: marked on the
+    reading surface, reported by doctor, and no obstacle to a backup.
+    """
+
     seed = lab.seed_claim()
     evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
     _adopt_inference(lab, seed, evidence)
@@ -636,6 +649,34 @@ def test_deep_doctor_detects_withdrawn_evidence_behind_an_asserted_inference(lab
         reason="The observation was measured incorrectly.",
         identity=lab.identity,
     )
+
+    report = run_doctor(lab.database, deep=True)
+    checks = _checks_by_name(report)
+    target = tmp_path / "backup.db"
+    OperationsService(lab.database).backup(target=target, identity=lab.identity)
+
+    assert report.ok
+    assert checks["inference_integrity"].ok
+    assert checks["inference_integrity"].message == "verified 1 agent inference(s)"
+    assert target.exists()
+    markdown = lab.synthesis.build_brief(seed.mission.id).markdown.decode("utf-8")
+    section = markdown[markdown.index("## Agent inferences") :]
+    section = section[: section.index("\n## ")]
+    assert f"**[{evidence.id}]** **WITHDRAWN**" in section
+
+
+def test_deep_doctor_still_rejects_a_tampered_inference_citation(lab: Lab) -> None:
+    """Allowing withdrawal must not blunt the check: tampered bytes still fail."""
+
+    seed = lab.seed_claim()
+    evidence = lab.cite(seed, "Evidence supports the claim.", EvidenceStance.SUPPORTS)
+    _adopt_inference(lab, seed, evidence)
+    with lab.database.transaction() as connection:
+        connection.execute("DROP TRIGGER evidence_no_update")
+        connection.execute(
+            "UPDATE evidence_cards SET quote = ? WHERE id = ?",
+            ("forged quote", evidence.id),
+        )
 
     report = run_doctor(lab.database, deep=True)
     checks = _checks_by_name(report)
