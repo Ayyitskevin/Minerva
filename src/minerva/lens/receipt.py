@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import re
+import sqlite3
 import unicodedata
 from dataclasses import fields
 from hashlib import sha256
@@ -179,16 +180,54 @@ def replay_lens_receipt(
 ) -> LensReplayResult:
     """Reproduce a verified request against one current local DB snapshot."""
 
-    verified = verify_lens_receipt(receipt)
+    return _replay_verified_receipt(
+        service,
+        verify_lens_receipt(receipt),
+        connection=None,
+    )
+
+
+def _replay_lens_receipt_in_snapshot(
+    service: LensService,
+    receipt: LensSearchResult,
+    *,
+    connection: sqlite3.Connection,
+) -> LensReplayResult:
+    """Reproduce a verified request inside a caller-owned read snapshot."""
+
+    return _replay_verified_receipt(
+        service,
+        verify_lens_receipt(receipt),
+        connection=connection,
+    )
+
+
+def _replay_verified_receipt(
+    service: LensService,
+    verified: LensSearchResult,
+    *,
+    connection: sqlite3.Connection | None,
+) -> LensReplayResult:
     try:
-        actual = service._search_normalized(
-            mission_id=verified.mission_id,
-            normalized_query=verified.normalized_query,
-            query_terms=verified.query_terms,
-            source_ids=verified.corpus_filter.source_ids,
-            snapshot_ids=verified.corpus_filter.snapshot_ids,
-            bounds=verified.bounds,
-        )
+        if connection is None:
+            actual = service._search_normalized(
+                mission_id=verified.mission_id,
+                normalized_query=verified.normalized_query,
+                query_terms=verified.query_terms,
+                source_ids=verified.corpus_filter.source_ids,
+                snapshot_ids=verified.corpus_filter.snapshot_ids,
+                bounds=verified.bounds,
+            )
+        else:
+            actual = service._search_normalized_in_snapshot(
+                mission_id=verified.mission_id,
+                normalized_query=verified.normalized_query,
+                query_terms=verified.query_terms,
+                source_ids=verified.corpus_filter.source_ids,
+                snapshot_ids=verified.corpus_filter.snapshot_ids,
+                bounds=verified.bounds,
+                connection=connection,
+            )
     except IntegrityError as error:
         if error.code == "lens_corpus_filter_invalid":
             raise IntegrityError(

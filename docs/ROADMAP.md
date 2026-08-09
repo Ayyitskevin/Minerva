@@ -285,37 +285,79 @@
   network invocation, and zero research/audit mutation. They make no external quality
   or authenticity claim.
 
+## Review Dossier v1: atomic local review composition
+
+- The repository owner's 2026-08-08 continuation instruction narrowly accepts the
+  next dependency only: local `minerva dossier build` and
+  `minerva.dossier.ReviewDossierService.build_dossier(...)`. It does not accept a
+  persisted/canonical dossier artifact, REST/web or agent-facing surface, mutation
+  control, capability claim, or any later roadmap item by implication.
+- `minerva.review-dossier.v1` uses algorithm
+  `current-snapshot-review-composition` version `"1"` and scope
+  `mission_claim_with_captured_lens_v1`. Its five fixed components are the complete
+  mission Queue, the exact focal Review retained by that Queue build, focal Claim
+  Lineage, the verified operator-captured Lens search, and exact current-database Lens
+  replay.
+- The existing bounded captured-receipt reader and strict verifier run before database
+  open. The receipt must name the explicit dossier mission. One query-only SQLite
+  snapshot and one cumulative VM guard then own Lens reproduction, Queue/Review, and
+  Lineage. Package-private connection seams reuse existing component services rather
+  than creating parallel query or validation paths.
+- All structural cross-checks are mandatory: component mission/question scope; exactly
+  one focal queue summary; Queue/Review receipt and cue equality; Review/Lineage claim,
+  current-status, evidence, and withdrawal agreement; affected claim-owned
+  finding/inference payload, citation, retraction, promotion, and provenance agreement;
+  any shared Lens/Lineage snapshot identity; and exact Lens replay. The affected-record
+  check is limited to the subset reported by Review; unaffected owned Lineage records
+  need not appear in Review. A disjoint Lens/Lineage snapshot set is allowed and makes
+  no relevance claim.
+- Queue, Lineage, Lens, component-output, cumulative SQLite, and final dossier-output
+  bounds remain explicit. Dossier success is complete and untruncated, while the
+  embedded Lens receipt may independently retain its explicit bounded truncation and
+  omissions. Work fields record component and output counts.
+- Existing component receipts remain intact. A fixed ordered component-set digest and
+  whole-dossier SHA-256 bind compact sorted-key UTF-8 JSON without a generated ID or
+  observation time. The replay report is bound by a digest of its complete canonical
+  representation. Hashes establish self-consistency, not identity, signature,
+  authority, approval, historical freshness, truth, quality, or disclosure permission.
+- The dossier is local composition only. It creates no durable artifact, identity,
+  run, audit event, task/queue state, evidence, finding, inference, status, correction,
+  export, file, packet, provider call, network activity, protocol, migration, index, or
+  capability. Lens candidates remain unassessed non-evidence; queue items remain
+  non-actionable cues; Lineage edges remain structural provenance.
+- Regression, evaluation, and installed-wheel coverage bind deterministic output,
+  hostile pre-open input refusal, current Lens equality, cross-component reconciliation,
+  multibyte citation custody, mission/claim isolation, bounded complete-or-refuse
+  behavior, non-invocation, and zero research/audit mutation. They make no truth,
+  relevance, priority, actionability, or research-quality claim.
+
 ## Next dependency-ordered capabilities
 
-Lens receipt verification and current-database reproduction are now the accepted
-completed dependency. The following remaining order is proposed, not implementation
-authorization. Each future slice needs an explicit owner decision, including the
-schema-free local read-only item. No migration, trust-model, external-principal,
-cryptographic-identity, adapter, external/agent-facing API, packet-version, or broad
-D-6 gate is open.
+Review Dossier v1 is now the accepted completed dependency. The following remaining
+order is proposed, not implementation authorization. Each future slice needs an
+explicit owner decision. No migration, trust-model, external-principal,
+cryptographic-identity, adapter, external/agent-facing API, packet-version, canonical
+standards exporter, or broad D-6 gate is open.
 
-1. **Local review dossier:** compose the gap, graph, queue, and Lens provenance views
-   for the existing trusted-operator surface. No new external/agent-facing API,
-   mutation control, or capability-manifest claim follows from this item.
-2. **PROV-O/RO-Crate decision packet (design only):** prove a lossless mapping for
+1. **PROV-O/RO-Crate decision packet (design only):** prove a lossless mapping for
    exact spans, stance, corrections, inference labels, activities, and audit lineage;
    decide canonicalization, context pinning, and source-byte disclosure before any new
    canonical exporter is accepted.
-3. **Explicit Lens-to-evidence bridge (owner-gated):** if approved, require a
+2. **Explicit Lens-to-evidence bridge (owner-gated):** if approved, require a
    verified receipt, selected candidate, claim, stance, and exact digest confirmation,
    then reuse normal evidence validation/audit. It may never make search itself
    mutating or perform autonomous/bulk adoption.
-4. **Authenticated Athena seam (gate D-2):** first reverify the counterpart, then
+3. **Authenticated Athena seam (gate D-2):** first reverify the counterpart, then
    separately decide ADRs 0009/0010, the external-principal migration, asymmetric
    verification dependency, revocation, replay, and transport. No external research
    mutation is implied.
-5. **Icarus artifact exchange (gate D-3 after D-2):** requires its own canonical
+4. **Icarus artifact exchange (gate D-3 after D-2):** requires its own canonical
    request/result and import-before-evidence decision, likely including a migration;
    Minerva still performs no experiment or automatic adoption.
-6. **Read-only agent protocol (gate D-5 after D-2/D-3):** MCP or any new agent-facing
+5. **Read-only agent protocol (gate D-5 after D-2/D-3):** MCP or any new agent-facing
    API starts with authenticated, bounded read tools backed by existing services and
    exposes no correction, adoption, assistance, publication, or execution verbs.
-7. **Packet v3 (separate decision after a real consumer exists):** define the exact
+6. **Packet v3 (separate decision after a real consumer exists):** define the exact
    correction/inference delta, independent verifier, backward compatibility, and
    hostile-input limits without changing frozen v2 bytes by accident.
 

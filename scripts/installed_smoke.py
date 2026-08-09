@@ -270,6 +270,8 @@ def smoke_wheel(dist_directory: Path) -> Path:
             "from importlib.metadata import version; "
             "from pathlib import Path; "
             "import minerva; "
+            "from minerva.dossier import (ReviewDossierBounds, ReviewDossierResult, "
+            "ReviewDossierService); "
             "from minerva.integrations.lens_receipt_file import load_lens_receipt; "
             "from minerva.lens import (LensReceiptVerificationResult, LensReplayResult, "
             "LensService, lens_receipt_verification_result, verify_lens_receipt); "
@@ -564,6 +566,147 @@ if unexpected:
         if len(demo_claim_ids) != len(claim_ids):
             raise SmokeError("installed demo returned an invalid claim identifier")
         claim_id = demo_claim_ids[0]
+
+        dossier_state_before = _installed_database_state(
+            python,
+            demo_database,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        dossier_arguments = [
+            str(minerva_command),
+            "dossier",
+            "build",
+            "--db",
+            str(demo_database),
+            "--mission",
+            mission_id,
+            "--claim",
+            claim_id,
+            "--lens-input",
+            str(lens_receipt_path),
+        ]
+        dossier_output = _run_checked(
+            dossier_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        dossier_second_output = _run_checked(
+            dossier_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if dossier_output != dossier_second_output:
+            raise SmokeError("installed Review Dossier is not byte-deterministic")
+        dossier_state_after = _installed_database_state(
+            python,
+            demo_database,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if dossier_state_before != dossier_state_after:
+            raise SmokeError("installed Review Dossier changed database state")
+
+        dossier_envelope = _json_object(
+            dossier_output,
+            label="installed Review Dossier",
+        )
+        dossier = dossier_envelope.get("review_dossier")
+        if not isinstance(dossier, dict):
+            raise SmokeError("installed Review Dossier omitted its receipt")
+        dossier_components = dossier.get("component_receipts")
+        dossier_crosschecks = dossier.get("cross_checks")
+        dossier_queue = dossier.get("mission_research_queue")
+        dossier_review = dossier.get("claim_review")
+        dossier_lineage = dossier.get("claim_lineage")
+        dossier_lens = dossier.get("lens_search")
+        dossier_replay = dossier.get("lens_replay")
+        dossier_work = dossier.get("work")
+        dossier_boundary = dossier.get("semantic_boundary")
+        if (
+            dossier.get("schema_version") != "minerva.review-dossier.v1"
+            or dossier.get("kind") != "review_dossier"
+            or dossier.get("algorithm") != "current-snapshot-review-composition"
+            or dossier.get("algorithm_version") != "1"
+            or dossier.get("scope") != "mission_claim_with_captured_lens_v1"
+            or dossier.get("completion_policy") != "complete_or_refuse"
+            or dossier.get("complete") is not True
+            or dossier.get("truncated") is not False
+            or dossier.get("lens_retrieval_truncated") != lens.get("truncated")
+            or dossier.get("mission_id") != mission_id
+            or dossier.get("claim_id") != claim_id
+            or dossier.get("component_order")
+            != [
+                "mission_research_queue",
+                "claim_review",
+                "claim_lineage",
+                "lens_search",
+                "lens_replay",
+            ]
+            or not isinstance(dossier_components, list)
+            or len(dossier_components) != 5
+            or not all(isinstance(item, dict) for item in dossier_components)
+            or not isinstance(dossier_crosschecks, dict)
+            or not dossier_crosschecks
+            or not all(value is True for value in dossier_crosschecks.values())
+            or not isinstance(dossier_queue, dict)
+            or not isinstance(dossier_review, dict)
+            or not isinstance(dossier_lineage, dict)
+            or not isinstance(dossier_lens, dict)
+            or not isinstance(dossier_replay, dict)
+            or not isinstance(dossier_work, dict)
+            or not isinstance(dossier_boundary, dict)
+            or dossier_lens != lens
+            or dossier_replay.get("status") != "reproduced"
+            or dossier_replay.get("exact_receipt_match") is not True
+            or dossier_replay.get("current_database_snapshot_matched") is not True
+            or dossier_replay.get("historical_corpus_replay") is not False
+            or dossier_work.get("component_count") != len(dossier_components)
+            or dossier_work.get("canonical_output_bytes") != len(_canonical_bytes(dossier))
+            or dossier_boundary.get("read_only") is not True
+            or dossier_boundary.get("composition_only") is not True
+            or dossier_boundary.get("lens_candidates_are_evidence") is not False
+            or dossier_boundary.get("creates_or_changes_research_state") is not False
+            or dossier_boundary.get("invokes_model_provider") is not False
+            or dossier_boundary.get("invokes_network") is not False
+            or dossier_boundary.get("requires_separate_human_action") is not True
+        ):
+            raise SmokeError("installed Review Dossier receipt is invalid")
+
+        nested_digests: list[object] = []
+        for component, receipt_field in (
+            (dossier_queue, "queue_receipt_sha256"),
+            (dossier_review, "review_receipt_sha256"),
+            (dossier_lineage, "lineage_receipt_sha256"),
+            (dossier_lens, "retrieval_receipt_sha256"),
+        ):
+            component_payload = dict(component)
+            component_digest = component_payload.pop(receipt_field, None)
+            if component_digest != sha256(_canonical_bytes(component_payload)).hexdigest():
+                raise SmokeError("installed Review Dossier nested receipt digest is invalid")
+            nested_digests.append(component_digest)
+        nested_digests.append(sha256(_canonical_bytes(dossier_replay)).hexdigest())
+        if [item.get("receipt_sha256") for item in dossier_components] != nested_digests:
+            raise SmokeError("installed Review Dossier component links are invalid")
+
+        component_frame = {
+            "schema_version": "minerva.review-dossier-components.v1",
+            "algorithm": dossier["algorithm"],
+            "algorithm_version": dossier["algorithm_version"],
+            "scope": dossier["scope"],
+            "mission_id": dossier["mission_id"],
+            "claim_id": dossier["claim_id"],
+            "components": dossier_components,
+        }
+        if (
+            dossier.get("component_set_sha256")
+            != sha256(_canonical_bytes(component_frame)).hexdigest()
+        ):
+            raise SmokeError("installed Review Dossier component-set digest is invalid")
+        dossier_payload = dict(dossier)
+        dossier_digest = dossier_payload.pop("dossier_receipt_sha256", None)
+        if dossier_digest != sha256(_canonical_bytes(dossier_payload)).hexdigest():
+            raise SmokeError("installed Review Dossier receipt digest is invalid")
 
         queue_state_before = _installed_database_state(
             python,

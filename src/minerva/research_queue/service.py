@@ -111,8 +111,42 @@ class MissionResearchQueueService:
         mission_id: str,
         bounds: MissionResearchQueueBounds = DEFAULT_MISSION_RESEARCH_QUEUE_BOUNDS,
     ) -> MissionResearchQueueResult:
+        result, _focal_review = self._build_queue(
+            mission_id=mission_id,
+            bounds=bounds,
+            connection=None,
+            focal_claim_id=None,
+        )
+        return result
+
+    def _build_queue_in_snapshot(
+        self,
+        *,
+        mission_id: str,
+        bounds: MissionResearchQueueBounds,
+        connection: sqlite3.Connection,
+        focal_claim_id: str,
+    ) -> tuple[MissionResearchQueueResult, ClaimReviewResult | None]:
+        """Build a queue in a caller-owned read snapshot and retain one review."""
+
+        return self._build_queue(
+            mission_id=mission_id,
+            bounds=bounds,
+            connection=connection,
+            focal_claim_id=focal_claim_id,
+        )
+
+    def _build_queue(
+        self,
+        *,
+        mission_id: str,
+        bounds: MissionResearchQueueBounds,
+        connection: sqlite3.Connection | None,
+        focal_claim_id: str | None,
+    ) -> tuple[MissionResearchQueueResult, ClaimReviewResult | None]:
         safe_bounds = _validate_bounds(bounds)
         _validate_mission_id(mission_id)
+        manages_connection = connection is None
         research = ResearchService(self.database)
         review_service = ClaimReviewService(self.database)
         review_bounds = ClaimReviewBounds(
@@ -132,11 +166,16 @@ class MissionResearchQueueService:
         affected_finding_count = 0
         affected_inference_count = 0
         relationship_count = 0
+        focal_review: ClaimReviewResult | None = None
 
         try:
-            with self.database.read() as connection:
+            with _queue_connection(self.database, connection) as connection:
                 connection.execute("PRAGMA query_only = ON")
-                with _bounded_query_work(connection, safe_bounds.max_sqlite_vm_steps):
+                with _bounded_query_work(
+                    connection,
+                    safe_bounds.max_sqlite_vm_steps,
+                    managed=manages_connection,
+                ):
                     mission = research.get_mission(mission_id, connection=connection)
                     claim_rows = list(
                         connection.execute(
@@ -230,6 +269,8 @@ class MissionResearchQueueService:
                             current_status_version=current_status_version,
                             expected_bounds=review_bounds,
                         )
+                        if claim_id == focal_claim_id:
+                            focal_review = review
 
                         evidence_card_count = len(verified_citation_cache)
                         affected_finding_count += review.work.affected_finding_count
@@ -372,9 +413,12 @@ class MissionResearchQueueService:
         result = _finalize_output_size(provisional)
         if result.work.canonical_output_bytes > safe_bounds.max_output_bytes:
             _raise_work_limit()
-        return replace(
-            result,
-            queue_receipt_sha256=_queue_receipt_digest(result),
+        return (
+            replace(
+                result,
+                queue_receipt_sha256=_queue_receipt_digest(result),
+            ),
+            focal_review,
         )
 
 
@@ -528,10 +572,27 @@ def _enforce_aggregate_work(
 
 
 @contextmanager
+def _queue_connection(
+    database: Database,
+    connection: sqlite3.Connection | None,
+) -> Iterator[sqlite3.Connection]:
+    if connection is not None:
+        yield connection
+        return
+    with database.read() as opened:
+        yield opened
+
+
+@contextmanager
 def _bounded_query_work(
     connection: sqlite3.Connection,
     max_sqlite_vm_steps: int,
+    *,
+    managed: bool = True,
 ) -> Iterator[None]:
+    if not managed:
+        yield
+        return
     callbacks_remaining = max_sqlite_vm_steps // _QUERY_PROGRESS_GRANULARITY
     exhausted = False
 

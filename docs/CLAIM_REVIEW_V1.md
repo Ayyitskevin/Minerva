@@ -258,12 +258,14 @@ permission to disclose research.
 
 The first 2026-08-08 continuation directive authorized Claim Review itself. Later
 continuations separately accepted Claim Lineage Graph v1, Mission Research Queue v1,
-and current-database Lens receipt verification/replay. Queue v1 aggregates this exact
-pinned cue taxonomy as a deterministic mission-wide structural review index; it does
-not change Claim Review, and an emitted cue does not become unresolved work, a
-recommended action, priority, assignment, or completion state. The remaining
-dependency-ordered plan proposes a local review dossier. Recording that plan does not
-authorize its implementation.
+current-database Lens receipt verification/replay, and Review Dossier v1. Queue v1
+aggregates this exact pinned cue taxonomy as a deterministic mission-wide structural
+review index; it does not change Claim Review, and an emitted cue does not become
+unresolved work, a recommended action, priority, assignment, or completion state.
+Dossier v1 retains the focal Review already derived by Queue and cross-checks it
+against focal Lineage in the same read snapshot; it adds no new review policy or
+semantic promotion. The next proposed dependency is a PROV-O/RO-Crate compatibility
+decision packet, design only.
 
 A persisted assign/defer/resolve queue, schema migration, external principal,
 cryptographic identity, Athena/Icarus adapter, MCP or other external/agent-facing API,

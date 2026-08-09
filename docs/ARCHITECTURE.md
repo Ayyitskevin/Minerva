@@ -53,6 +53,13 @@ mission queue CLI --> complete Claim Review cue index --> one query-only SQLite 
                                                                |
                                                                +--> reviewed claims/cues
                                                                     + deterministic receipt
+
+dossier CLI --> verified captured Lens receipt --> one query-only SQLite snapshot
+                                                     |
+                                                     +--> exact Lens reproduction
+                                                     +--> mission Queue + retained focal Review
+                                                     +--> focal Claim Lineage
+                                                     +--> cross-checked deterministic dossier
 ```
 
 The SQLite database is authoritative for structured research state and source
@@ -76,6 +83,9 @@ they may not reimplement domain validation or write SQL directly.
   claim-owned ledger closure, with exact citation and snapshot verification.
 - `research_queue`: complete-or-refuse mission-wide aggregation of the pinned Claim
   Review cue taxonomy into a non-normative structural review index.
+- `dossier`: complete-or-refuse atomic read composition of a mission Queue, its
+  retained focal Claim Review, focal Claim Lineage, and a verified/currently
+  reproduced operator-captured Lens receipt.
 - `synthesis`: canonical research-packet assembly, citation verification,
   claim-scoped request fulfillment, Markdown/JSON rendering, digesting, and contained
   file export.
@@ -366,6 +376,58 @@ completion, research state, or action recommendation. See
 [`MISSION_RESEARCH_QUEUE_V1.md`](MISSION_RESEARCH_QUEUE_V1.md) for the receipt and
 semantic contract.
 
+## Review Dossier read boundary
+
+`ReviewDossierService.build_dossier(...)` is a public local query application service
+over one explicit mission, focal claim, and typed captured `LensSearchResult`. The
+`minerva dossier build` CLI reads the ordinary `{"lens": {...}}` file with the
+existing no-follow bounded reader, supplies the parsed receipt to the service, and
+emits one JSON-only `review_dossier` envelope. Paths and file parsing do not enter the
+domain service.
+
+Bounds and scope are validated and the complete captured Lens receipt is strictly
+self-verified before database construction/open. Its mission must equal the explicit
+mission. This is an input-safety and current-state binding step, not authentication:
+the operator-captured receipt remains an unsigned copy of ordinary CLI output.
+
+One `Database.read()` transaction with connection-local `PRAGMA query_only=ON` and one
+cumulative SQLite progress handler then owns the full composition. Fixed execution
+order first reproduces the Lens receipt through the established normalized search and
+snapshot-integrity path, then builds the complete mission Queue while retaining the
+focal Claim Review already derived by Queue, and finally builds focal Claim Lineage.
+Package-private connection-bound seams prevent child services from opening drifting
+snapshots or replacing the dossier's cumulative work handler; their standalone public
+behavior is unchanged. Queue and Lineage bounds name the same SQLite VM ceiling as
+the dossier because that one budget covers all components.
+
+Success embeds five complete results in fixed order: Queue, focal Review, focal
+Lineage, Lens search, and Lens replay. Structural cross-checks require mission and
+question agreement; exactly one focal queue summary; Queue/Review digest and cue
+equality; Review/Lineage claim, current status, evidence, withdrawal, affected
+claim-owned finding/inference payload and provenance agreement, including citation
+sets, retraction records, inference promotions, and promoted-finding retracted state;
+matching metadata for any snapshot shared by Lens and Lineage; and exact Lens
+current-database reproduction. This affected-record check covers the claim-owned
+subset reported by Review, not every otherwise-unaffected owned record retained by
+Lineage. A disjoint Lens/Lineage snapshot set is valid and does not imply candidate
+relevance.
+
+Every component retains its established receipt digest. A compact sorted-key
+component-set frame binds the five ordered component receipts, and a second compact
+sorted-key digest binds the complete dossier excluding only its own digest field.
+Canonical output bytes are measured to a fixed point. There is no generated ID or
+observation timestamp. Queue, Lineage, cumulative SQLite, and final-output ceilings
+are complete-or-refuse. Embedded Lens omissions and truncation remain explicit and do
+not make the outer dossier partial.
+
+The service has no identity, clock, ID factory, writer, audit sink, exporter,
+provider, credential, network, packet, capability-manifest, HTTP/web, MCP, or other
+external-agent dependency. It does not assess Lens candidates against the focal
+claim, create evidence, convert queue cues into task state, interpret Lineage edges as
+truth, perform a correction, or adopt anything. See
+[`REVIEW_DOSSIER_V1.md`](REVIEW_DOSSIER_V1.md) for the exact receipt, cross-check,
+bound, digest, exclusion, and semantic contract.
+
 ## Exact citations
 
 Snapshots store original UTF-8 bytes as a BLOB. A citation is:
@@ -567,15 +629,16 @@ user Markdown as raw HTML.
 - **State lives** in the migrated SQLite database and intentionally written immutable
   export/request-result files. Provider credentials and candidate responses are
   ephemeral and never become research state. An operator-captured Lens stdout file is
-  input for local checking, not an application-persisted canonical artifact.
+  input for local checking or dossier composition, not an application-persisted
+  canonical artifact. A dossier exists only as returned DTO/CLI output.
 - **Feedback lives** in structured errors, CLI exit status, health/ready endpoints,
   doctor output, tests, and the append-only audit ledger. External assistance adds
   metadata-only requested/terminal events and explicit unknown outcomes.
 - **Deleting a snapshot breaks** evidence and brief provenance, so foreign keys and
   append-only triggers prohibit it. Deleting/rewriting the database is outside the app.
 - **Timing works** because one command owns one transaction; mutations use
-  `BEGIN IMMEDIATE`, while request fulfillment, Lens search, and Lens reproduction
-  each use one query-only WAL read snapshot.
+  `BEGIN IMMEDIATE`, while request fulfillment, Lens search, Lens reproduction, and
+  the complete five-component dossier each use one query-only WAL read snapshot.
   Bounded busy waits expose contention and deterministic ordering removes completion-
   order ambiguity. The declared external-call exception is bracketed, not atomic: it
   has one attempt, bounded timeout, post-call context revalidation, and no automatic

@@ -16,6 +16,7 @@
 - [Claim Lineage Graph v1: schema-free claim-owned provenance topology](#claim-lineage-graph-v1-schema-free-claim-owned-provenance-topology) — **Accepted 2026-08-08; this local read-only graph only**
 - [Mission Research Queue v1: schema-free structural review index](#mission-research-queue-v1-schema-free-structural-review-index) — **Accepted 2026-08-08; this non-persisted local index only**
 - [Lens v1 receipt verification and current-database reproduction](#lens-v1-receipt-verification-and-current-database-reproduction) — **Accepted 2026-08-08; these local read-only checks only**
+- [Review Dossier v1: atomic local review composition](#review-dossier-v1-atomic-local-review-composition) — **Accepted 2026-08-08; this local read-only composition only**
 
 ## Milestone 1 implementation decisions
 
@@ -1245,8 +1246,100 @@ canonical persisted artifact or authorize the later local review dossier.
   on replay, and zero mutation; it does not become an external authenticity or quality
   claim.
 
-The next proposed dependency is a local trusted-operator review dossier composing
-existing read-only views. It is not authorized by this decision. Persistent queue
-operations, Lens-to-evidence mutation, a canonical PROV-O/RO-Crate exporter,
-trust-model change, migration, D-2/D-3/D-5 implementation, or packet v3 continues to
+The next proposed dependency at this point was a local trusted-operator review dossier
+composing existing read-only views. This Lens decision did not authorize it; the
+separate continuation decision below later does. Persistent queue operations,
+Lens-to-evidence mutation, a canonical PROV-O/RO-Crate exporter, trust-model change,
+migration, D-2/D-3/D-5 implementation, or packet v3 continues to need its own recorded
+owner decision.
+
+## Review Dossier v1: atomic local review composition
+
+The repository owner's subsequent instruction to keep building through the accepted
+dependency order separately accepts only the next schema-free local slice: one
+trusted-operator Review Dossier composed from established read-only views in one
+current database snapshot. This decision does not accept a persistent/canonical
+dossier artifact, mutation surface, external/agent protocol, or any later roadmap
+item.
+
+- **The public surface is local and narrow.**
+  `minerva dossier build --db ... --mission ... --claim ... --lens-input ...` and
+  `minerva.dossier.ReviewDossierService.build_dossier(...)` return the same
+  `minerva.review-dossier.v1` receipt; the CLI wraps it in one JSON-only
+  `review_dossier` envelope. There is no file writer, REST/web route, packet,
+  capability-manifest entry, MCP tool, authenticated external surface, or family of
+  dossier operations.
+- **The captured Lens receipt is required and remains untrusted.** The existing
+  no-follow 8 MiB reader accepts the ordinary `{"lens": {...}}` CLI envelope. Strict
+  standalone Lens verification completes before database construction/open, and the
+  receipt mission must equal the explicit dossier mission. Using a captured receipt
+  preserves the operator's exact query, filters, bounds, omissions, candidates, and
+  digest; the dossier never derives a query from claim text. The input remains an
+  unsigned operator-managed copy, not a canonical export or authenticated review
+  event.
+- **All database components share one current read.** One `Database.read()` snapshot,
+  connection-local `query_only`, and one cumulative SQLite progress handler own the
+  composition. In fixed order the service exactly reproduces Lens, builds the complete
+  Mission Queue while retaining the focal Claim Review already derived by that build,
+  then builds focal Claim Lineage. Package-private connection-bound seams reuse the
+  established component SQL and validation paths; standalone component APIs retain
+  their existing behavior.
+- **The five component receipts are complete and pinned.** Fixed order is Mission
+  Queue, focal Claim Review, focal Claim Lineage, Lens search, and Lens replay. Queue,
+  Review, Lineage, and Lens keep their existing whole-receipt digests. The replay
+  report is bound by SHA-256 over its complete compact sorted-key representation.
+  Component kind/schema/algorithm/version/digest entries feed the framed
+  `minerva.review-dossier-components.v1` set digest.
+- **Cross-checks are fail-closed.** Success requires component mission/question
+  agreement; exactly one focal queue summary; Queue/Review receipt and cue equality;
+  Review/Lineage claim, current status, evidence, and withdrawal agreement; affected
+  claim-owned finding/inference payload, citation set, retraction record, promotion,
+  promoted-finding retracted state, and provenance agreement; equal source/snapshot
+  identity whenever Lens and Lineage share a snapshot; and exact current Lens receipt
+  equality. The affected-record check covers only the claim-owned subset reported by
+  Review; Lineage may retain additional unaffected owned records. A disjoint
+  Lens/Lineage snapshot set is valid and does not claim candidate relevance. Any false
+  cross-check raises `review_dossier_inconsistent` and returns no dossier.
+- **Completion and Lens truncation are distinct.** Queue, Review, Lineage, cumulative
+  SQLite work, child output, and final dossier output are complete-or-refuse. Dossier
+  success says `complete: true` and `truncated: false`; the embedded Lens result may
+  independently say it was bounded/truncated, and that exact fact is preserved as
+  `lens_retrieval_truncated` plus the complete Lens omission record.
+- **Bounds are explicit and coherent.** `ReviewDossierBounds` embeds Queue and Lineage
+  bounds plus final-output and cumulative SQLite ceilings. Queue and Lineage
+  `max_sqlite_vm_steps` must equal the dossier global value so child receipts never
+  advertise an unenforced smaller budget. Work records component/count/output usage;
+  exhaustion uses dossier or established child work-limit errors without returning a
+  plausible prefix.
+- **Digests are deterministic bindings, not identity.** Compact sorted-key UTF-8 JSON
+  produces the component-set and whole-dossier SHA-256 values without a generated ID
+  or observation time. Hashes establish self-consistency and current component
+  equality only—not origin, authenticity, signature, human identity, authority,
+  approval, historical freshness, truth, evidence quality, research completeness, or
+  disclosure permission.
+- **Composition has no semantic promotion.** The Lens/claim association is explicitly
+  operator-supplied and unassessed. Candidates remain non-evidence; Queue cues remain
+  non-actionable structural observations; Lineage edges remain recorded topology. The
+  dossier determines no truth, confidence, sufficiency, priority, recommended status,
+  correction, or adoption. Existing separate audited human commands remain the only
+  mutation path.
+- **The result is ephemeral observation, not coordination.** It creates no identity,
+  run, audit event, durable dossier, assignment, queue state, evidence, finding,
+  inference, status, correction, promotion, export, file, packet, or approval; modifies
+  no source/snapshot bytes or database row; reads no credential; and invokes no model,
+  provider, network, URL fetch, Athena/Icarus adapter, REST/web route, MCP, or external
+  agent.
+- **No persistence or trust contract changed.** Schema remains v5; no migration,
+  table, index, packet field/version, capability name, external principal, signature,
+  cryptographic identity, authenticated protocol, scholarly-source adapter,
+  standards exporter, or broader D-6 behavior is added. Fixture-bound evaluation and
+  regression tests may measure structural cross-check accuracy, deterministic output,
+  exact current replay, isolation, bounds, and zero mutation; they make no truth,
+  relevance, priority, actionability, quality, or authenticity claim.
+
+The next proposed dependency is a PROV-O/RO-Crate compatibility decision packet,
+design only, proving a lossless mapping and deciding canonicalization, context pinning,
+and source-byte disclosure before any canonical exporter can be considered. An
+explicit Lens-to-evidence bridge, persistent queue operations, trust-model change,
+migration, D-2/D-3/D-5 implementation, packet v3, or standards exporter continues to
 need its own recorded owner decision.

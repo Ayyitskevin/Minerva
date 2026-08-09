@@ -96,13 +96,50 @@ class ClaimLineageService:
         claim_id: str,
         bounds: ClaimLineageBounds = DEFAULT_CLAIM_LINEAGE_BOUNDS,
     ) -> ClaimLineageResult:
+        return self._build_graph(
+            mission_id=mission_id,
+            claim_id=claim_id,
+            bounds=bounds,
+            connection=None,
+        )
+
+    def _build_graph_in_snapshot(
+        self,
+        *,
+        mission_id: str,
+        claim_id: str,
+        bounds: ClaimLineageBounds,
+        connection: sqlite3.Connection,
+    ) -> ClaimLineageResult:
+        """Build a graph inside a caller-owned consistent read snapshot."""
+
+        return self._build_graph(
+            mission_id=mission_id,
+            claim_id=claim_id,
+            bounds=bounds,
+            connection=connection,
+        )
+
+    def _build_graph(
+        self,
+        *,
+        mission_id: str,
+        claim_id: str,
+        bounds: ClaimLineageBounds,
+        connection: sqlite3.Connection | None,
+    ) -> ClaimLineageResult:
         safe_bounds = _validate_bounds(bounds)
         _validate_scope_ids(mission_id=mission_id, claim_id=claim_id)
+        manages_connection = connection is None
 
         try:
-            with self.database.read() as connection:
+            with _lineage_connection(self.database, connection) as connection:
                 connection.execute("PRAGMA query_only = ON")
-                with _bounded_query_work(connection, safe_bounds.max_sqlite_vm_steps):
+                with _bounded_query_work(
+                    connection,
+                    safe_bounds.max_sqlite_vm_steps,
+                    managed=manages_connection,
+                ):
                     _require_mission(connection, mission_id)
                     claim_row = _claim_row(
                         connection,
@@ -399,10 +436,27 @@ def _validate_scope_ids(*, mission_id: object, claim_id: object) -> None:
 
 
 @contextmanager
+def _lineage_connection(
+    database: Database,
+    connection: sqlite3.Connection | None,
+) -> Iterator[sqlite3.Connection]:
+    if connection is not None:
+        yield connection
+        return
+    with database.read() as opened:
+        yield opened
+
+
+@contextmanager
 def _bounded_query_work(
     connection: sqlite3.Connection,
     max_sqlite_vm_steps: int,
+    *,
+    managed: bool = True,
 ) -> Iterator[None]:
+    if not managed:
+        yield
+        return
     callbacks_remaining = max_sqlite_vm_steps // _QUERY_PROGRESS_GRANULARITY
     exhausted = False
 

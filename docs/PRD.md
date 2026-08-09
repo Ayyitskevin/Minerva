@@ -1,4 +1,4 @@
-# Minerva product requirements: provenance foundation through Mission Research Queue v1
+# Minerva product requirements: provenance foundation through Review Dossier v1
 
 ## Product identity
 
@@ -119,6 +119,32 @@ assignment, deferment, resolution, or completion. The view creates no persisted 
 or research state, writes no audit/export/file/packet, invokes no model, credential,
 network, or Claim Lineage service, and exposes no external-agent protocol.
 
+## Review Dossier v1 outcome
+
+An offline trusted operator can combine one explicit mission and focal claim with an
+operator-captured Lens receipt and receive one deterministic
+`minerva.review-dossier.v1` result. It embeds the complete mission Queue, the exact
+focal Claim Review retained during that Queue build, the focal Claim Lineage graph,
+the verified Lens search, and its exact current-database replay report.
+
+The captured Lens receipt is verified before database open and must name the same
+mission. All five components are then resolved or reproduced inside one query-only
+SQLite snapshot under one cumulative VM budget. Cross-checks require Queue/Review
+digest and cue agreement, Review/Lineage claim/status/evidence/withdrawal agreement,
+agreement for Review-reported claim-owned finding/inference citations, retractions,
+promotions, and provenance, matching identities for any snapshots shared by Lens and
+Lineage, and exact Lens receipt equality to that current read. The affected-record
+check is intentionally a Review-reported subset; Lineage can retain additional
+unaffected owned records. Ordered component and whole-dossier digests bind the result
+without a generated identifier or observation time.
+
+Dossier success is complete-or-refuse. Its `truncated: false` does not erase the
+embedded Lens search's own explicit bounded truncation. Composition does not assess a
+Lens candidate against the claim, turn it into evidence, make a Queue cue actionable,
+or interpret a Lineage edge as truth. It creates no durable dossier, research/task
+state, identity, audit event, export, file, packet, provider call, network activity, or
+external-agent surface.
+
 ## Milestone 2B outcome
 
 A local CLI operator can optionally ask OpenAI or Anthropic to draft finding
@@ -182,6 +208,11 @@ publication, messaging, or autonomous research.
   pinned Claim Review cue taxonomy. Despite its name, it is neither persisted task
   state nor a claim that a cue is actionable, unresolved, prioritized, assigned, or
   complete.
+- **Review dossier:** a deterministic, complete-or-refuse local composition of one
+  mission Queue, its exact focal Claim Review, the focal Claim Lineage graph, and one
+  operator-captured Lens receipt reproduced in their shared current database read. It
+  is neither a durable artifact nor a semantic association between the claim and Lens
+  candidates.
 
 ## Statement classes
 
@@ -307,6 +338,13 @@ unresolved question under the same citation rules as human-authored material.
     presence and array position make no actionability, unresolved-work, severity,
     priority, confidence, assignment, completion, truth, correction, provider,
     network, or protocol claim.
+21. Review Dossier verifies its captured Lens input before database open, then
+    reproduces it and composes Queue, focal Review, and focal Lineage in one current
+    query-only SQLite snapshot with cumulative work and final-output bounds. Every
+    declared structural cross-check must pass or no dossier is returned. Success does
+    not create a persistent artifact or assert candidate relevance, evidence, truth,
+    actionability, confidence, priority, correction, adoption, provider, network, or
+    protocol meaning.
 
 ## User surfaces
 
@@ -328,6 +366,11 @@ unresolved question under the same citation rules as human-authored material.
   service return one deterministic, complete-or-refuse mission structural review
   index. No equivalent REST, web, provider, packet, capability, or MCP operation
   exists.
+- `minerva dossier build` and the public local
+  `minerva.dossier.ReviewDossierService.build_dossier` application service return one
+  deterministic atomic-read composition from an explicit mission, claim, and captured
+  Lens receipt. No file writer, REST, web, provider, packet, capability, or MCP
+  operation exists.
 - `minerva-demo` creates a disposable synthetic mission and exports its brief without
   contacting a network service. It refuses an existing database.
 - The web interface is a restrained, server-rendered review surface.

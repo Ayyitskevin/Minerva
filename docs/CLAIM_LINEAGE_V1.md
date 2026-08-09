@@ -254,6 +254,9 @@ scholarly-source adapter, PROV-O/RO-Crate export, or MCP/API surface is accepted
 this decision. Later continuations separately accept Mission Research Queue v1 as a
 non-persisted mission-wide index of Claim Review cues and current-database Lens receipt
 verification/replay. Queue v1 does not invoke this graph: Claim Lineage supplies
-topology, not a reason-code or actionability policy. A local review dossier is now the
-next proposed dependency; it still requires a separate owner decision, and persistence
-or external protocol work remains separately gated.
+topology, not a reason-code or actionability policy. A later continuation separately
+accepts Review Dossier v1, which invokes a connection-bound form of this same graph in
+one shared query-only snapshot and cross-checks overlapping Review facts; it does not
+change Lineage scope or make topology actionable. A PROV-O/RO-Crate compatibility
+decision packet is now the next proposed dependency. Persistence, a canonical
+standards exporter, or external protocol work remains separately gated.

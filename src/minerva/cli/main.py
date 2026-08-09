@@ -18,6 +18,7 @@ from minerva.core.doctor import run_doctor
 from minerva.core.errors import IntegrityError, SecurityBoundaryError
 from minerva.core.operations import OperationsService
 from minerva.core.types import IdentityContext, local_identity
+from minerva.dossier import ReviewDossierBounds, ReviewDossierService
 from minerva.evidence.models import EvidenceStance
 from minerva.evidence.service import EvidenceService
 from minerva.integrations.lens_receipt_file import load_lens_receipt
@@ -251,6 +252,46 @@ def _cmd_lens_replay(args: argparse.Namespace) -> Outcome:
         "lens_replay",
         LensService(_database(args)).replay_receipt(receipt),
     )
+
+
+def _cmd_dossier_build(args: argparse.Namespace) -> Outcome:
+    lens_receipt = load_lens_receipt(cast(Path, args.lens_input))
+    max_sqlite_vm_steps = cast(int, args.max_sqlite_vm_steps)
+    result = ReviewDossierService(_database(args)).build_dossier(
+        mission_id=cast(str, args.mission),
+        claim_id=cast(str, args.claim),
+        lens_receipt=lens_receipt,
+        bounds=ReviewDossierBounds(
+            mission_queue=MissionResearchQueueBounds(
+                max_claims=cast(int, args.queue_max_claims),
+                max_items=cast(int, args.queue_max_items),
+                max_evidence_cards=cast(int, args.queue_max_evidence_cards),
+                max_distinct_evidence_quote_bytes=cast(
+                    int,
+                    args.queue_max_distinct_evidence_quote_bytes,
+                ),
+                max_affected_records=cast(int, args.queue_max_affected_records),
+                max_relationships=cast(int, args.queue_max_relationships),
+                max_distinct_snapshot_bytes=cast(
+                    int,
+                    args.queue_max_distinct_snapshot_bytes,
+                ),
+                max_output_bytes=cast(int, args.queue_max_output_bytes),
+                max_sqlite_vm_steps=max_sqlite_vm_steps,
+            ),
+            claim_lineage=ClaimLineageBounds(
+                max_nodes=cast(int, args.lineage_max_nodes),
+                max_edges=cast(int, args.lineage_max_edges),
+                max_citation_bytes=cast(int, args.lineage_max_citation_bytes),
+                max_snapshot_bytes=cast(int, args.lineage_max_snapshot_bytes),
+                max_output_bytes=cast(int, args.lineage_max_output_bytes),
+                max_sqlite_vm_steps=max_sqlite_vm_steps,
+            ),
+            max_output_bytes=cast(int, args.max_output_bytes),
+            max_sqlite_vm_steps=max_sqlite_vm_steps,
+        ),
+    )
+    return _command_result("review_dossier", result)
 
 
 def _cmd_evidence_add(args: argparse.Namespace) -> Outcome:
@@ -741,6 +782,71 @@ def build_parser() -> argparse.ArgumentParser:
     _add_database(lens_replay)
     lens_replay.add_argument("--input", required=True, type=Path)
     _set_handler(lens_replay, _cmd_lens_replay)
+
+    dossier_parser = commands.add_parser(
+        "dossier",
+        help="compose deterministic local review views",
+    )
+    dossier_commands = dossier_parser.add_subparsers(
+        dest="dossier_command",
+        required=True,
+    )
+    dossier_build = dossier_commands.add_parser(
+        "build",
+        help="compose one atomic local review dossier",
+    )
+    _add_database(dossier_build)
+    dossier_build.add_argument("--mission", required=True)
+    dossier_build.add_argument("--claim", required=True)
+    dossier_build.add_argument("--lens-input", required=True, type=Path)
+    dossier_build.add_argument("--queue-max-claims", type=int, default=100)
+    dossier_build.add_argument("--queue-max-items", type=int, default=1_400)
+    dossier_build.add_argument("--queue-max-evidence-cards", type=int, default=5_000)
+    dossier_build.add_argument(
+        "--queue-max-distinct-evidence-quote-bytes",
+        type=int,
+        default=67_108_864,
+    )
+    dossier_build.add_argument(
+        "--queue-max-affected-records",
+        type=int,
+        default=10_000,
+    )
+    dossier_build.add_argument(
+        "--queue-max-relationships",
+        type=int,
+        default=50_000,
+    )
+    dossier_build.add_argument(
+        "--queue-max-distinct-snapshot-bytes",
+        type=int,
+        default=67_108_864,
+    )
+    dossier_build.add_argument(
+        "--queue-max-output-bytes",
+        type=int,
+        default=67_108_864,
+    )
+    dossier_build.add_argument("--lineage-max-nodes", type=int, default=1_000)
+    dossier_build.add_argument("--lineage-max-edges", type=int, default=2_000)
+    dossier_build.add_argument(
+        "--lineage-max-citation-bytes",
+        type=int,
+        default=16_777_216,
+    )
+    dossier_build.add_argument(
+        "--lineage-max-snapshot-bytes",
+        type=int,
+        default=16_777_216,
+    )
+    dossier_build.add_argument(
+        "--lineage-max-output-bytes",
+        type=int,
+        default=67_108_864,
+    )
+    dossier_build.add_argument("--max-output-bytes", type=int, default=134_217_728)
+    dossier_build.add_argument("--max-sqlite-vm-steps", type=int, default=4_000_000)
+    _set_handler(dossier_build, _cmd_dossier_build)
 
     evidence_parser = commands.add_parser("evidence", help="manage exact evidence cards")
     evidence_commands = evidence_parser.add_subparsers(dest="evidence_command", required=True)

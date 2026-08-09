@@ -1,4 +1,4 @@
-# Current threat model: provenance foundation through Lens receipt reproduction
+# Current threat model: provenance foundation through Review Dossier v1
 
 ## Boundary and assets
 
@@ -21,7 +21,10 @@ claim-owned provenance topology, exact citation bytes, source/snapshot metadata,
 correction/promotion relationships to that local disclosure surface; none of these
 views adds external egress. Mission Research Queue adds mission-wide claim text,
 structural review cues, related-record IDs, child review digests, and aggregate
-receipts to the same protected local disclosure surface.
+receipts to the same protected local disclosure surface. Review Dossier combines
+those mission-wide and claim-scoped disclosures with exact Lens quotes, component
+digests, and structural cross-checks in one potentially large local result. It remains
+inside the trusted OS-user boundary and adds no egress.
 
 ## Threats and controls
 
@@ -57,6 +60,11 @@ receipts to the same protected local disclosure surface.
 | Mission Queue work or output amplification | Aggregate claim, item, distinct verified-evidence-card, distinct stored quote-byte, affected-record, relationship, actual snapshot-byte, final canonical-output-byte, and cumulative SQLite-VM ceilings cover all child reviews; metadata-only quote-length and snapshot-length preflights refuse before oversized quote text or snapshot BLOBs reach Python; any exceeded bound raises `mission_research_queue_work_limit` and returns no prefix | The VM ceiling is SQLite-version/query-plan local rather than a wall-clock or general SQLite-memory bound; a successful maximum-size receipt can still disclose substantial mission text and record identifiers |
 | Mission Queue corrupts provenance or invents reason codes | Connection-bound reuse of the pinned Claim Review v1 derivation in one query-only snapshot; child review schema/algorithm/version and digest retained; fixed exhaustive cue catalog; claim/review/item/whole-receipt digests; Claim Lineage is not invoked or reinterpreted as reason policy | Receipt hashes are not signatures and cannot detect a coordinated same-OS-user rewrite of database state and integrity metadata; a future Claim Review taxonomy requires an explicit queue-version decision |
 | Mission Queue mutates state or triggers external behavior | No identity, writer, audit, assignment, completion, export, file, packet, provider, credential, network, graph, REST/web, MCP, or external-agent dependency; database dump/main-file and non-invocation regressions | A human may separately use an existing audited research/correction command after inspecting a cue; that later action is outside Queue v1 |
+| Hostile or foreign Lens input is smuggled into a dossier | Existing no-follow 8 MiB reader and strict Lens verifier run before database construction/open; receipt mission must equal the explicit dossier mission; exact reproduction through the normal Lens integrity/search path is the first operation in the shared read snapshot | The captured receipt remains unauthenticated operator-managed CLI output, and a same-OS-user producer can construct a different internally valid receipt for current state |
+| Dossier components observe different states or silently disagree | One `Database.read()`/`query_only` snapshot owns Lens reproduction, Queue plus its retained focal Review, and focal Lineage; fixed cross-checks require scope, summary, cue, receipt, claim, status, exact evidence/withdrawal, Review-reported claim-owned citation/retraction/promotion payload and provenance, shared-snapshot, and replay agreement; any false check refuses the whole result | The affected-record check covers the claim-owned subset reported by Review, while Lineage can contain additional unaffected owned records. Cross-checks reconcile overlapping stored structure, not semantic relevance, entailment, source quality, whole-database audit integrity, or external authenticity; disjoint Lens/Lineage snapshot sets are allowed |
+| Dossier composition turns a Lens lead, Queue cue, or Lineage edge into truth or action | Explicit semantic fields say the Lens association is operator-supplied, candidates are unassessed/non-evidence, Queue items are not tasks, Lineage edges establish no truth, and human correction/adoption remains separate and audited | A reader who ignores the embedded semantic boundary can still overinterpret co-location in one large document |
+| Dossier work or output amplification | Existing Queue, Review, Lineage, Lens, snapshot/citation, and child-output bounds remain active; one cumulative SQLite-VM ceiling covers all database work; queue/lineage VM bound fields must equal it; final canonical dossier bytes have a 128 MiB ceiling; completion is all-or-nothing while Lens retains explicit bounded truncation | SQLite VM steps are runtime/query-plan local rather than wall-clock or memory bounds; a valid maximum-size dossier duplicates component content and can disclose substantial local research text |
+| Dossier mutates state, persists an artifact, or triggers external behavior | Service has no identity, writer, audit, exporter, credential, provider, network, REST/web, packet, capability, MCP, or external-agent dependency; CLI emits stdout only; database dump/main-file and non-invocation regressions | The OS user can redirect stdout or separately invoke audited correction/adoption commands; those operator actions are outside the dossier service |
 | Excessive work or text materialization during fulfillment | Bounded claim-history/preflight queries, one connection-local progress budget over the complete query-only snapshot, targeted audit and claim-scoped finding indexes (migration 0003) whose selection is asserted by an `EXPLAIN QUERY PLAN` regression test, and an exact-multiplicity NUL-safe storage-byte lower bound before full database text or snapshot content is returned to Python; exhaustion becomes non-reflective `brief_work_limit` before file writes | The SQLite budget limits virtual-machine instructions, not elapsed time; aggregate length queries inspect stored values and are not an SQLite-memory limit; final canonical byte validation remains authoritative; same-mission audit history that the claim-scoped query must examine row by row still consumes budget; the plan test is the only guard on index selection — `INDEXED BY` names `idx_findings_claim` so its absence fails at preparation, but `idx_audit_event_entity` is planner-selected and its absence degrades silently to a scan, and neither hint forces a seek if a predicate is later dropped |
 | Script/HTML/Markdown injection | Jinja autoescape; CSP; stored text rendered as text/`pre`; no raw HTML Markdown mode | Future rich rendering requires a reviewed sanitizer policy |
 | SQL injection | Parameterized SQL; dynamic choices selected from fixed enums/queries only | A future ad hoc query could violate the rule; tests and review remain necessary |
@@ -144,6 +152,15 @@ receipts to the same protected local disclosure surface.
 - Mission Research Queue creates no persisted queue or research state, invokes no
   provider, credential, network, graph service, or external protocol, and returns no
   partial claim/cue prefix when aggregate work is exhausted.
+- Review Dossier verifies one captured Lens receipt before database open, then exactly
+  reproduces it, builds Queue with its retained focal Review, and builds focal Lineage
+  inside one current query-only snapshot under one cumulative work guard. All five
+  component receipts and every declared cross-check are bound into the deterministic
+  result; failure returns no partial dossier.
+- Dossier completeness does not mean unbounded retrieval: the embedded Lens omissions
+  and `lens_retrieval_truncated` remain explicit. Composition makes no candidate/claim
+  relevance, evidence, task, truth, confidence, priority, correction, or adoption
+  claim and creates no persisted dossier, audit event, or external interaction.
 - Retraction deletes nothing. Surfaces that read findings still return a retracted
   finding, marked with its reason, timestamp, and actor; synthesis surfaces exclude
   it from the brief rather than presenting it as asserted. Neither path can make the
@@ -178,9 +195,9 @@ caught-error versus process/power-loss limitation as existing export.
 Remote access, real authentication, encrypted storage, optional OS keyring support,
 multi-tenancy, signed exports, additional providers, provider-side retrieval/tools,
 and non-CLI integration authentication require a later threat model and explicit
-product/security approval. The accepted local Lens receipt verification/reproduction
-slice does not authorize a persistent assign/defer/resolve queue, migration, external
-principal, cryptographic identity, Athena/Icarus adapter, MCP or other agent protocol,
-packet revision, local review dossier, Lens-to-evidence mutation, or canonical
-PROV-O/RO-Crate exporter. The later dossier remains a separate product decision even
-though its component read views now exist.
+product/security approval. The accepted local Review Dossier slice does not authorize
+a persistent assign/defer/resolve queue, migration, external principal, cryptographic
+identity, Athena/Icarus adapter, MCP or other agent protocol, packet revision,
+Lens-to-evidence mutation, or canonical PROV-O/RO-Crate exporter. A PROV-O/RO-Crate
+compatibility decision packet is the next proposed dependency; implementation of an
+exporter remains a separate owner decision.

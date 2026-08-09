@@ -2,7 +2,10 @@
 
 Status: search implemented under the repository owner's 2026-08-08 directive;
 receipt verification and current-database exact reproduction implemented under the
-owner's subsequent instruction to continue the accepted dependency order.
+owner's subsequent instruction to continue the accepted dependency order. A later
+continuation separately accepts Review Dossier v1, which consumes the same captured
+receipt and exact replay path without changing Lens search, verification, or adoption
+semantics.
 
 Lens is the narrow, local retrieval exception to the otherwise closed D-6
 retrieval/ingestion gate. It searches only immutable UTF-8 snapshots that an
@@ -316,3 +319,10 @@ corpus.
   after same-mission corpus accounting changes, even outside an explicit filter.
 - Snapshot-set and receipt hashes establish deterministic self-consistency, not
   source truth, external authenticity, or cryptographic identity.
+
+Review Dossier v1 may embed and reproduce a captured Lens receipt in the same current
+query-only snapshot as Queue, focal Review, and focal Lineage. That co-location is an
+operator-supplied review association only: a candidate is still unassessed and never
+becomes claim evidence. A PROV-O/RO-Crate compatibility decision packet is the next
+proposed dependency; a canonical exporter and Lens-to-evidence bridge remain separately
+owner-gated.

@@ -45,6 +45,13 @@ deterministic structural review index. It retains every reviewed claim and the e
 review-receipt digest behind each cue, but it is not a persisted task queue: an item never
 means unresolved work, required action, severity, priority, assignment, or completion.
 
+Review Dossier v1 composes that mission index, its exact focal Claim Review, the focal
+Claim Lineage graph, and one operator-captured Lens receipt reproduced against the
+same current query-only database snapshot. Its cross-checks reconcile shared
+provenance—including the citation, retraction, and promotion state of affected
+claim-owned records reported by Review—without assessing Lens candidates against the
+claim or turning cues or candidates into research state.
+
 Milestone 2B adds one deliberately narrow, optional assistance surface. A local CLI
 operator can preview a bounded request made from one claim and its active evidence,
 then explicitly authorize that exact request for OpenAI or Anthropic using their own
@@ -125,6 +132,10 @@ minerva claim show --db research.db --claim CLM_ID
 minerva claim review --db research.db --mission MIS_ID --claim CLM_ID
 minerva claim lineage --db research.db --mission MIS_ID --claim CLM_ID
 minerva mission queue --db research.db --mission MIS_ID
+minerva lens search --db research.db --mission MIS_ID \
+  --query "immutable provenance" > lens-receipt.json
+minerva dossier build --db research.db --mission MIS_ID --claim CLM_ID \
+  --lens-input lens-receipt.json
 minerva brief export --db research.db --mission MIS_ID --output-dir ./export
 minerva audit list --db research.db --mission MIS_ID
 minerva doctor --db research.db --deep
@@ -173,6 +184,7 @@ cannot ship undocumented.
 | `minerva lens search` | search immutable mission snapshots for candidate context |
 | `minerva lens verify` | verify one captured Lens receipt without a database |
 | `minerva lens replay` | reproduce one captured Lens receipt against the current database |
+| `minerva dossier build` | compose one atomic local review dossier |
 | `minerva evidence add` | cite an exact byte span of a snapshot |
 | `minerva evidence withdraw` | mark evidence as no longer standing, keeping it in the ledger |
 | `minerva finding add` | record a labeled finding, assumption, or open question |
@@ -410,6 +422,53 @@ precision/recall including related record-ID sets, all 14 reason codes, canonica
 ordering, digest validity, byte determinism, mission isolation, and zero unauthorized
 mutation. It reports no priority, relevance, truth, confidence, severity,
 actionability, or completion metric.
+
+## Atomic local review dossier
+
+First capture an ordinary Lens search receipt, then compose it with the current
+mission and focal-claim review views:
+
+```bash
+minerva lens search --db research.db --mission MIS_ID \
+  --query "immutable provenance" > lens-receipt.json
+minerva dossier build --db research.db --mission MIS_ID --claim CLM_ID \
+  --lens-input lens-receipt.json
+```
+
+`minerva.review-dossier.v1` uses algorithm
+`current-snapshot-review-composition` version `1` and scope
+`mission_claim_with_captured_lens_v1`. The captured receipt is strictly verified
+before SQLite opens, must name the explicit mission, and must reproduce exactly
+through the normal Lens path. One subsequent query-only SQLite snapshot and one
+cumulative VM budget own that replay, the complete mission Queue, the exact focal
+Review retained by Queue, and the focal Lineage graph.
+
+The receipt embeds all five component results and binds their ordered receipt digests
+with `component_set_sha256`. Explicit cross-checks require Queue and Review digest/cue
+agreement; Review and Lineage claim, status, exact evidence/withdrawal agreement;
+affected claim-owned citation sets, retraction records, inference promotions,
+promoted-finding retracted state, and provenance agreement; matching identities for
+any snapshots shared by Lens and Lineage; and an exact current-database Lens replay.
+The affected-record check covers only the subset reported by Review; Lineage can
+retain additional unaffected owned records. Dossier success is complete and
+untruncated even when the embedded Lens search independently records bounded
+truncation; that state is retained as `lens_retrieval_truncated` and in the complete
+Lens receipt.
+
+Composition creates no durable dossier, identity, run, audit event, task, evidence,
+finding, inference, status, correction, export, file, packet, or capability. It does
+not connect a Lens candidate to the claim, make a Queue cue actionable, or interpret a
+Lineage edge as truth. Digests prove self-consistency, not origin, authenticity,
+approval, authority, freshness, quality, truth, or disclosure permission. See
+[Review Dossier v1](docs/REVIEW_DOSSIER_V1.md) for the exact component, bound,
+cross-check, digest, exclusion, and semantic contract.
+
+Run `uv run python scripts/evaluate_review_dossier.py` for the fixed synthetic
+evaluation. It checks component and receipt binding, every structural cross-check,
+multibyte citation and Lens-candidate byte accuracy, deterministic output, mission
+isolation, explicit Lens truncation, the candidate/evidence boundary, and zero
+unauthorized database mutation. These are fixture-bound structural metrics, not
+claims about relevance, truth, priority, source quality, or research completeness.
 
 ## Canonical research packet
 
@@ -724,5 +783,6 @@ content and integrity metadata is outside the Milestone 1 detection boundary.
 - [Claim Review v1 gap and correction-impact contract](docs/CLAIM_REVIEW_V1.md)
 - [Claim Lineage Graph v1 provenance-topology contract](docs/CLAIM_LINEAGE_V1.md)
 - [Mission Research Queue v1 structural-review-index contract](docs/MISSION_RESEARCH_QUEUE_V1.md)
+- [Review Dossier v1 atomic local composition contract](docs/REVIEW_DOSSIER_V1.md)
 - [Competitive landscape and dependency roadmap](docs/COMPETITIVE_LANDSCAPE.md)
 - [Contributing](CONTRIBUTING.md)

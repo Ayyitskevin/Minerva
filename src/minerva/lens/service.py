@@ -9,6 +9,7 @@ import re
 import sqlite3
 import unicodedata
 from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 from typing import Any
@@ -131,6 +132,50 @@ class LensService:
         snapshot_ids: Sequence[str] | None,
         bounds: LensBounds,
     ) -> LensSearchResult:
+        return self._search_normalized_with_connection(
+            mission_id=mission_id,
+            normalized_query=normalized_query,
+            query_terms=query_terms,
+            source_ids=source_ids,
+            snapshot_ids=snapshot_ids,
+            bounds=bounds,
+            connection=None,
+        )
+
+    def _search_normalized_in_snapshot(
+        self,
+        *,
+        mission_id: str,
+        normalized_query: str,
+        query_terms: tuple[str, ...],
+        source_ids: Sequence[str] | None,
+        snapshot_ids: Sequence[str] | None,
+        bounds: LensBounds,
+        connection: sqlite3.Connection,
+    ) -> LensSearchResult:
+        """Run an already-verified request in a caller-owned read snapshot."""
+
+        return self._search_normalized_with_connection(
+            mission_id=mission_id,
+            normalized_query=normalized_query,
+            query_terms=query_terms,
+            source_ids=source_ids,
+            snapshot_ids=snapshot_ids,
+            bounds=bounds,
+            connection=connection,
+        )
+
+    def _search_normalized_with_connection(
+        self,
+        *,
+        mission_id: str,
+        normalized_query: str,
+        query_terms: tuple[str, ...],
+        source_ids: Sequence[str] | None,
+        snapshot_ids: Sequence[str] | None,
+        bounds: LensBounds,
+        connection: sqlite3.Connection | None,
+    ) -> LensSearchResult:
         """Execute an already-canonical Lens request for receipt replay.
 
         Public callers still use :meth:`search`. Receipt replay first verifies
@@ -147,7 +192,7 @@ class LensService:
             snapshot_ids=safe_snapshot_ids,
         )
 
-        with self.database.read() as connection:
+        with _lens_connection(self.database, connection) as connection:
             connection.execute("PRAGMA query_only = ON")
             _require_mission(connection, mission_id)
             _require_filters_in_mission(
@@ -276,6 +321,18 @@ class LensService:
             provisional,
             retrieval_receipt_sha256=_receipt_digest(provisional),
         )
+
+
+@contextmanager
+def _lens_connection(
+    database: Database,
+    connection: sqlite3.Connection | None,
+) -> Iterator[sqlite3.Connection]:
+    if connection is not None:
+        yield connection
+        return
+    with database.read() as opened:
+        yield opened
 
 
 def _validate_bounds(bounds: LensBounds) -> LensBounds:

@@ -316,9 +316,12 @@ order narrowly accepts this local schema-free read model. It does not authorize 
 persisted queue, queue mutation verbs, or later roadmap capabilities.
 
 A durable assign/defer/resolve queue requires its own owner-approved migration and a
-day-one correction model. A later continuation separately accepts current-database
-Lens receipt verification/replay; a local review dossier remains the next proposed
-read-only dependency. No migration, index, trust-model change, packet version,
+day-one correction model. Later continuations separately accept current-database
+Lens receipt verification/replay and Review Dossier v1. Dossier retains one focal
+Review from this existing Queue derivation inside a caller-owned query-only snapshot;
+it neither changes the Queue receipt nor turns its cues into tasks. A PROV-O/RO-Crate
+compatibility decision packet is now the next proposed dependency. No migration,
+index, trust-model change, packet version,
 capability entry, external principal, cryptographic identity, Athena/Icarus adapter,
 scholarly network adapter, PROV-O/RO-Crate exporter, MCP/API, Lens-to-evidence bridge,
 provider runtime, publishing, messaging, or deployment is accepted by this decision.
