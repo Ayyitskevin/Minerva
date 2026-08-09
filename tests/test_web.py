@@ -392,6 +392,7 @@ def _adopt_review_inference(
     )
     return AdoptionService(database).adopt_inference(
         preview=preview,
+        expected_request_sha256=preview.request_sha256,
         candidate_index=0,
         candidate=FindingCandidate(
             statement=statement,

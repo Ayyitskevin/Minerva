@@ -383,16 +383,25 @@ digests, not credentials, prompts, evidence text, or returned candidate text.
 
 A candidate the operator judges correct can be adopted explicitly, one candidate from
 one exact preview at a time. Adoption re-supplies the reviewed candidate text, its
-citation IDs, and the provider response digest, and Minerva revalidates every citation
-against the live record before persisting a labeled `agent_inference` with full
-provenance:
+citation IDs, the provider response digest, and `--expected-request-sha256` — the same
+request digest that authorized the invocation. Minerva regenerates the preview from
+live state, refuses with `assistant_context_changed` if it no longer matches that
+digest, and revalidates every citation against the live record before persisting a
+labeled `agent_inference` with full provenance:
 
 ```bash
 minerva assist adopt --db research.db --claim CLM_ID \
+  --expected-request-sha256 REQUEST_SHA256 \
   --candidate-index 0 --response-sha256 RESPONSE_SHA256 \
   --statement "ADOPTED STATEMENT" --uncertainty "RECORDED UNCERTAINTY" \
   --evidence EVD_ID
 ```
+
+The pin is required, not optional: it is what makes the stored
+`(request_sha256, response_sha256)` pair describe one real exchange with the provider
+rather than an adopt-time request digest beside a generation-time response digest, and
+it is what keeps the `(request_sha256, candidate_index, claim_id)` uniqueness that
+refuses a repeated adoption stable across any change to the evidence ledger.
 
 An adopted inference is never evidence and never a finding; it cannot influence claim
 status and does not count toward anything. `assist retract-inference --inference INF_ID

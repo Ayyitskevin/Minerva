@@ -66,6 +66,7 @@ def _adopt(
 ) -> AgentInference:
     return _service(lab).adopt_inference(
         preview=preview,
+        expected_request_sha256=preview.request_sha256,
         candidate_index=candidate_index,
         candidate=candidate,
         response_sha256=_RESPONSE_SHA256,
@@ -78,6 +79,7 @@ def test_adoption_persists_the_candidate_with_full_provenance(lab: Lab) -> None:
 
     inference = _service(lab).adopt_inference(
         preview=preview,
+        expected_request_sha256=preview.request_sha256,
         candidate_index=0,
         candidate=_candidate(support),
         response_sha256=_RESPONSE_SHA256,
@@ -138,6 +140,7 @@ def test_adopting_the_same_candidate_twice_is_refused(lab: Lab) -> None:
     service = _service(lab)
     adopted = service.adopt_inference(
         preview=preview,
+        expected_request_sha256=preview.request_sha256,
         candidate_index=0,
         candidate=_candidate(support),
         response_sha256=_RESPONSE_SHA256,
@@ -147,6 +150,7 @@ def test_adopting_the_same_candidate_twice_is_refused(lab: Lab) -> None:
     with pytest.raises(ConflictError) as caught:
         service.adopt_inference(
             preview=preview,
+            expected_request_sha256=preview.request_sha256,
             candidate_index=0,
             candidate=_candidate(support),
             response_sha256=_RESPONSE_SHA256,
@@ -159,6 +163,7 @@ def test_adopting_the_same_candidate_twice_is_refused(lab: Lab) -> None:
     # A different candidate from the same preview is a different record.
     other = service.adopt_inference(
         preview=preview,
+        expected_request_sha256=preview.request_sha256,
         candidate_index=1,
         candidate=_candidate(support, statement="A second candidate from the same preview."),
         response_sha256=_RESPONSE_SHA256,
@@ -166,6 +171,101 @@ def test_adopting_the_same_candidate_twice_is_refused(lab: Lab) -> None:
     )
     assert other.id != adopted.id
     assert len(service.list_inferences(seed.mission.id)) == 2
+
+
+def _regenerate_preview(lab: Lab, seed: ClaimSeed) -> CandidatePreview:
+    """Rebuild the preview the way `assist adopt` does: from live state."""
+
+    assistance = AssistanceService(lab.database, clock=fixed_clock, id_factory=lab.ids)
+    return assistance.preview_finding_candidates(
+        claim_id=seed.claim.id,
+        selection=ProviderSelection(ModelProvider.OPENAI, "test-model-1", "cli"),
+        max_candidates=2,
+        max_output_tokens=512,
+    )
+
+
+def test_adoption_refuses_a_reviewed_request_the_ledger_has_moved_past(lab: Lab) -> None:
+    """The stored digest pair must describe one real exchange with the provider.
+
+    Adoption regenerates the preview from live state. Without the pin, a ledger
+    change between generation and adoption stores the adopt-time request digest
+    beside the generation-time response digest -- a provenance link that never
+    existed on the wire -- and because the uniqueness triple carries that
+    digest, the same reviewed candidate adopts a second time.
+    """
+
+    preview, seed, support = _seed_preview(lab)
+    reviewed_digest = preview.request_sha256
+    service = _service(lab)
+    adopted = service.adopt_inference(
+        preview=preview,
+        expected_request_sha256=reviewed_digest,
+        candidate_index=0,
+        candidate=_candidate(support),
+        response_sha256=_RESPONSE_SHA256,
+        identity=lab.identity,
+    )
+
+    lab.cite(seed, "Evidence opposes the claim.", EvidenceStance.OPPOSES)
+    regenerated = _regenerate_preview(lab, seed)
+    assert regenerated.request_sha256 != reviewed_digest
+
+    with pytest.raises(ConflictError) as caught:
+        service.adopt_inference(
+            preview=regenerated,
+            expected_request_sha256=reviewed_digest,
+            candidate_index=0,
+            candidate=_candidate(support),
+            response_sha256=_RESPONSE_SHA256,
+            identity=lab.identity,
+        )
+
+    assert caught.value.code == "assistant_context_changed"
+    assert adopted.request_sha256 == reviewed_digest
+    assert [item.id for item in service.list_inferences(seed.mission.id)] == [adopted.id]
+    with lab.database.read() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM agent_inferences").fetchone()[0] == 1, (
+            "a refused adoption must persist nothing"
+        )
+
+
+def test_adoption_refuses_a_malformed_expected_request_digest(lab: Lab) -> None:
+    preview, seed, support = _seed_preview(lab)
+
+    with pytest.raises(IntegrityError) as caught:
+        _service(lab).adopt_inference(
+            preview=preview,
+            expected_request_sha256="not-a-digest",
+            candidate_index=0,
+            candidate=_candidate(support),
+            response_sha256=_RESPONSE_SHA256,
+            identity=lab.identity,
+        )
+
+    assert caught.value.code == "inference_request_digest_invalid"
+    assert _service(lab).list_inferences(seed.mission.id) == ()
+
+
+def test_steady_state_adoption_is_unchanged_by_the_pin(lab: Lab) -> None:
+    """An unchanged ledger adopts exactly as before, with the digest pair intact."""
+
+    preview, seed, support = _seed_preview(lab)
+    regenerated = _regenerate_preview(lab, seed)
+    assert regenerated.request_sha256 == preview.request_sha256
+
+    inference = _service(lab).adopt_inference(
+        preview=regenerated,
+        expected_request_sha256=preview.request_sha256,
+        candidate_index=0,
+        candidate=_candidate(support),
+        response_sha256=_RESPONSE_SHA256,
+        identity=lab.identity,
+    )
+
+    assert inference.request_sha256 == preview.request_sha256
+    assert inference.response_sha256 == _RESPONSE_SHA256
+    assert [item.id for item in _service(lab).list_inferences(seed.mission.id)] == [inference.id]
 
 
 def test_adoption_revalidates_evidence_withdrawn_since_preview(lab: Lab) -> None:
@@ -277,6 +377,7 @@ def test_adoption_enforces_input_bounds(lab: Lab) -> None:
     with pytest.raises(IntegrityError) as index_caught:
         service.adopt_inference(
             preview=preview,
+            expected_request_sha256=preview.request_sha256,
             candidate_index=preview.max_candidates,
             candidate=_candidate(support),
             response_sha256=_RESPONSE_SHA256,
@@ -287,6 +388,7 @@ def test_adoption_enforces_input_bounds(lab: Lab) -> None:
     with pytest.raises(IntegrityError) as digest_caught:
         service.adopt_inference(
             preview=preview,
+            expected_request_sha256=preview.request_sha256,
             candidate_index=0,
             candidate=_candidate(support),
             response_sha256="not-a-digest",
@@ -297,6 +399,7 @@ def test_adoption_enforces_input_bounds(lab: Lab) -> None:
     with pytest.raises(IntegrityError) as citation_caught:
         service.adopt_inference(
             preview=preview,
+            expected_request_sha256=preview.request_sha256,
             candidate_index=0,
             candidate=FindingCandidate(
                 statement="A candidate with no citations.",
@@ -312,6 +415,7 @@ def test_adoption_enforces_input_bounds(lab: Lab) -> None:
     with pytest.raises(IntegrityError) as limit_caught:
         service.adopt_inference(
             preview=preview,
+            expected_request_sha256=preview.request_sha256,
             candidate_index=0,
             candidate=FindingCandidate(
                 statement="A candidate citing too much.",
@@ -572,6 +676,7 @@ def test_agent_inference_tables_are_append_only(lab: Lab) -> None:
     # Promote a second, unretracted inference so the promotions table has a row.
     second = _service(lab).adopt_inference(
         preview=preview,
+        expected_request_sha256=preview.request_sha256,
         candidate_index=1,
         candidate=_candidate(support, statement="A second adopted candidate."),
         response_sha256=_RESPONSE_SHA256,
@@ -714,6 +819,7 @@ def test_claim_scoped_markdown_brief_carries_only_that_claims_inferences(lab: La
     )
     foreign_inference = service.adopt_inference(
         preview=other_preview,
+        expected_request_sha256=other_preview.request_sha256,
         candidate_index=0,
         candidate=FindingCandidate(
             statement="An inference adopted on the other claim.",
