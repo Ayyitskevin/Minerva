@@ -1,7 +1,7 @@
 ---
 repository: Ayyitskevin/Minerva
 phase: FABLE_PLANNING
-status: PHASE_0E_DELIVERED (PR #33, main 259ee17); remaining work is gated on D-2
+status: PHASE_0E_DELIVERED (PRs #33/#34/#35, main c8d32fa); remaining work is gated on D-2
 base_commit: b650c01 (merge of PR #31)
 supersedes: docs/FABLE_MINERVA_GAME_PLAN_2.md
 ---
@@ -272,18 +272,13 @@ silence:
    naming, pinning, and a static-gate allowlist decision — a review-gated
    surface. The same decision falls on Athena, where `cryptography` is currently
    only an implicit extra.
-7. **Two fleet doctrines that read as contradictory (new, surfaced 2026-08-09).**
-   Athena records a deliberate decision *not* to sign its own events:
-   `core/activity_chain.py:11-14` — "minus the signatures, on purpose… Athena's
-   server holds every credential, so a server-side signature would attest
-   nothing a hash does not." ADR 0009's entire case for ed25519 over Athena's
-   HMAC idiom is the opposite premise: that the verifier must not be able to
-   forge, so that an auditor can check attribution independently. These are
-   probably reconcilable — signing *across* a system boundary to a verifier that
-   does not hold your credential is a genuinely different proposition from
-   signing your own log for yourself — but the distinction is currently unstated
-   on both sides. D-2's acceptance should make it explicitly, so the fleet does
-   not carry two written doctrines that appear to contradict each other.
+7. **Two fleet doctrines that read as contradictory — RESOLVED 2026-08-09, see
+   section 8.** Athena's deliberate decision not to sign its own events and ADR
+   0009's case for ed25519 are one principle applied to two custody
+   arrangements, not a conflict. Resolving it settles a question the drafts left
+   open — what a signature actually attests — and the answer narrows this item
+   and item 3, and shrinks the Athena-side work. Section 8 carries the analysis
+   and the revisions ADR 0009 needs before acceptance.
 
 This plan does not begin D-2, and no phase of it may.
 
@@ -384,3 +379,92 @@ requires (R12: entropy is the enemy).
 | D-6 | Retrieval/OCR/crawling | Unopened; out of this horizon |
 | D-7 | Signed exports | Unopened; D-2 would supply the signer |
 | D-8 | License | Unopened; human legal decision |
+
+## 8. Acceptance item 7 resolved — what a signature attests
+
+Item 7 asked whether two written fleet doctrines contradict each other. Read
+directly at the source rather than through a summary, they do not: they are one
+principle applied to two different custody arrangements. Stating that principle
+also settles a question both D-2 drafts left open, and the answer makes the gate
+smaller rather than larger.
+
+**The two texts.** Athena, `core/activity_chain.py:11-14`: "Adapted from Buzz's
+'every action is a signed event in one log' — minus the signatures, on purpose.
+Buzz members sign with their own keys; Athena's server holds every credential,
+so a server-side signature would attest nothing a hash does not." Minerva, ADR
+0009 (*Why asymmetric, and not shared-secret HMAC*): "with a shared secret,
+Minerva itself holds the material needed to forge attribution… For a system
+whose entire purpose is records a third party can check, the verifier must not
+also be a potential forger."
+
+**The principle both are instances of:** *a signature attests only to the extent
+that the party checking it could not have produced it.*
+
+- **Athena's activity trail.** The writer, the key custodian, and the verifier
+  are the same server. It could produce any signature it could check, so a
+  signature adds nothing over the hash chain. Athena's conclusion is correct and
+  its instrument — a hash chain — is the right one.
+- **The Athena→Minerva request seam.** Custodian (Athena) and verifier (Minerva)
+  are different parties with separate credential custody. Minerva cannot produce
+  Athena's signature, so the signature carries attribution a hash cannot. ADR
+  0009's conclusion is correct and ed25519 is the right instrument.
+
+Neither doctrine needs amending. What each needs is to say which arrangement it
+is describing, so the next reader does not have to re-derive this.
+
+**The corollary, which is the useful part.** Athena's premise — the server holds
+every credential — remains true after D-2. The ed25519 private key would live on
+the same host as every other Athena credential, and Athena's agents are ordinary
+user rows holding no key material of their own
+(`migrations/0028_user_is_agent.sql:11`). So a signature on a research request
+attests **that the Athena deployment emitted it** — and does not attest that any
+particular agent did, or that a human approved it.
+
+A per-agent URN such as `athena:planner-1`, signed by one server-held key, is
+therefore a label chosen by the signer, not an authenticated identity. Minerva
+could verify "Athena signed this, and the payload says planner-1"; it could
+never verify that planner-1 originated it. That is exactly the status Athena
+already assigns its own worker identities: `agent_workers.worker_key` is
+"self-declared… Athena never routes, schedules, or authorizes on either"
+(`migrations/0065_agent_workers.sql:35-37`). **Minerva must not accept as
+authenticated a distinction Athena itself treats as self-declared** — doing so
+would be the actor header with extra steps, which ADR 0009 already refuses by
+name.
+
+**Three consequences for D-2:**
+
+1. **One principal per deployment, not per agent.** Register `athena`. That is
+   the unit the key actually corresponds to, so it is the only unit the
+   signature can honestly name. Per-agent identity, if a consumer ever wants it,
+   travels as inert metadata explicitly labeled self-declared — the treatment
+   the planned Icarus result contract already gives foreign run metadata.
+2. **It shrinks the work.** Section 4's verification found that minting stable
+   per-agent URNs is new construction on the Athena side. Under this resolution
+   that item largely disappears: one deployment, one keypair, one registry row.
+   The two load-bearing gaps — holding a private key and storing it at 0600 —
+   are unchanged, and they remain the real precondition.
+3. **It narrows acceptance item 3.** Rotation churns one URN rather than a
+   family of them, and "attribution continuity across rotation" shrinks to a
+   single principal whose key changed — recordable as revoke + re-register with
+   both rows retained, which the append-only design already does.
+
+**Revisions ADR 0009 needs before acceptance** (it is Proposed; this is planning
+input, not an edit to another agent's draft):
+
+- State the attestation boundary in the ADR's own words: the signature attests
+  the emitting deployment, not an agent and not a human approval. An auditor
+  will rely on this property, so it must not live only in a plan document.
+- Resolve principal granularity to per-deployment, or record why per-agent
+  survives the corollary above.
+- Note that Athena's no-signing doctrine is consistent with this ADR under the
+  stated principle, so a future reader does not read them as opposed.
+
+ADR 0009 already opens by recording the keypair precondition as **unmet** (lines
+11-14) — which section 4's correction independently confirms, and which is worth
+crediting: the draft was honest about its own blocker before this review
+existed. That same honesty should extend to what the signature will and will not
+prove once the precondition is met.
+
+Items 1–6 of section 4 remain open and unchanged. **This resolution opens no
+gate.** D-2 is still Kevin's to record, and the Athena-side precondition is
+still unmet.
