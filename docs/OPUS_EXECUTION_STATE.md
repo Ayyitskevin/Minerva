@@ -70,6 +70,42 @@ following drift, corrected here rather than silently edited in place:
   every connection that executes application SQL, but not on the
   ancillary backup/restore page-copy connections, which issue no DML.
 
+## Corrections — 2026-08-09 (plan 3, Phase 0E)
+
+Plan 3 (`docs/FABLE_MINERVA_GAME_PLAN_3.md`) supersedes plan 2 as the
+working document and re-verified this file against `main` at `aef7631`.
+The following entries above were true when written and are no longer.
+Recorded here rather than edited in place, per this file's own rule.
+
+- **PR #29 is merged.** "Current phase" and "Next task" hold repository
+  integration on open PR #29 and "Blockers" names its pending human
+  review. It merged as `a3afc51`; every remote branch is an ancestor of
+  `main`. There is no open integration hold from Phase 0C.
+- **D-1, D-10, and D-11 are decided and implemented.** "Next task" lists
+  them as still awaiting Kevin. Kevin's directive of 2026-07-30 opened
+  all three; PR #31 (`b650c01`) implemented them — migration 0005,
+  `assist adopt`, `assist retract-inference`,
+  `finding add --from-inference`, the manifest correction vocabulary, and
+  the staged restore migration. Plan 3 section 3 is the first recorded
+  review of that work, and Phase 0E fixes the three findings it
+  confirmed. The gate frontier is now D-2, still unopened.
+- **The structural baselines are superseded.** "Schema 4, 15 tables, 14
+  indexes, 30 triggers" was measured before migration 0005. Measured on
+  a freshly initialized database at this branch: **schema 5, 19 tables,
+  19 indexes, 38 triggers**. `doctor --deep` reports twelve checks, not
+  eleven: `inference_integrity` joined them in PR #31.
+- **Counts are historical snapshots, again.** The "635 tests, 177
+  security-marked, 90.18%" correction above was true after slice 7. At
+  the end of Phase 0E the suite collects **769 tests, 217 security-marked,
+  90.55% branch coverage** against the 88% floor. (The count fell by three
+  and the security-marked count by seven when the unwired `CsrfProtector`
+  and its tests were deleted; see plan 3 issue 6.)
+- **The frontmatter is stale by design, not by drift.** `plan:` still
+  names plan 2 and `base_commit:` the merge of PR #14, which is what this
+  file's execution phase actually ran against. Phase 0E runs against
+  `aef7631` on branch `opus/minerva-plan3-phase0e`; the header is left
+  alone so the record of the earlier phase stays readable.
+
 ## Completed slices
 
 ### Slice 1 — targeted fulfillment indexing (COMPLETE, all gates green)

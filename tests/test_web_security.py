@@ -9,17 +9,11 @@ from fastapi.responses import JSONResponse
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from minerva.web.security import (
-    CSRF_COOKIE_NAME,
-    CSRF_FORM_FIELD,
-    CsrfProtector,
-    LocalSecurityMiddleware,
-)
+from minerva.web.security import LocalSecurityMiddleware
 
 pytestmark = pytest.mark.security
 
 
-_CSRF_SECRET = b"minerva-test-csrf-secret-is-at-least-32-bytes"
 _GENERIC_ERRORS = {
     400: {"error": {"code": "invalid_request", "message": "Request rejected."}},
     403: {"error": {"code": "forbidden", "message": "Request rejected."}},
@@ -31,9 +25,8 @@ def _build_app(
     *,
     maximum_body_bytes: int = 4_096,
     allowed_test_hosts: Sequence[str] = (),
-) -> tuple[ASGIApp, CsrfProtector]:
+) -> ASGIApp:
     app = FastAPI()
-    csrf = CsrfProtector(_CSRF_SECRET)
 
     @app.get("/ok")
     async def ok() -> dict[str, bool]:
@@ -53,22 +46,10 @@ def _build_app(
             },
         )
 
-    @app.post("/csrf")
-    async def csrf_mutation(request: Request) -> JSONResponse:
-        form = await request.form()
-        submitted_value = form.get(csrf.form_field)
-        submitted_token = submitted_value if isinstance(submitted_value, str) else None
-        if not csrf.validate(request.cookies.get(csrf.cookie_name), submitted_token):
-            return JSONResponse(_GENERIC_ERRORS[403], status_code=403)
-        return JSONResponse({"ok": True})
-
-    return (
-        LocalSecurityMiddleware(
-            app,
-            max_request_body_bytes=maximum_body_bytes,
-            allowed_test_hosts=allowed_test_hosts,
-        ),
-        csrf,
+    return LocalSecurityMiddleware(
+        app,
+        max_request_body_bytes=maximum_body_bytes,
+        allowed_test_hosts=allowed_test_hosts,
     )
 
 
@@ -77,7 +58,7 @@ def _build_app(
     ["localhost", "localhost:8080", "127.0.0.1", "127.0.0.1:8080", "[::1]", "[::1]:8080"],
 )
 def test_production_loopback_hosts_are_accepted(host: str) -> None:
-    app, _ = _build_app()
+    app = _build_app()
     with TestClient(app) as client:
         response = client.get("/ok", headers={"Host": host})
 
@@ -99,7 +80,7 @@ def test_production_loopback_hosts_are_accepted(host: str) -> None:
     ],
 )
 def test_non_loopback_or_malformed_hosts_are_rejected_without_reflection(host: str) -> None:
-    app, _ = _build_app()
+    app = _build_app()
     with TestClient(app) as client:
         response = client.get("/ok", headers={"Host": host})
 
@@ -109,8 +90,8 @@ def test_non_loopback_or_malformed_hosts_are_rejected_without_reflection(host: s
 
 
 def test_test_host_requires_explicit_constructor_allowance() -> None:
-    denied_app, _ = _build_app()
-    allowed_app, _ = _build_app(allowed_test_hosts=("testserver",))
+    denied_app = _build_app()
+    allowed_app = _build_app(allowed_test_hosts=("testserver",))
 
     with TestClient(denied_app) as denied_client:
         denied = denied_client.get("/ok")
@@ -133,7 +114,7 @@ def test_test_host_requires_explicit_constructor_allowance() -> None:
     ],
 )
 def test_matching_loopback_origin_is_accepted(host: str, origin: str) -> None:
-    app, _ = _build_app(allowed_test_hosts=("testserver",))
+    app = _build_app(allowed_test_hosts=("testserver",))
     with TestClient(app) as client:
         response = client.get("/ok", headers={"Host": host, "Origin": origin})
 
@@ -154,7 +135,7 @@ def test_matching_loopback_origin_is_accepted(host: str, origin: str) -> None:
     ],
 )
 def test_invalid_origin_is_rejected_without_reflection(host: str, origin: str) -> None:
-    app, _ = _build_app()
+    app = _build_app()
     with TestClient(app) as client:
         response = client.get("/ok", headers={"Host": host, "Origin": origin})
 
@@ -164,7 +145,7 @@ def test_invalid_origin_is_rejected_without_reflection(host: str, origin: str) -
 
 
 def test_origin_is_optional() -> None:
-    app, _ = _build_app()
+    app = _build_app()
     with TestClient(app) as client:
         response = client.get("/ok", headers={"Host": "localhost:9000"})
 
@@ -172,7 +153,7 @@ def test_origin_is_optional() -> None:
 
 
 def test_security_headers_are_strict_on_success_and_error() -> None:
-    app, _ = _build_app(allowed_test_hosts=("testserver",))
+    app = _build_app(allowed_test_hosts=("testserver",))
     with TestClient(app) as client:
         responses = (client.get("/ok"), client.get("/ok", headers={"Host": "evil.test"}))
 
@@ -192,7 +173,7 @@ def test_security_headers_are_strict_on_success_and_error() -> None:
 
 
 def test_cors_headers_are_never_emitted_even_if_downstream_attempts_them() -> None:
-    app, _ = _build_app(allowed_test_hosts=("testserver",))
+    app = _build_app(allowed_test_hosts=("testserver",))
     with TestClient(app) as client:
         response = client.get(
             "/attempt-cors",
@@ -261,7 +242,7 @@ def _asgi_response(messages: Sequence[Message]) -> tuple[int, dict[bytes, bytes]
 
 
 def test_declared_oversized_body_is_rejected_before_receive() -> None:
-    app, _ = _build_app(maximum_body_bytes=8)
+    app = _build_app(maximum_body_bytes=8)
     messages, receive_count = _invoke_asgi(
         app,
         headers=((b"host", b"localhost"), (b"content-length", b"9")),
@@ -275,7 +256,7 @@ def test_declared_oversized_body_is_rejected_before_receive() -> None:
 
 
 def test_chunked_body_without_content_length_is_bounded_and_not_reflected() -> None:
-    app, _ = _build_app(maximum_body_bytes=8)
+    app = _build_app(maximum_body_bytes=8)
     messages, receive_count = _invoke_asgi(
         app,
         headers=((b"host", b"localhost"), (b"transfer-encoding", b"chunked")),
@@ -293,7 +274,7 @@ def test_chunked_body_without_content_length_is_bounded_and_not_reflected() -> N
 
 
 def test_missing_content_length_body_is_replayed_to_fastapi() -> None:
-    app, _ = _build_app(maximum_body_bytes=8)
+    app = _build_app(maximum_body_bytes=8)
     messages, _ = _invoke_asgi(
         app,
         headers=((b"host", b"localhost"),),
@@ -310,7 +291,7 @@ def test_missing_content_length_body_is_replayed_to_fastapi() -> None:
 
 @pytest.mark.parametrize("length", [b"-1", b"1x", b""])
 def test_malformed_content_length_gets_generic_error(length: bytes) -> None:
-    app, _ = _build_app(maximum_body_bytes=8)
+    app = _build_app(maximum_body_bytes=8)
     messages, receive_count = _invoke_asgi(
         app,
         headers=((b"host", b"localhost"), (b"content-length", length)),
@@ -325,79 +306,8 @@ def test_malformed_content_length_gets_generic_error(length: bytes) -> None:
         assert length not in body
 
 
-def test_csrf_tokens_are_random_signed_and_cookie_safe() -> None:
-    csrf = CsrfProtector(_CSRF_SECRET)
-    first = csrf.issue_token()
-    second = csrf.issue_token()
-
-    assert first != second
-    assert csrf.validate(first, first)
-    assert csrf.validate(second, second)
-    cookie_header = csrf.cookie_header(first)
-    assert cookie_header.startswith(f"{CSRF_COOKIE_NAME}=")
-    assert "HttpOnly" in cookie_header
-    assert "SameSite=Strict" in cookie_header
-    assert "Path=/" in cookie_header
-    assert "Domain=" not in cookie_header
-
-
-def _post_csrf(app: ASGIApp, *, cookie_token: str | None, form_token: str | None) -> JSONResponse:
-    headers = {"Origin": "http://testserver"}
-    if cookie_token is not None:
-        headers["Cookie"] = f"{CSRF_COOKIE_NAME}={cookie_token}"
-    data = {} if form_token is None else {CSRF_FORM_FIELD: form_token}
-    with TestClient(app) as client:
-        response = client.post("/csrf", headers=headers, data=data)
-    return response
-
-
-def test_csrf_valid_cookie_and_form_pair_is_accepted() -> None:
-    app, csrf = _build_app(allowed_test_hosts=("testserver",))
-    token = csrf.issue_token()
-
-    response = _post_csrf(app, cookie_token=token, form_token=token)
-
-    assert response.status_code == 200
-    assert response.json() == {"ok": True}
-
-
-@pytest.mark.parametrize("case", ["missing_cookie", "missing_form", "tampered", "different"])
-def test_csrf_missing_or_tampered_pair_is_rejected_without_reflection(case: str) -> None:
-    app, csrf = _build_app(allowed_test_hosts=("testserver",))
-    token = csrf.issue_token()
-    other = csrf.issue_token()
-    tampered = f"{token[:-1]}{'A' if token[-1] != 'A' else 'B'}"
-    values = {
-        "missing_cookie": (None, token),
-        "missing_form": (token, None),
-        "tampered": (token, tampered),
-        "different": (token, other),
-    }
-    cookie_token, form_token = values[case]
-
-    response = _post_csrf(app, cookie_token=cookie_token, form_token=form_token)
-
-    assert response.status_code == 403
-    assert response.json() == _GENERIC_ERRORS[403]
-    assert token not in response.text
-    assert other not in response.text
-
-
-def test_csrf_rejects_invalid_configuration_and_malformed_tokens() -> None:
-    with pytest.raises(ValueError, match="at least 32 bytes"):
-        CsrfProtector(b"too-short")
-
-    csrf = CsrfProtector(_CSRF_SECRET)
-    valid = csrf.issue_token()
-    assert not csrf.validate(valid, "not-a-token")
-    assert not csrf.validate(valid, "\N{SNOWMAN}")
-    assert not csrf.validate(None, None)
-    with pytest.raises(ValueError, match="invalid token"):
-        csrf.cookie_header("not-a-token")
-
-
 def test_pathological_content_length_is_rejected_without_integer_conversion_or_reflection() -> None:
-    app, _ = _build_app(maximum_body_bytes=8)
+    app = _build_app(maximum_body_bytes=8)
     pathological = b"9" * 5_000
     messages, receive_count = _invoke_asgi(
         app,
@@ -413,7 +323,7 @@ def test_pathological_content_length_is_rejected_without_integer_conversion_or_r
 
 
 def test_excessive_empty_request_message_stream_is_bounded() -> None:
-    app, _ = _build_app(maximum_body_bytes=8)
+    app = _build_app(maximum_body_bytes=8)
     request_messages: tuple[Message, ...] = tuple(
         {"type": "http.request", "body": b"", "more_body": True} for _ in range(1_025)
     )

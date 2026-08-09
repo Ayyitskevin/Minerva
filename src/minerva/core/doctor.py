@@ -337,8 +337,17 @@ def _deep_checks(connection: sqlite3.Connection) -> list[DoctorCheck]:
         )
 
     # Symmetric with findings: every citation of an unretracted adopted
-    # inference must resolve to an existing, active evidence card that
-    # evaluates the same claim in the same mission.
+    # inference must resolve to an existing evidence card that evaluates the
+    # same claim in the same mission.
+    #
+    # Withdrawn is allowed here, and that is a deliberate semantic. Withdrawing
+    # evidence an older inference cites is two documented first-class verbs used
+    # in sequence, not tampering, and D-9's rule is that Minerva never
+    # auto-retracts on the operator's behalf. Reading it as corruption made
+    # honest use fail deep doctor and blocked backups while the brief still
+    # rendered the citation as if active. Withdrawal is now marked on the
+    # reading surface and retraction stays the operator's judgment. A citation
+    # that is missing, tampered with, or scoped to another claim still fails.
     inference_count = 0
     inference_snapshot_cache = new_snapshot_cache()
     try:
@@ -370,7 +379,7 @@ def _deep_checks(connection: sqlite3.Connection) -> list[DoctorCheck]:
                     connection,
                     evidence_id=str(citation_row["evidence_id"]),
                     mission_id=str(row["mission_id"]),
-                    allow_withdrawn=False,
+                    allow_withdrawn=True,
                     snapshot_cache=inference_snapshot_cache,
                 )
                 if citation.claim_id != str(row["claim_id"]):
@@ -520,6 +529,9 @@ def _verify_material_audit_links(connection: sqlite3.Connection) -> int:
         "evidence.card.withdrawn": 0,
         "research.finding.created": 0,
         "research.finding.retracted": 0,
+        "assist.inference.adopted": 0,
+        "assist.inference.retracted": 0,
+        "assist.inference.promoted": 0,
         "synthesis.brief.exported": 0,
     }
     reconciled = 0
@@ -778,6 +790,90 @@ def _verify_material_audit_links(connection: sqlite3.Connection) -> int:
         )
         _require_event_details(details, {"retraction_id": str(row["id"])})
         expected_counts["research.finding.retracted"] += 1
+        reconciled += 1
+
+    # Adopted inferences reconcile exactly as findings do, and for the same
+    # reason: without this, deleting a retraction row silently returns model
+    # text to the Markdown brief as an asserted statement while its
+    # `assist.inference.retracted` event dangles unnoticed. All three tables
+    # are checked in both directions — a row with no event here, an event with
+    # no row through the count comparison below.
+    for row in connection.execute(
+        """
+        SELECT id, mission_id, provider, model, request_sha256, candidate_index,
+               response_sha256, system_prompt_version, creator_id, run_id
+        FROM agent_inferences ORDER BY id
+        """
+    ):
+        citation_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM agent_inference_citations WHERE inference_id = ?",
+                (str(row["id"]),),
+            ).fetchone()[0]
+        )
+        details = _one_event_details(
+            connection,
+            event_type="assist.inference.adopted",
+            entity_type="agent_inference",
+            entity_id=str(row["id"]),
+            mission_id=str(row["mission_id"]),
+            actor_id=str(row["creator_id"]),
+            run_id=str(row["run_id"]),
+        )
+        _require_event_details(
+            details,
+            {
+                "candidate_index": int(row["candidate_index"]),
+                "citation_count": citation_count,
+                "model": str(row["model"]),
+                "provider": str(row["provider"]),
+                "request_sha256": str(row["request_sha256"]),
+                "response_sha256": str(row["response_sha256"]),
+                "system_prompt_version": str(row["system_prompt_version"]),
+            },
+        )
+        expected_counts["assist.inference.adopted"] += 1
+        reconciled += 1
+
+    for row in connection.execute(
+        """
+        SELECT id, mission_id, inference_id, creator_id, run_id
+        FROM agent_inference_retractions ORDER BY id
+        """
+    ):
+        details = _one_event_details(
+            connection,
+            event_type="assist.inference.retracted",
+            entity_type="agent_inference",
+            entity_id=str(row["inference_id"]),
+            mission_id=str(row["mission_id"]),
+            actor_id=str(row["creator_id"]),
+            run_id=str(row["run_id"]),
+        )
+        _require_event_details(details, {"retraction_id": str(row["id"])})
+        expected_counts["assist.inference.retracted"] += 1
+        reconciled += 1
+
+    for row in connection.execute(
+        """
+        SELECT id, mission_id, inference_id, finding_id, creator_id, run_id
+        FROM agent_inference_promotions ORDER BY id
+        """
+    ):
+        details = _one_event_details(
+            connection,
+            event_type="assist.inference.promoted",
+            entity_type="agent_inference",
+            entity_id=str(row["inference_id"]),
+            mission_id=str(row["mission_id"]),
+            actor_id=str(row["creator_id"]),
+            run_id=str(row["run_id"]),
+        )
+        _require_event_details(
+            details,
+            {"finding_id": str(row["finding_id"]), "promotion_id": str(row["id"])},
+        )
+        expected_counts["assist.inference.promoted"] += 1
         reconciled += 1
 
     for row in connection.execute(

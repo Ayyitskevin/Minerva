@@ -136,6 +136,38 @@ def _seed_claim_with_evidence(
     return database, mission_id, claim_id, _identifier(evidence, "evidence")
 
 
+def _request_digest(
+    capsys: pytest.CaptureFixture[str],
+    database: Path,
+    claim_id: str,
+) -> str:
+    """Read the request digest the way an operator does: from a local preview.
+
+    `assist finding-candidates` without `--confirm-external-send` calls nothing
+    external; it prints the exact digest that authorizes the invocation and,
+    after this change, the adoption.
+    """
+
+    preview = _invoke(
+        capsys,
+        "assist",
+        "finding-candidates",
+        "--db",
+        str(database),
+        "--claim",
+        claim_id,
+        "--provider",
+        "openai",
+        "--model",
+        "test-model-1",
+    )
+    document = preview["preview"]
+    assert isinstance(document, dict)
+    digest = document["request_sha256"]
+    assert isinstance(digest, str)
+    return digest
+
+
 def _adopt(
     capsys: pytest.CaptureFixture[str],
     database: Path,
@@ -145,7 +177,9 @@ def _adopt(
     statement: str = "The bounded evidence supports a cautious adopted inference.",
     uncertainty: str = "The evidence does not establish generality.",
     candidate_index: int = 0,
+    expected_request_sha256: str | None = None,
 ) -> dict[str, object]:
+    digest = expected_request_sha256 or _request_digest(capsys, database, claim_id)
     result = _invoke(
         capsys,
         "assist",
@@ -158,6 +192,8 @@ def _adopt(
         "openai",
         "--model",
         "test-model-1",
+        "--expected-request-sha256",
+        digest,
         "--candidate-index",
         str(candidate_index),
         "--response-sha256",
@@ -257,7 +293,8 @@ def test_assist_adopt_reports_structured_errors(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     database, _mission_id, claim_id, evidence_id = _seed_claim_with_evidence(capsys, tmp_path)
-    _adopt(capsys, database, claim_id, evidence_id)
+    digest = _request_digest(capsys, database, claim_id)
+    _adopt(capsys, database, claim_id, evidence_id, expected_request_sha256=digest)
 
     duplicate = _invoke_error(
         capsys,
@@ -271,6 +308,8 @@ def test_assist_adopt_reports_structured_errors(
         "openai",
         "--model",
         "test-model-1",
+        "--expected-request-sha256",
+        digest,
         "--candidate-index",
         "0",
         "--response-sha256",
@@ -325,6 +364,36 @@ def test_assist_adopt_reports_structured_errors(
         "--reason",
         "The observation was measured incorrectly.",
     )
+    # The ledger moved, so the reviewed request digest is stale by construction;
+    # a fresh preview is what an operator would review before adopting again,
+    # and adoption's own citation revalidation is then what refuses.
+    stale = _invoke_error(
+        capsys,
+        "assist",
+        "adopt",
+        "--db",
+        str(database),
+        "--claim",
+        claim_id,
+        "--provider",
+        "openai",
+        "--model",
+        "test-model-1",
+        "--expected-request-sha256",
+        digest,
+        "--candidate-index",
+        "1",
+        "--response-sha256",
+        _RESPONSE_SHA256,
+        "--statement",
+        "A candidate reviewed against an older ledger.",
+        "--uncertainty",
+        "The context moved underneath it.",
+        "--evidence",
+        evidence_id,
+    )
+    assert stale["error"]["code"] == "assistant_context_changed"  # type: ignore[index]
+
     withdrawn = _invoke_error(
         capsys,
         "assist",
@@ -337,6 +406,8 @@ def test_assist_adopt_reports_structured_errors(
         "openai",
         "--model",
         "test-model-1",
+        "--expected-request-sha256",
+        _request_digest(capsys, database, claim_id),
         "--candidate-index",
         "1",
         "--response-sha256",
@@ -349,6 +420,50 @@ def test_assist_adopt_reports_structured_errors(
         evidence_id,
     )
     assert withdrawn["error"]["code"] == "citation_withdrawn"  # type: ignore[index]
+
+
+def test_assist_adopt_requires_the_reviewed_request_digest(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An optional pin is no pin: the flag is mandatory on the verb that persists."""
+
+    database, _mission_id, claim_id, evidence_id = _seed_claim_with_evidence(capsys, tmp_path)
+
+    with pytest.raises(SystemExit) as caught:
+        main(
+            (
+                "assist",
+                "adopt",
+                "--db",
+                str(database),
+                "--claim",
+                claim_id,
+                "--provider",
+                "openai",
+                "--model",
+                "test-model-1",
+                "--candidate-index",
+                "0",
+                "--response-sha256",
+                _RESPONSE_SHA256,
+                "--statement",
+                "An adoption with no reviewed request behind it.",
+                "--uncertainty",
+                "Nothing pins it to a real exchange.",
+                "--evidence",
+                evidence_id,
+            )
+        )
+
+    assert caught.value.code == 2
+    assert "--expected-request-sha256" in capsys.readouterr().err
+
+    doctor = _invoke(capsys, "doctor", "--db", str(database), "--deep")
+    assert doctor["doctor"]["ok"] is True  # type: ignore[index]
+    audit = _invoke(capsys, "audit", "list", "--db", str(database), "--limit", "500")
+    event_types = {event["event_type"] for event in audit["audit_events"]}  # type: ignore[index]
+    assert "assist.inference.adopted" not in event_types
 
 
 def test_assist_retract_inference_mirrors_finding_retract(

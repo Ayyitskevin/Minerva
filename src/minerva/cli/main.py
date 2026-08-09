@@ -398,7 +398,9 @@ def _cmd_assist_adopt(args: argparse.Namespace) -> Outcome:
     database = _database(args)
     # The preview is regenerated locally and never leaves the machine; adoption
     # re-supplies the reviewed candidate text and the provider response digest,
-    # and the service revalidates every citation against the live record.
+    # and the service revalidates every citation against the live record. The
+    # regenerated preview must still match the request digest the operator
+    # reviewed and sent, which is what --expected-request-sha256 pins.
     preview = AssistanceService(database).preview_finding_candidates(
         claim_id=cast(str, args.claim),
         selection=selection,
@@ -407,6 +409,7 @@ def _cmd_assist_adopt(args: argparse.Namespace) -> Outcome:
     )
     inference = AdoptionService(database).adopt_inference(
         preview=preview,
+        expected_request_sha256=cast(str, args.expected_request_sha256),
         candidate_index=cast(int, args.candidate_index),
         candidate=FindingCandidate(
             statement=cast(str, args.statement),
@@ -742,6 +745,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     adopt.add_argument("--max-candidates", type=int, default=3)
     adopt.add_argument("--max-output-tokens", type=int, default=1_200)
+    adopt.add_argument(
+        "--expected-request-sha256",
+        required=True,
+        help=(
+            "request digest of the reviewed invocation; adoption refuses if the "
+            "regenerated preview no longer matches it"
+        ),
+    )
     adopt.add_argument("--candidate-index", required=True, type=int)
     adopt.add_argument("--response-sha256", required=True)
     adopt.add_argument("--statement", required=True)

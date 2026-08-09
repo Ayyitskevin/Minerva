@@ -238,7 +238,7 @@ def test_nested_duplicate_field_is_rejected_before_model_validation(tmp_path: Pa
     _load_failure(target, "request_duplicate_field")
 
 
-@pytest.mark.parametrize("token", [b"NaN", b"Infinity", b"-Infinity"])
+@pytest.mark.parametrize("token", [b"NaN", b"Infinity", b"-Infinity", b"1e400", b"-1e400"])
 def test_nonstandard_json_numbers_are_rejected(token: bytes, tmp_path: Path) -> None:
     target = tmp_path / "nonstandard.json"
     target.write_bytes(b'{"request":' + token + b"}")

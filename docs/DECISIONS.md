@@ -789,3 +789,63 @@ recommendation, recorded as the second amendment to ADR 0004.
   an older version still means restoring the verified pre-upgrade backup with
   the prior binary into a new path. What closed is the asymmetric gap: moving
   *forward* from a pre-upgrade backup no longer needs the old binary.
+
+## Withdrawal after adoption is state, not corruption (plan 3, issue 3)
+
+Two documented first-class verbs used in sequence — adopt an inference, then
+withdraw a card it cites — produced a clean-looking export, a deep-doctor
+failure, and a refused backup, with nothing on any surface pointing at the
+remedy. That is honest use reading as tampering, and it is the same class of
+defect as D-9's: the record was right and the reading surfaces were not.
+
+- **The Markdown brief marks a withdrawn inference citation inline**, using the
+  marker the citation-resolution section has always used
+  (`**[evd_…]** **WITHDRAWN**`). An adopted inference is model-drafted text; it
+  must not out-assert a human finding by rendering a withdrawn citation as
+  though it still stood. This is Markdown only. The canonical
+  `minerva.research-brief.v2` payload never carried inferences and still does
+  not, so the golden fixtures are byte-identical across this change.
+- **`inference_integrity` now verifies inference citations with
+  `allow_withdrawn=True`.** This narrows ADR 0008's "symmetric with findings"
+  resolution of its third open question, and the asymmetry is the point: a
+  material finding may not rest on withdrawn evidence, because a finding is the
+  operator's own assertion about the claim. An inference asserts nothing — it
+  cannot influence claim status and counts toward nothing — so a withdrawal
+  behind it is a fact to display, not an integrity failure to refuse on. D-9's
+  rule that Minerva never auto-retracts on the operator's behalf means the
+  inference stays until a human retracts it, and until then the correct
+  behaviour is to say so, visibly.
+- **What still fails is unchanged.** A citation that is missing, tampered with,
+  or scoped to a different claim still fails `inference_integrity`, and
+  adoption still refuses to adopt a candidate citing already-withdrawn evidence
+  (`allow_withdrawn=False` at the adoption boundary). Only the post-adoption
+  withdrawal case moved.
+- **Backups are no longer blocked by it.** `BACKUP_ADVISORY_CHECKS` is
+  unchanged and still a short allowlist: `inference_integrity` remains a check
+  that blocks a backup when it fails. It simply no longer fails for a database
+  that is telling the truth — which is exactly the database an operator most
+  wants a copy of before correcting anything.
+
+## An unwired security primitive is a false affordance (plan 3, issue 6)
+
+`CsrfProtector` in `web/security.py` was fully implemented, exported, and
+tested — signed double-submit tokens, `HttpOnly`/`SameSite=Strict` cookie,
+constant-time comparison — and wired into nothing. The review server has no
+unsafe form: every route is a GET, and the only mutation surfaces are the CLI
+and the loopback REST API, which is not cookie-authenticated and so is not the
+threat CSRF answers.
+
+It is deleted. A reader auditing the web boundary saw a CSRF defense in the
+module and its tests passing, and the honest reading of that is "this
+application defends its forms," which was not true of anything. Unused
+security code also rots quietly: it is never exercised against the routes it
+would protect, so the day someone wires it up, its assumptions are years old.
+
+Re-add it with the first unsafe form, from the git history rather than from
+scratch — `git log -- src/minerva/web/security.py` keeps the implementation and
+its tests intact, and re-adding it against a real route is the only way its
+correctness can actually be verified. Nothing about the boundary changed:
+`LocalSecurityMiddleware` still enforces loopback hosts, origin checks, body
+limits, and the strict header set, and no route gained or lost a defense.
+
+This closes plan 2's F2-SURFACES-4.

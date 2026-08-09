@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from math import isfinite
 from typing import cast
 
 MAX_JSON_DEPTH = 64
@@ -51,6 +52,13 @@ def strict_json_loads(text: str) -> object:
     A duplicate key would otherwise let the last occurrence win, so two readers
     could disagree about the same bytes; `Infinity` and `NaN` are not JSON and
     would not survive a round trip through another implementation.
+
+    A number that *overflows* to infinity reaches infinity by a different route:
+    `1e400` is well-formed JSON grammar, so `parse_constant` never sees it and
+    only `parse_float` can. Both routes were always rejected -- an infinite
+    value fails the strict DTOs downstream -- but the overflow arrived as a
+    generic `*_invalid`, which told the reader the document was malformed rather
+    than that it carried a number this contract cannot represent.
     """
 
     def reject_duplicate_keys(pairs: Sequence[tuple[str, object]]) -> dict[str, object]:
@@ -64,12 +72,19 @@ def strict_json_loads(text: str) -> object:
     def reject_non_finite(token: str) -> object:
         raise ValueError(f"non-finite JSON number is forbidden: {token}")
 
+    def reject_non_finite_float(token: str) -> float:
+        value = float(token)
+        if not isfinite(value):
+            raise ValueError(f"non-finite JSON number is forbidden: {token}")
+        return value
+
     return cast(
         object,
         json.loads(
             text,
             object_pairs_hook=reject_duplicate_keys,
             parse_constant=reject_non_finite,
+            parse_float=reject_non_finite_float,
         ),
     )
 

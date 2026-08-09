@@ -411,11 +411,14 @@ def test_fulfillment_rejects_stale_or_incomplete_active_selection(
     if change == "added_after_request":
         lab.cite(seed, "Evidence opposes the claim.", EvidenceStance.OPPOSES)
 
-    _failure(
+    error = _failure(
         capsys,
         _fulfill_argv(lab.database, request_path, tmp_path / "output"),
         "request_evidence_selection_changed",
     )
+
+    # Genuine drift keeps the message that describes it.
+    assert "The active evidence selection has changed." in error
 
 
 @pytest.mark.security
@@ -935,12 +938,18 @@ def test_active_selection_overflow_is_rejected_before_synthesis(
         forbidden,
     )
 
-    _failure(
+    error = _failure(
         capsys,
         _fulfill_argv(lab.database, request_path, output_dir),
         "request_evidence_selection_changed",
     )
 
+    # The refusal is unchanged; only its wording is. Nothing drifted here --
+    # the claim carries more active evidence than a request may enumerate, and
+    # "the active evidence selection has changed" sent an operator looking for
+    # a change that never happened.
+    assert "more active evidence than a request may enumerate" in error
+    assert "selection has changed" not in error
     assert not output_dir.exists()
 
 

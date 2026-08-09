@@ -173,6 +173,18 @@ def _validate_evidence_selection(
             (claim_id, MAX_EXPECTED_ACTIVE_CITATION_IDS + 1),
         )
     )
+    if len(active_citation_ids) > MAX_EXPECTED_ACTIVE_CITATION_IDS:
+        # A request may enumerate at most MAX_EXPECTED_ACTIVE_CITATION_IDS
+        # citations, so a claim with more active cards than that can never
+        # satisfy the complete-ledger policy no matter what the request lists.
+        # Nothing has changed; the claim is simply larger than the contract
+        # can express, and saying "the selection has changed" sent the operator
+        # looking for a drift that never happened. The refusal itself, its
+        # class, and its code are unchanged.
+        raise ConflictError(
+            "request_evidence_selection_changed",
+            "The claim has more active evidence than a request may enumerate.",
+        )
     if expected_citation_ids != active_citation_ids:
         raise ConflictError(
             "request_evidence_selection_changed",

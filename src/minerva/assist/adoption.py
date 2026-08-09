@@ -10,6 +10,7 @@ nothing behind, and regret is handled by retraction, never deletion.
 
 from __future__ import annotations
 
+import hmac
 import re
 import sqlite3
 
@@ -50,6 +51,7 @@ class AdoptionService:
         self,
         *,
         preview: CandidatePreview,
+        expected_request_sha256: str,
         candidate_index: int,
         candidate: FindingCandidate,
         response_sha256: str,
@@ -57,11 +59,27 @@ class AdoptionService:
     ) -> AgentInference:
         """Persist one candidate from one exact preview as a labeled agent inference.
 
-        The record is bound to the preview by `(request_sha256, candidate_index,
-        claim_id)`; re-adopting the same triple is refused so a repeated command
-        cannot silently duplicate the record.
+        `expected_request_sha256` is the digest of the request the operator
+        actually reviewed and sent, and it is the same pin the invoke path
+        requires. Adoption regenerates the preview from live state, so without
+        it a ledger change between generation and adoption stores an adopt-time
+        request digest beside the generation-time response digest -- a
+        provenance pair that never existed on the wire -- and the unique triple
+        `(request_sha256, candidate_index, claim_id)` moves with it, so the same
+        reviewed candidate adopts twice. The pin is compared before anything is
+        read or written, and a mismatch persists nothing.
         """
 
+        if _DIGEST.fullmatch(expected_request_sha256) is None:
+            raise IntegrityError(
+                "inference_request_digest_invalid",
+                "The expected request digest is invalid.",
+            )
+        if not hmac.compare_digest(expected_request_sha256, preview.request_sha256):
+            raise ConflictError(
+                "assistant_context_changed",
+                "Research context changed since the reviewed request; nothing was adopted.",
+            )
         if (
             isinstance(candidate_index, bool)
             or not isinstance(candidate_index, int)

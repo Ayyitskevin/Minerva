@@ -8,8 +8,84 @@ release here is a tag plus this record.
 
 ## Unreleased
 
+### Research record
+
+- A model-drafted candidate the operator judges correct can be **adopted** into
+  the record as a labeled `agent_inference` (gate D-1, ADR 0008): its statement,
+  uncertainty, and citations, plus the provenance needed to reconstruct what
+  produced it — provider, model, request and response digests, prompt version,
+  and the adopting actor and run. Adoption is a human act on one candidate from
+  one preview, CLI-only, and it revalidates every citation against the live
+  record and rescans the text for secrets before storing anything. An inference
+  is never evidence and never a finding: it cannot influence claim status and
+  counts toward nothing.
+- `assist retract-inference` records that an adopted inference is no longer
+  asserted, keeping the row and its history, exactly as finding retraction does.
+  `finding add --from-inference` promotes one into a human finding — the
+  operator's own assertion — linked to the inference that remains its
+  provenance.
+- Inferences and their retraction state (reason, timestamp, actor) are visible
+  wherever findings are read: `mission show`, `claim show`, the REST finding
+  endpoints, the web review page, and their own labeled section of the Markdown
+  brief. Retracted inferences leave the brief as retracted findings do.
+- The Markdown brief marks a **withdrawn citation** behind an adopted inference,
+  so model-drafted text cannot render a citation as active when the ledger says
+  otherwise.
+
+### Contracts
+
+- `minerva.capabilities.v2` gained `evidence.withdraw.cli` and
+  `finding.retract.cli`, so a consumer can discover the correction vocabulary and
+  see that it is CLI-only rather than absent. Additive: no entry was removed or
+  altered.
+- Canonical `minerva.research-brief.v2` bytes are unchanged by adoption.
+  Inferences appear in the Markdown brief only; the golden fixtures are
+  byte-identical.
 - Digest-algorithm constants now drive packet emission, and CLI capability claims
   are checked against actual parser verbs.
+
+### Refusals that now describe the right problem
+
+- `assist adopt` requires `--expected-request-sha256`, the digest of the request
+  the operator actually reviewed. Adoption regenerates the preview from live
+  state, so without the pin a ledger change between generation and adoption
+  stored an adopt-time request digest beside a generation-time response digest,
+  and the same reviewed candidate could be adopted twice. A digest that no
+  longer matches refuses with `assistant_context_changed` and persists nothing.
+- Withdrawing evidence an already-adopted inference cites no longer reports as
+  corruption. `doctor --deep` reports it as state, the brief marks the citation,
+  backups are not refused, and retracting the inference remains the operator's
+  judgment rather than something Minerva does on their behalf. A missing,
+  tampered, or wrong-claim citation still fails the check.
+- A JSON number that *overflows* to infinity (`1e400`) in a research packet or
+  request now reports `packet_nonstandard_number` / `request_nonstandard_number`
+  like `Infinity` does, instead of the generic malformed-document code. Both
+  were always rejected; only one said why.
+- A claim carrying more active evidence than a request may enumerate refuses
+  with "The claim has more active evidence than a request may enumerate."
+  instead of "The active evidence selection has changed." Nothing had changed in
+  that case, and the old wording sent the operator looking for drift. The
+  refusal, its class, and its code are unchanged.
+
+### Security
+
+- The unwired `CsrfProtector` primitive is removed from `minerva.web.security`.
+  It protected no route — the review server has no unsafe form — and a security
+  control that guards nothing reads as a defense the application does not have.
+  The loopback host, origin, body-limit, and strict-header enforcement is
+  unchanged.
+
+### Operator-facing
+
+- `restore` accepts an intact backup at any older recorded schema version and
+  migrates it forward on the private staged copy, deep-validated before
+  publication, recording a `database.migrated` event where the migration
+  actually happened. Restoring a pre-upgrade backup no longer needs the prior
+  binary.
+- `doctor --deep` reconciles adopted, retracted, and promoted inferences against
+  their audit history in both directions. A deleted retraction row — which
+  returns model text to the brief as an asserted statement — is now detected
+  instead of silently accepted.
 - Release records now reflect the published `v0.2.0a1` tag.
 
 ## v0.2.0a1 — 2026-07-28
