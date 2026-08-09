@@ -58,6 +58,14 @@ release here is a tag plus this record.
   judgment rather than something Minerva does on their behalf. A missing,
   tampered, or wrong-claim citation still fails the check.
 
+### Security
+
+- The unwired `CsrfProtector` primitive is removed from `minerva.web.security`.
+  It protected no route — the review server has no unsafe form — and a security
+  control that guards nothing reads as a defense the application does not have.
+  The loopback host, origin, body-limit, and strict-header enforcement is
+  unchanged.
+
 ### Operator-facing
 
 - `restore` accepts an intact backup at any older recorded schema version and

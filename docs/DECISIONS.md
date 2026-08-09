@@ -825,3 +825,27 @@ defect as D-9's: the record was right and the reading surfaces were not.
   that blocks a backup when it fails. It simply no longer fails for a database
   that is telling the truth — which is exactly the database an operator most
   wants a copy of before correcting anything.
+
+## An unwired security primitive is a false affordance (plan 3, issue 6)
+
+`CsrfProtector` in `web/security.py` was fully implemented, exported, and
+tested — signed double-submit tokens, `HttpOnly`/`SameSite=Strict` cookie,
+constant-time comparison — and wired into nothing. The review server has no
+unsafe form: every route is a GET, and the only mutation surfaces are the CLI
+and the loopback REST API, which is not cookie-authenticated and so is not the
+threat CSRF answers.
+
+It is deleted. A reader auditing the web boundary saw a CSRF defense in the
+module and its tests passing, and the honest reading of that is "this
+application defends its forms," which was not true of anything. Unused
+security code also rots quietly: it is never exercised against the routes it
+would protect, so the day someone wires it up, its assumptions are years old.
+
+Re-add it with the first unsafe form, from the git history rather than from
+scratch — `git log -- src/minerva/web/security.py` keeps the implementation and
+its tests intact, and re-adding it against a real route is the only way its
+correctness can actually be verified. Nothing about the boundary changed:
+`LocalSecurityMiddleware` still enforces loopback hosts, origin checks, body
+limits, and the strict header set, and no route gained or lost a defense.
+
+This closes plan 2's F2-SURFACES-4.
