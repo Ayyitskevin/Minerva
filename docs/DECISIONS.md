@@ -17,6 +17,7 @@
 - [Mission Research Queue v1: schema-free structural review index](#mission-research-queue-v1-schema-free-structural-review-index) — **Accepted 2026-08-08; this non-persisted local index only**
 - [Lens v1 receipt verification and current-database reproduction](#lens-v1-receipt-verification-and-current-database-reproduction) — **Accepted 2026-08-08; these local read-only checks only**
 - [Review Dossier v1: atomic local review composition](#review-dossier-v1-atomic-local-review-composition) — **Accepted 2026-08-08; this local read-only composition only**
+- [PROV-O/RO-Crate interoperability decision packet](PROVENANCE_INTEROPERABILITY_DECISION_PACKET.md) — **Proposed; pending explicit owner review**
 
 ## Milestone 1 implementation decisions
 
@@ -1337,9 +1338,32 @@ item.
   exact current replay, isolation, bounds, and zero mutation; they make no truth,
   relevance, priority, actionability, quality, or authenticity claim.
 
-The next proposed dependency is a PROV-O/RO-Crate compatibility decision packet,
-design only, proving a lossless mapping and deciding canonicalization, context pinning,
-and source-byte disclosure before any canonical exporter can be considered. An
-explicit Lens-to-evidence bridge, persistent queue operations, trust-model change,
-migration, D-2/D-3/D-5 implementation, packet v3, or standards exporter continues to
-need its own recorded owner decision.
+## PROV-O/RO-Crate interoperability mapping — proposed, not accepted
+
+The [interoperability decision packet](PROVENANCE_INTEROPERABILITY_DECISION_PACKET.md)
+records the official PROV-O/RO-Crate constraints, schema-v5 field coverage, precise
+losslessness levels, disclosure modes, threat controls, and proof obligations needed
+before an exporter can be considered. It is a design record only and remains pending
+explicit owner review.
+
+The packet establishes that no existing artifact is a lossless source for complete
+schema-v5 provenance: packet v2 omits source BLOBs, historical status events,
+retracted findings, and adopted-inference history; Lineage and Dossier intentionally
+have narrower scopes. Base PROV-O and RO-Crate also require a Minerva profile to retain
+exact UTF-8 byte spans, stance, correction, inference, and deterministic-receipt
+semantics. "Lossless" must therefore name its exact projection and byte-disclosure
+mode.
+
+The proposed first proof is a claim-owned, metadata-only structured closure with a
+versioned Minerva profile. Attached source bytes, mission-wide scope, profile/IRI
+publication, context custody, semantically correct RO-Crate `datePublished`, license,
+canonicalization, identity representation, disclosure fields, and export/audit
+lifecycle remain owner decisions. Packet v2 stays unchanged and remains the sole
+canonical agent-facing research artifact.
+
+This proposal authorizes no serializer, exporter, file writer, CLI/API/MCP capability,
+context asset, public profile, source-byte disclosure, audit event, migration, trust
+change, external principal, signature, packet v3 field, or protocol. An explicit
+Lens-to-evidence bridge, persistent queue operations, D-2/D-3/D-5 implementation, and
+every standards-export implementation likewise still need their own recorded owner
+decision.

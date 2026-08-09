@@ -257,6 +257,7 @@ verification/replay. Queue v1 does not invoke this graph: Claim Lineage supplies
 topology, not a reason-code or actionability policy. A later continuation separately
 accepts Review Dossier v1, which invokes a connection-bound form of this same graph in
 one shared query-only snapshot and cross-checks overlapping Review facts; it does not
-change Lineage scope or make topology actionable. A PROV-O/RO-Crate compatibility
-decision packet is now the next proposed dependency. Persistence, a canonical
-standards exporter, or external protocol work remains separately gated.
+change Lineage scope or make topology actionable. The proposed PROV-O/RO-Crate
+interoperability decision packet is now drafted and awaits explicit owner disposition.
+Persistence, a proof serializer, a canonical standards exporter, or external protocol
+work remains separately gated.

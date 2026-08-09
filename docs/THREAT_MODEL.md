@@ -198,6 +198,8 @@ and non-CLI integration authentication require a later threat model and explicit
 product/security approval. The accepted local Review Dossier slice does not authorize
 a persistent assign/defer/resolve queue, migration, external principal, cryptographic
 identity, Athena/Icarus adapter, MCP or other agent protocol, packet revision,
-Lens-to-evidence mutation, or canonical PROV-O/RO-Crate exporter. A PROV-O/RO-Crate
-compatibility decision packet is the next proposed dependency; implementation of an
-exporter remains a separate owner decision.
+Lens-to-evidence mutation, or canonical PROV-O/RO-Crate exporter. The proposed
+[PROV-O/RO-Crate interoperability decision packet](PROVENANCE_INTEROPERABILITY_DECISION_PACKET.md)
+now records the offline-context, disclosure, identity, canonicalization, and
+correction-semantics threats; it remains unaccepted, and implementation of an exporter
+is a separate owner decision.

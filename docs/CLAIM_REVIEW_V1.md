@@ -264,8 +264,8 @@ review index; it does not change Claim Review, and an emitted cue does not becom
 unresolved work, a recommended action, priority, assignment, or completion state.
 Dossier v1 retains the focal Review already derived by Queue and cross-checks it
 against focal Lineage in the same read snapshot; it adds no new review policy or
-semantic promotion. The next proposed dependency is a PROV-O/RO-Crate compatibility
-decision packet, design only.
+semantic promotion. The proposed PROV-O/RO-Crate interoperability decision packet is
+now drafted and awaits explicit owner disposition; it authorizes no exporter.
 
 A persisted assign/defer/resolve queue, schema migration, external principal,
 cryptographic identity, Athena/Icarus adapter, MCP or other external/agent-facing API,

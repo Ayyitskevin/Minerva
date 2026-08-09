@@ -784,5 +784,6 @@ content and integrity metadata is outside the Milestone 1 detection boundary.
 - [Claim Lineage Graph v1 provenance-topology contract](docs/CLAIM_LINEAGE_V1.md)
 - [Mission Research Queue v1 structural-review-index contract](docs/MISSION_RESEARCH_QUEUE_V1.md)
 - [Review Dossier v1 atomic local composition contract](docs/REVIEW_DOSSIER_V1.md)
+- [Proposed PROV-O/RO-Crate interoperability decision packet](docs/PROVENANCE_INTEROPERABILITY_DECISION_PACKET.md)
 - [Competitive landscape and dependency roadmap](docs/COMPETITIVE_LANDSCAPE.md)
 - [Contributing](CONTRIBUTING.md)

@@ -324,10 +324,12 @@ component scope.
 
 ## Deferred work
 
-This acceptance completes the local read-only composition dependency only. The next
-proposed step is a PROV-O/RO-Crate compatibility decision packet that proves a
-lossless mapping and resolves canonicalization, context pinning, and source-byte
-disclosure before any exporter is considered.
+This acceptance completes the local read-only composition dependency only. The
+proposed PROV-O/RO-Crate interoperability decision packet is now drafted and awaits
+explicit owner disposition. It separates packet-projection fidelity, structured
+claim-closure fidelity, and attached source-byte custody, and records the unresolved
+canonicalization, profile, context, publication, license, and disclosure decisions.
+It authorizes no proof serializer or exporter.
 
 An explicit Lens-to-evidence bridge remains owner-gated and must reuse normal evidence
 validation, stance, human identity, and atomic audit. Athena authentication and

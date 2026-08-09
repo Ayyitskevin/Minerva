@@ -323,6 +323,6 @@ corpus.
 Review Dossier v1 may embed and reproduce a captured Lens receipt in the same current
 query-only snapshot as Queue, focal Review, and focal Lineage. That co-location is an
 operator-supplied review association only: a candidate is still unassessed and never
-becomes claim evidence. A PROV-O/RO-Crate compatibility decision packet is the next
-proposed dependency; a canonical exporter and Lens-to-evidence bridge remain separately
-owner-gated.
+becomes claim evidence. The proposed PROV-O/RO-Crate interoperability decision packet
+is now drafted and awaits explicit owner disposition; a proof serializer, canonical
+exporter, and Lens-to-evidence bridge remain separately owner-gated.

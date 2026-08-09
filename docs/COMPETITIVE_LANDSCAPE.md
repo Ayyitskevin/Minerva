@@ -20,7 +20,7 @@ an internal implementation lacks it.
 | Local/offline operation | **I:** hosted service is the documented primary surface | **I:** hosted service is the documented primary surface | **D:** local files and local model/embedding configurations are supported | **D:** code is locally runnable; normal workflows use models/retrievers | **I:** hosted service is required | **D:** core research, Lens search/receipt checking, Claim Review, Claim Lineage, Mission Research Queue, and Review Dossier are offline after installation; provider assistance is a narrow opt-in exception |
 | Deterministic replay/export | **D:** keyword search is described as reproducible/deterministic; PRISMA and data exports. **I:** no full retrieval receipt was found | **D:** Paper Search is called deterministic; CSV/RIS/bibliography/PDF exports. **I:** corpus/algorithm replay receipt not documented | **I:** mutable files, configurable models, and agent workflows do not establish byte-identical replay | **I:** live retrieval and LLM generation do not establish byte-identical replay | **D:** Markdown/Word/PDF export. **I:** byte-identical replay was not documented | **D:** canonical packet bytes plus Lens, Claim Review, Claim Lineage, Queue, and Dossier receipts use stable ordering, explicit versions, bounded completion, and SHA-256; Dossier exactly reproduces a captured Lens receipt and cross-checks all component views in one current snapshot, explicitly not as historical replay or a persisted export |
 | Auditability | **D:** PRISMA flow, exclusion reasons, criteria scores, quotes, search strategies | **D:** cited inputs and visible contributing papers; library/history surfaces | **D:** stored indexes/answers and configurable callbacks | **D:** cited report and Co-STORM working state | **D:** source list and activity history | **D:** append-only mutation audit plus independently inspectable retrieval/review receipts, strict Lens self-check/current reproduction, typed exact-citation lineage, a mission-wide cue index, and an atomic read dossier with fail-closed cross-component reconciliation |
-| Interoperability | **D:** CSV/RIS/BibTeX-style workflows, REST, MCP | **D:** CSV/RIS/bibliographies, REST, MCP | **D:** Python ecosystem, multiple file/index/model backends | **D:** retriever and model adapters | **D:** source links and document exports | **D:** strict v2 packet and v1 request/result artifacts; PROV-O/RO-Crate mappings are designed, not implemented |
+| Interoperability | **D:** CSV/RIS/BibTeX-style workflows, REST, MCP | **D:** CSV/RIS/bibliographies, REST, MCP | **D:** Python ecosystem, multiple file/index/model backends | **D:** retriever and model adapters | **D:** source links and document exports | **D:** strict v2 packet and v1 request/result artifacts; a PROV-O/RO-Crate mapping decision packet is proposed, while any exporter remains unaccepted and unimplemented |
 
 Minerva's receipt and artifact digests establish deterministic self-consistency,
 not origin, authenticity, authority, approval, or permission to disclose research.
@@ -94,8 +94,10 @@ Delivered foundation:
 
 Next, in dependency order:
 
-1. **PROV-O/RO-Crate decision packet:** define and test a lossless mapping before any
-   canonical exporter is owner-approved.
+1. **Owner decision on the PROV-O/RO-Crate packet:** choose the declared projection,
+   disclosure mode, profile namespace, context custody, publication timestamp,
+   license, and canonicalization before any proof serializer or canonical exporter is
+   authorized.
 2. **Explicit Lens-to-evidence bridge:** only after a separate owner decision and only
    through normal human stance, digest confirmation, citation validation, and atomic
    audit; search and dossier composition remain read-only.

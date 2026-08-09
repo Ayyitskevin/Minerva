@@ -339,10 +339,12 @@ explicit owner decision. No migration, trust-model, external-principal,
 cryptographic-identity, adapter, external/agent-facing API, packet-version, canonical
 standards exporter, or broad D-6 gate is open.
 
-1. **PROV-O/RO-Crate decision packet (design only):** prove a lossless mapping for
-   exact spans, stance, corrections, inference labels, activities, and audit lineage;
-   decide canonicalization, context pinning, and source-byte disclosure before any new
-   canonical exporter is accepted.
+1. **Owner disposition of the PROV-O/RO-Crate decision packet:** the design packet is
+   now drafted and proves why fidelity must be scoped separately for packet v2,
+   structured claim closure, and attached source-byte custody. The owner must decide
+   profile/IRI publication, scope, disclosure, `datePublished`, license, context
+   custody, canonicalization, identity, and artifact/audit lifecycle before any proof
+   serializer or canonical exporter is authorized.
 2. **Explicit Lens-to-evidence bridge (owner-gated):** if approved, require a
    verified receipt, selected candidate, claim, stance, and exact digest confirmation,
    then reuse normal evidence validation/audit. It may never make search itself

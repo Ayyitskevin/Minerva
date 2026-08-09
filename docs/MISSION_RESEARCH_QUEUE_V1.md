@@ -319,9 +319,9 @@ A durable assign/defer/resolve queue requires its own owner-approved migration a
 day-one correction model. Later continuations separately accept current-database
 Lens receipt verification/replay and Review Dossier v1. Dossier retains one focal
 Review from this existing Queue derivation inside a caller-owned query-only snapshot;
-it neither changes the Queue receipt nor turns its cues into tasks. A PROV-O/RO-Crate
-compatibility decision packet is now the next proposed dependency. No migration,
-index, trust-model change, packet version,
+it neither changes the Queue receipt nor turns its cues into tasks. The proposed
+PROV-O/RO-Crate interoperability decision packet is now drafted and awaits explicit
+owner disposition. No migration, index, trust-model change, packet version,
 capability entry, external principal, cryptographic identity, Athena/Icarus adapter,
 scholarly network adapter, PROV-O/RO-Crate exporter, MCP/API, Lens-to-evidence bridge,
 provider runtime, publishing, messaging, or deployment is accepted by this decision.
