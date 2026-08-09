@@ -163,6 +163,46 @@ class LensService:
             snapshot_ids=snapshot_ids,
             bounds=bounds,
             connection=connection,
+            enforce_query_only=True,
+        )
+
+    def _search_normalized_in_transaction(
+        self,
+        *,
+        mission_id: str,
+        normalized_query: str,
+        query_terms: tuple[str, ...],
+        source_ids: Sequence[str] | None,
+        snapshot_ids: Sequence[str] | None,
+        bounds: LensBounds,
+        connection: sqlite3.Connection,
+    ) -> LensSearchResult:
+        """Run a verified request in a caller-owned writable transaction.
+
+        Lens Evidence Adoption is the sole caller. It must reproduce the
+        captured search and create the selected evidence card against one
+        SQLite state, so this private seam deliberately leaves the caller's
+        ``query_only`` setting untouched. Public Lens and Dossier reads keep
+        using :meth:`_search_normalized_in_snapshot`, which enforces read-only
+        operation.
+        """
+
+        if not connection.in_transaction or int(
+            connection.execute("PRAGMA query_only").fetchone()[0]
+        ):
+            raise IntegrityError(
+                "lens_replay_transaction_invalid",
+                "Lens adoption requires a caller-owned writable transaction.",
+            )
+        return self._search_normalized_with_connection(
+            mission_id=mission_id,
+            normalized_query=normalized_query,
+            query_terms=query_terms,
+            source_ids=source_ids,
+            snapshot_ids=snapshot_ids,
+            bounds=bounds,
+            connection=connection,
+            enforce_query_only=False,
         )
 
     def _search_normalized_with_connection(
@@ -175,6 +215,7 @@ class LensService:
         snapshot_ids: Sequence[str] | None,
         bounds: LensBounds,
         connection: sqlite3.Connection | None,
+        enforce_query_only: bool = True,
     ) -> LensSearchResult:
         """Execute an already-canonical Lens request for receipt replay.
 
@@ -193,7 +234,8 @@ class LensService:
         )
 
         with _lens_connection(self.database, connection) as connection:
-            connection.execute("PRAGMA query_only = ON")
+            if enforce_query_only:
+                connection.execute("PRAGMA query_only = ON")
             _require_mission(connection, mission_id)
             _require_filters_in_mission(
                 connection,

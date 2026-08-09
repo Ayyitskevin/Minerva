@@ -19,8 +19,12 @@ from minerva.core.errors import IntegrityError, SecurityBoundaryError
 from minerva.core.operations import OperationsService
 from minerva.core.types import IdentityContext, local_identity
 from minerva.dossier import ReviewDossierBounds, ReviewDossierService
-from minerva.evidence.models import EvidenceStance
-from minerva.evidence.service import EvidenceService
+from minerva.evidence import (
+    EvidenceService,
+    EvidenceStance,
+    LensCandidateConfirmation,
+    LensEvidenceAdoptionService,
+)
 from minerva.integrations.lens_receipt_file import load_lens_receipt
 from minerva.integrations.research_packet_file import (
     load_research_packet,
@@ -307,6 +311,34 @@ def _cmd_evidence_add(args: argparse.Namespace) -> Outcome:
         identity=_identity("cli:evidence-add"),
     )
     return _command_result("evidence", evidence)
+
+
+def _cmd_evidence_add_from_lens(args: argparse.Namespace) -> Outcome:
+    # The captured file is a hostile local-artifact boundary. Read and verify
+    # it before constructing the database. The evidence application service
+    # validates every explicit confirmation before it opens SQLite.
+    receipt = load_lens_receipt(cast(Path, args.lens_input))
+    confirmation = LensCandidateConfirmation(
+        rank=cast(int, args.candidate_rank),
+        snapshot_sha256=cast(str, args.expected_snapshot_sha256),
+        start_byte=cast(int, args.expected_start_byte),
+        end_byte=cast(int, args.expected_end_byte),
+        quote_sha256=cast(str, args.expected_quote_sha256),
+    )
+    result = LensEvidenceAdoptionService(_database(args)).adopt_candidate(
+        receipt=receipt,
+        mission_id=cast(str, args.mission),
+        claim_id=cast(str, args.claim),
+        confirmation=confirmation,
+        expected_retrieval_receipt_sha256=cast(
+            str,
+            args.expected_retrieval_receipt_sha256,
+        ),
+        stance=EvidenceStance(cast(str, args.stance)),
+        supersedes_evidence_id=cast(str | None, args.supersedes),
+        identity=_identity("cli:evidence-add-from-lens"),
+    )
+    return _command_result("lens_evidence_adoption", result)
 
 
 def _cmd_evidence_withdraw(args: argparse.Namespace) -> Outcome:
@@ -865,6 +897,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evidence_add.add_argument("--supersedes")
     _set_handler(evidence_add, _cmd_evidence_add)
+    evidence_add_from_lens = evidence_commands.add_parser(
+        "add-from-lens",
+        help="adopt one explicitly confirmed Lens candidate as evidence",
+    )
+    _add_database(evidence_add_from_lens)
+    evidence_add_from_lens.add_argument("--mission", required=True)
+    evidence_add_from_lens.add_argument("--claim", required=True)
+    evidence_add_from_lens.add_argument("--lens-input", required=True, type=Path)
+    evidence_add_from_lens.add_argument("--candidate-rank", required=True, type=int)
+    evidence_add_from_lens.add_argument(
+        "--stance",
+        required=True,
+        choices=[item.value for item in EvidenceStance],
+    )
+    evidence_add_from_lens.add_argument(
+        "--expected-retrieval-receipt-sha256",
+        required=True,
+    )
+    evidence_add_from_lens.add_argument("--expected-snapshot-sha256", required=True)
+    evidence_add_from_lens.add_argument("--expected-start-byte", required=True, type=int)
+    evidence_add_from_lens.add_argument("--expected-end-byte", required=True, type=int)
+    evidence_add_from_lens.add_argument("--expected-quote-sha256", required=True)
+    evidence_add_from_lens.add_argument("--supersedes")
+    _set_handler(evidence_add_from_lens, _cmd_evidence_add_from_lens)
     evidence_withdraw = evidence_commands.add_parser(
         "withdraw", help="mark evidence as no longer standing, keeping it in the ledger"
     )

@@ -280,7 +280,10 @@ exit status 3 and do not reflect private research text or foreign identifiers.
 The schema remains v5. Review Dossier v1 adds no migration, table, index, immutable
 artifact, packet field/version, capability name, external principal, cryptographic
 identity, signature, authentication, new provider destination, scholarly-source
-adapter, PROV-O/RO-Crate exporter, Lens-to-evidence bridge, or broad D-6 behavior.
+adapter, PROV-O/RO-Crate exporter, Lens-to-evidence bridge, or broad D-6 behavior by
+the Dossier decision. A later decision accepts one separate CLI-only single-candidate
+Lens Evidence Adoption mutation; it does not make this dossier or any component
+mutating.
 
 The captured Lens file remains an operator-managed copy of ordinary CLI output, not a
 Minerva export. The composed stdout may contain extensive private claim, correction,
@@ -325,14 +328,16 @@ component scope.
 ## Deferred work
 
 This acceptance completes the local read-only composition dependency only. The
-proposed PROV-O/RO-Crate interoperability decision packet is now drafted and awaits
-explicit owner disposition. It separates packet-projection fidelity, structured
-claim-closure fidelity, and attached source-byte custody, and records the unresolved
-canonicalization, profile, context, publication, license, and disclosure decisions.
-It authorizes no proof serializer or exporter.
+PROV-O/RO-Crate interoperability decision packet is now accepted as non-authorizing
+architectural guidance. It separates packet-projection fidelity, structured
+claim-closure fidelity, and attached source-byte custody, while canonicalization,
+profile/context publication, license, disclosure, proof serialization, and export
+remain separately gated.
 
-An explicit Lens-to-evidence bridge remains owner-gated and must reuse normal evidence
-validation, stance, human identity, and atomic audit. Athena authentication and
+A later decision accepts the narrow `evidence add-from-lens` bridge, which requires
+exact receipt/candidate confirmations and reuses normal validation, operator-supplied
+stance, local OS-user attribution, and atomic audit. It does not alter this Dossier's read-only result or turn
+co-located candidates into evidence. Athena authentication and
 external-principal/cryptographic-identity work, Icarus exchange, any read-only agent
 protocol, packet v3, persistent queue operations, scholarly network adapters,
 publication, messaging, and deployment remain separately gated.

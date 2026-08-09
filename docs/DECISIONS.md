@@ -17,7 +17,8 @@
 - [Mission Research Queue v1: schema-free structural review index](#mission-research-queue-v1-schema-free-structural-review-index) — **Accepted 2026-08-08; this non-persisted local index only**
 - [Lens v1 receipt verification and current-database reproduction](#lens-v1-receipt-verification-and-current-database-reproduction) — **Accepted 2026-08-08; these local read-only checks only**
 - [Review Dossier v1: atomic local review composition](#review-dossier-v1-atomic-local-review-composition) — **Accepted 2026-08-08; this local read-only composition only**
-- [PROV-O/RO-Crate interoperability decision packet](PROVENANCE_INTEROPERABILITY_DECISION_PACKET.md) — **Proposed; pending explicit owner review**
+- [PROV-O/RO-Crate interoperability decision packet](PROVENANCE_INTEROPERABILITY_DECISION_PACKET.md) — **Accepted 2026-08-08 as non-authorizing architectural guidance; exporter/profile deferred**
+- [Lens Evidence Adoption v1: explicit single-candidate evidence mutation](#lens-evidence-adoption-v1-explicit-single-candidate-evidence-mutation) — **Accepted 2026-08-08; CLI/local service only**
 
 ## Milestone 1 implementation decisions
 
@@ -1338,13 +1339,14 @@ item.
   exact current replay, isolation, bounds, and zero mutation; they make no truth,
   relevance, priority, actionability, quality, or authenticity claim.
 
-## PROV-O/RO-Crate interoperability mapping — proposed, not accepted
+## PROV-O/RO-Crate interoperability mapping — accepted guidance, no implementation
 
 The [interoperability decision packet](PROVENANCE_INTEROPERABILITY_DECISION_PACKET.md)
 records the official PROV-O/RO-Crate constraints, schema-v5 field coverage, precise
 losslessness levels, disclosure modes, threat controls, and proof obligations needed
-before an exporter can be considered. It is a design record only and remains pending
-explicit owner review.
+before an exporter can be considered. The repository owner's 2026-08-08 “let's do
+it” accepts the packet only as non-authorizing architectural guidance. It does not
+resolve the packet's owner choices or accept an implementation.
 
 The packet establishes that no existing artifact is a lossless source for complete
 schema-v5 provenance: packet v2 omits source BLOBs, historical status events,
@@ -1354,16 +1356,84 @@ exact UTF-8 byte spans, stance, correction, inference, and deterministic-receipt
 semantics. "Lossless" must therefore name its exact projection and byte-disclosure
 mode.
 
-The proposed first proof is a claim-owned, metadata-only structured closure with a
-versioned Minerva profile. Attached source bytes, mission-wide scope, profile/IRI
+The accepted first-proof direction is a claim-owned, metadata-only structured closure
+with a versioned Minerva profile. Attached source bytes, mission-wide scope, profile/IRI
 publication, context custody, semantically correct RO-Crate `datePublished`, license,
 canonicalization, identity representation, disclosure fields, and export/audit
 lifecycle remain owner decisions. Packet v2 stays unchanged and remains the sole
 canonical agent-facing research artifact.
 
-This proposal authorizes no serializer, exporter, file writer, CLI/API/MCP capability,
+Guidance acceptance authorizes no serializer, exporter, file writer, CLI/API/MCP capability,
 context asset, public profile, source-byte disclosure, audit event, migration, trust
-change, external principal, signature, packet v3 field, or protocol. An explicit
-Lens-to-evidence bridge, persistent queue operations, D-2/D-3/D-5 implementation, and
-every standards-export implementation likewise still need their own recorded owner
-decision.
+change, external principal, signature, packet v3 field, or protocol. Persistent queue
+operations, D-2/D-3/D-5 implementation, and every standards-export implementation
+still need their own recorded owner decision. The separate decision below accepts one
+narrow Lens-to-evidence bridge; that evidence workflow neither implements nor expands
+the standards guidance.
+
+## Lens Evidence Adoption v1: explicit single-candidate evidence mutation
+
+The repository owner's 2026-08-08 “let's do it” separately accepts the recommended
+schema-v5, CLI-only, single-candidate Lens-to-evidence bridge. This is one trusted-
+local-operator evidence mutation, not an authorization for automatic/bulk adoption or a family of
+external adoption interfaces.
+
+- **The public surface is narrow.** `minerva evidence add-from-lens` and
+  `minerva.evidence.LensEvidenceAdoptionService.adopt_candidate(...)` return one
+  `minerva.lens-evidence-adoption.v1` result with kind
+  `single_candidate_evidence_adoption`. There is no REST, web, packet, capability,
+  MCP, authenticated external, or other agent-facing operation.
+- **Receipt intake precedes database access.** The CLI uses the established no-follow,
+  stable, 8 MiB captured-Lens reader. Strict receipt verification and explicit scope,
+  receipt-digest, one-based rank, snapshot-digest, byte-span, and quote-digest
+  confirmation run before database open. Claim, stance, and optional supersession are
+  never inferred from query or rank.
+- **One immediate transaction owns the whole mutation.** Exact current receipt replay,
+  duplicate refusal, normal evidence validation/insertion, the existing
+  `evidence.card.created` event, and `lens.candidate.adopted` all use one
+  `BEGIN IMMEDIATE`. A package-private Lens seam reuses the normal retrieval and
+  immutable-snapshot path on the caller-owned connection; public Lens search/replay
+  and Dossier remain query-only.
+- **Duplicate identity is the exact operator evaluation.** An existing mission, claim,
+  snapshot identity/digest, byte span, exact quote, stance, and supersession tuple is
+  refused even if withdrawn. The immediate write lock makes check-and-insert
+  concurrency safe without a new index. A different stance or distinct explicit
+  supersession target remains a separate evaluation; Minerva does not decide which
+  one is true.
+- **Normal evidence semantics are reused.** For supersession, the bridge first invokes
+  the evidence package's bounded predecessor-chain validator. The existing evidence
+  transaction seam retains its normal direct-target, mission/snapshot scope, immutable
+  snapshot, exact UTF-8 byte, and stance checks. The bridge never auto-withdraws or
+  retracts an older card; supersession remains lineage, and correction remains
+  separately explicit.
+- **Audit provenance is bounded and atomic.** `lens.candidate.adopted` names entity
+  type `evidence_card` and the generated evidence ID under the same mission, actor,
+  run, and transaction. Its exact detail set is `candidate_rank`, `claim_id`,
+  `end_byte`, `query_sha256`, `quote_sha256`, `retrieval_receipt_sha256`,
+  `retrieval_truncated`, `snapshot_id`, `snapshot_set_sha256`, `snapshot_sha256`,
+  `stance`, `start_byte`, and `supersedes`. Query, quote, label, and input path are
+  omitted. Before commit the service requires exactly adjacent creation/adoption rows,
+  canonical metadata/details, and stored equality to the returned adoption audit-event ID;
+  a nonconforming injected sink raises `lens_adoption_audit_invalid` and rolls back
+  the card, feature events, and new run. Deep doctor independently reconciles this
+  event to the card and later-than-creation audit order.
+- **Rank and hashes do not become adjudication.** Rank is a selector only. The result
+  binds the selected candidate and generated evidence/audit provenance, but claims no
+  deterministic mutation identifier, origin, authenticity, authority, approval, truth,
+  confidence, source quality, completeness, or disclosure permission. A returned
+  candidate from an explicitly truncated receipt can be selected without claiming
+  that retrieval was exhaustive.
+- **The semantic effect is exactly one evidence card.** The command changes no claim
+  status, finding, adopted inference, older evidence lifecycle, source/snapshot bytes,
+  queue, dossier, packet, export, or capability. It invokes no model, provider,
+  credential, network, URL fetch, external adapter, or execution surface.
+- **No persistence or trust contract expands.** Schema remains v5; no migration,
+  table, trigger, index, packet v2 field/version, capabilities v2 entry, external
+  principal, cryptographic identity, Athena/Icarus seam, standards exporter, or broad
+  D-6 behavior is added.
+
+The next dependency gates are D-2 authenticated Athena identity/authorization after
+counterpart reverification, D-3 Icarus artifact exchange after D-2, and D-5 a bounded
+read-only agent protocol after D-2/D-3. None is authorized by this decision. Packet
+v3, persistent queue operations, scholarly network adapters, public standards profile
+and export, bulk adoption, and additional adoption surfaces remain separately gated.

@@ -20,6 +20,42 @@ from minerva.evidence.integrity import new_snapshot_cache, verify_evidence_refer
 from minerva.evidence.models import EvidenceCard, EvidenceStance, LedgerEntry
 from minerva.sources.integrity import verify_snapshot_integrity
 
+_MAX_SUPERSESSION_CHAIN = 10_000
+
+
+def _validate_evidence_input(
+    *,
+    start_byte: int,
+    end_byte: int,
+    quote: str,
+    stance: EvidenceStance,
+) -> None:
+    # `bool` is excluded before the `int` check because it is a subclass.
+    # A float passed every range comparison below and then failed inside the
+    # transaction as a raw `TypeError` from slicing the snapshot, so a direct
+    # service caller got an unmapped exception instead of a domain refusal.
+    if (
+        isinstance(start_byte, bool)
+        or isinstance(end_byte, bool)
+        or not isinstance(start_byte, int)
+        or not isinstance(end_byte, int)
+    ):
+        raise IntegrityError("citation_offsets_invalid", "Citation offsets must be integers.")
+    if start_byte < 0 or end_byte <= start_byte:
+        raise IntegrityError("citation_offsets_invalid", "Citation offsets are invalid.")
+    if not isinstance(stance, EvidenceStance):
+        raise IntegrityError("evidence_stance_invalid", "Evidence stance is invalid.")
+    try:
+        # Surrogates from undecodable argv bytes must fail as a domain
+        # refusal here, not as an encode error deeper in the write path.
+        quote_bytes = quote.encode("utf-8", errors="strict")
+    except (AttributeError, UnicodeEncodeError) as error:
+        raise IntegrityError(
+            "evidence_quote_invalid", "Evidence quote is not valid UTF-8."
+        ) from error
+    if not quote or "\x00" in quote or len(quote_bytes) > 100_000:
+        raise IntegrityError("evidence_quote_invalid", "Evidence quote is empty or too large.")
+
 
 class EvidenceService:
     def __init__(
@@ -48,126 +84,150 @@ class EvidenceService:
         identity: IdentityContext,
         supersedes_evidence_id: str | None = None,
     ) -> EvidenceCard:
-        # `bool` is excluded before the `int` check because it is a subclass.
-        # A float passed every range comparison below and then failed inside the
-        # transaction as a raw `TypeError` from slicing the snapshot, so a direct
-        # service caller got an unmapped exception instead of a domain refusal.
-        if (
-            isinstance(start_byte, bool)
-            or isinstance(end_byte, bool)
-            or not isinstance(start_byte, int)
-            or not isinstance(end_byte, int)
-        ):
-            raise IntegrityError("citation_offsets_invalid", "Citation offsets must be integers.")
-        if start_byte < 0 or end_byte <= start_byte:
-            raise IntegrityError("citation_offsets_invalid", "Citation offsets are invalid.")
-        if not isinstance(stance, EvidenceStance):
-            raise IntegrityError("evidence_stance_invalid", "Evidence stance is invalid.")
-        try:
-            # Surrogates from undecodable argv bytes must fail as a domain
-            # refusal here, not as an encode error deeper in the write path.
-            quote_bytes = quote.encode("utf-8", errors="strict")
-        except UnicodeEncodeError as error:
-            raise IntegrityError(
-                "evidence_quote_invalid", "Evidence quote is not valid UTF-8."
-            ) from error
-        if not quote or "\x00" in quote or len(quote_bytes) > 100_000:
-            raise IntegrityError("evidence_quote_invalid", "Evidence quote is empty or too large.")
-
+        _validate_evidence_input(
+            start_byte=start_byte,
+            end_byte=end_byte,
+            quote=quote,
+            stance=stance,
+        )
         evidence_id = self._id_factory("evd")
         created_at = self._clock()
         with self.database.transaction() as connection:
-            claim = connection.execute(
-                "SELECT 1 FROM claims WHERE id = ? AND mission_id = ?",
-                (claim_id, mission_id),
-            ).fetchone()
-            if claim is None:
-                raise NotFoundError("claim_not_found")
-
-            snapshot = connection.execute(
-                """
-                SELECT id, source_id, mission_id, content, sha256, byte_length,
-                       encoding, media_type, creator_id, run_id
-                FROM source_snapshots WHERE id = ? AND mission_id = ?
-                """,
-                (snapshot_id, mission_id),
-            ).fetchone()
-            if snapshot is None:
-                raise NotFoundError("snapshot_not_found")
-            content = verify_snapshot_integrity(connection, snapshot)
-            snapshot_digest = str(snapshot["sha256"])
-            if end_byte > len(content):
-                raise IntegrityError(
-                    "citation_offsets_invalid", "Citation offsets are out of range."
-                )
-            try:
-                resolved_quote = content[start_byte:end_byte].decode("utf-8", errors="strict")
-            except UnicodeDecodeError as error:
-                raise IntegrityError(
-                    "citation_offsets_invalid", "Citation offsets split a UTF-8 character."
-                ) from error
-            if quote != resolved_quote or quote.encode("utf-8") != content[start_byte:end_byte]:
-                raise IntegrityError(
-                    "citation_quote_mismatch", "The quote does not match the source snapshot."
-                )
-
-            if supersedes_evidence_id is not None:
-                superseded = connection.execute(
-                    """
-                    SELECT claim_id FROM evidence_cards
-                    WHERE id = ? AND mission_id = ?
-                    """,
-                    (supersedes_evidence_id, mission_id),
-                ).fetchone()
-                if superseded is None or str(superseded["claim_id"]) != claim_id:
-                    raise IntegrityError(
-                        "evidence_supersession_invalid",
-                        "Superseded evidence must evaluate the same claim.",
-                    )
-
-            self._audit.ensure_run(connection, identity)
-            connection.execute(
-                """
-                INSERT INTO evidence_cards(
-                    id, mission_id, claim_id, snapshot_id, snapshot_sha256, start_byte, end_byte,
-                    quote, stance, supersedes_evidence_id, creator_id, run_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    evidence_id,
-                    mission_id,
-                    claim_id,
-                    snapshot_id,
-                    snapshot_digest,
-                    start_byte,
-                    end_byte,
-                    quote,
-                    stance.value,
-                    supersedes_evidence_id,
-                    identity.actor_id,
-                    identity.run_id,
-                    created_at,
-                ),
-            )
-            self._audit.record(
+            return self._add_evidence_in_transaction(
                 connection,
-                identity=identity,
-                event_type="evidence.card.created",
-                entity_type="evidence_card",
-                entity_id=evidence_id,
                 mission_id=mission_id,
-                details={
-                    "claim_id": claim_id,
-                    "snapshot_id": snapshot_id,
-                    "snapshot_sha256": snapshot_digest,
-                    "start_byte": start_byte,
-                    "end_byte": end_byte,
-                    "stance": stance.value,
-                    "supersedes": supersedes_evidence_id,
-                },
+                claim_id=claim_id,
+                snapshot_id=snapshot_id,
+                start_byte=start_byte,
+                end_byte=end_byte,
+                quote=quote,
+                stance=stance,
+                identity=identity,
+                supersedes_evidence_id=supersedes_evidence_id,
+                evidence_id=evidence_id,
+                created_at=created_at,
             )
+
+    def _add_evidence_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        mission_id: str,
+        claim_id: str,
+        snapshot_id: str,
+        start_byte: int,
+        end_byte: int,
+        quote: str,
+        stance: EvidenceStance,
+        identity: IdentityContext,
+        supersedes_evidence_id: str | None = None,
+        evidence_id: str | None = None,
+        created_at: str | None = None,
+    ) -> EvidenceCard:
+        """Add one evidence card inside a caller-owned write transaction.
+
+        This package-private seam lets a cross-domain application service bind
+        preconditions and the normal evidence mutation atomically. Public callers
+        continue to use :meth:`add_evidence` and cannot supply a connection.
+        """
+
+        _validate_evidence_input(
+            start_byte=start_byte,
+            end_byte=end_byte,
+            quote=quote,
+            stance=stance,
+        )
+        resolved_evidence_id = evidence_id or self._id_factory("evd")
+        resolved_created_at = created_at or self._clock()
+
+        claim = connection.execute(
+            "SELECT 1 FROM claims WHERE id = ? AND mission_id = ?",
+            (claim_id, mission_id),
+        ).fetchone()
+        if claim is None:
+            raise NotFoundError("claim_not_found")
+
+        snapshot = connection.execute(
+            """
+            SELECT id, source_id, mission_id, content, sha256, byte_length,
+                   encoding, media_type, creator_id, run_id
+            FROM source_snapshots WHERE id = ? AND mission_id = ?
+            """,
+            (snapshot_id, mission_id),
+        ).fetchone()
+        if snapshot is None:
+            raise NotFoundError("snapshot_not_found")
+        content = verify_snapshot_integrity(connection, snapshot)
+        snapshot_digest = str(snapshot["sha256"])
+        if end_byte > len(content):
+            raise IntegrityError("citation_offsets_invalid", "Citation offsets are out of range.")
+        try:
+            resolved_quote = content[start_byte:end_byte].decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise IntegrityError(
+                "citation_offsets_invalid", "Citation offsets split a UTF-8 character."
+            ) from error
+        if quote != resolved_quote or quote.encode("utf-8") != content[start_byte:end_byte]:
+            raise IntegrityError(
+                "citation_quote_mismatch", "The quote does not match the source snapshot."
+            )
+
+        if supersedes_evidence_id is not None:
+            if supersedes_evidence_id == resolved_evidence_id:
+                _supersession_invalid()
+            superseded = connection.execute(
+                """
+                SELECT claim_id FROM evidence_cards
+                WHERE id = ? AND mission_id = ?
+                """,
+                (supersedes_evidence_id, mission_id),
+            ).fetchone()
+            if superseded is None or str(superseded["claim_id"]) != claim_id:
+                _supersession_invalid()
+
+        self._audit.ensure_run(connection, identity)
+        connection.execute(
+            """
+            INSERT INTO evidence_cards(
+                id, mission_id, claim_id, snapshot_id, snapshot_sha256, start_byte, end_byte,
+                quote, stance, supersedes_evidence_id, creator_id, run_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                resolved_evidence_id,
+                mission_id,
+                claim_id,
+                snapshot_id,
+                snapshot_digest,
+                start_byte,
+                end_byte,
+                quote,
+                stance.value,
+                supersedes_evidence_id,
+                identity.actor_id,
+                identity.run_id,
+                resolved_created_at,
+            ),
+        )
+        self._audit.record(
+            connection,
+            identity=identity,
+            event_type="evidence.card.created",
+            entity_type="evidence_card",
+            entity_id=resolved_evidence_id,
+            mission_id=mission_id,
+            details={
+                "claim_id": claim_id,
+                "snapshot_id": snapshot_id,
+                "snapshot_sha256": snapshot_digest,
+                "start_byte": start_byte,
+                "end_byte": end_byte,
+                "stance": stance.value,
+                "supersedes": supersedes_evidence_id,
+            },
+        )
         return EvidenceCard(
-            evidence_id,
+            resolved_evidence_id,
             mission_id,
             claim_id,
             snapshot_id,
@@ -179,7 +239,7 @@ class EvidenceService:
             supersedes_evidence_id,
             identity.actor_id,
             identity.run_id,
-            created_at,
+            resolved_created_at,
         )
 
     def withdraw_evidence(
@@ -309,6 +369,52 @@ FROM evidence_cards AS e
 LEFT JOIN evidence_withdrawals AS w ON w.evidence_id = e.id
 WHERE e.claim_id = ?
 """.strip()
+
+
+def _validate_supersession_chain(
+    connection: sqlite3.Connection,
+    *,
+    mission_id: str,
+    claim_id: str,
+    evidence_id: str,
+) -> None:
+    """Require one finite, same-claim predecessor chain.
+
+    New evidence always points backward to an existing card, so intact
+    append-only state cannot create a cycle. The bounded walk also refuses a
+    cycle or foreign/dangling link already present after out-of-process
+    corruption instead of extending it with a plausible new card.
+    """
+
+    seen: set[str] = set()
+    current: str | None = evidence_id
+    while current is not None and len(seen) < _MAX_SUPERSESSION_CHAIN:
+        if current in seen:
+            _supersession_invalid()
+        seen.add(current)
+        row = connection.execute(
+            """
+            SELECT mission_id, claim_id, supersedes_evidence_id
+            FROM evidence_cards WHERE id = ?
+            """,
+            (current,),
+        ).fetchone()
+        if row is None or str(row["mission_id"]) != mission_id or str(row["claim_id"]) != claim_id:
+            _supersession_invalid()
+        current = (
+            str(row["supersedes_evidence_id"])
+            if row["supersedes_evidence_id"] is not None
+            else None
+        )
+    if current is not None:
+        _supersession_invalid()
+
+
+def _supersession_invalid() -> None:
+    raise IntegrityError(
+        "evidence_supersession_invalid",
+        "Superseded evidence must evaluate the same claim through a valid history.",
+    )
 
 
 def _claim_mission(connection: sqlite3.Connection, claim_id: str) -> str:

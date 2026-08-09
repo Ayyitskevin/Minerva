@@ -272,6 +272,8 @@ def smoke_wheel(dist_directory: Path) -> Path:
             "import minerva; "
             "from minerva.dossier import (ReviewDossierBounds, ReviewDossierResult, "
             "ReviewDossierService); "
+            "from minerva.evidence import (LensCandidateConfirmation, "
+            "LensEvidenceAdoptionResult, LensEvidenceAdoptionService); "
             "from minerva.integrations.lens_receipt_file import load_lens_receipt; "
             "from minerva.lens import (LensReceiptVerificationResult, LensReplayResult, "
             "LensService, lens_receipt_verification_result, verify_lens_receipt); "
@@ -1464,6 +1466,266 @@ Path(sys.argv[1]).write_bytes(serialize_research_request(document))
             or fulfilled_packet.get("schema_version") != "minerva.research-brief.v2"
         ):
             raise SmokeError("installed fulfilled packet verification failed")
+
+        schema_probe = """
+import json
+import sys
+from pathlib import Path
+
+from minerva.core.db import Database, latest_schema_version
+
+database = Database(Path(sys.argv[1]))
+with database.read() as connection:
+    recorded = [
+        int(row[0])
+        for row in connection.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        )
+    ]
+print(
+    json.dumps(
+        {
+            "packaged": latest_schema_version(),
+            "recorded": recorded,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+)
+""".strip()
+        schema_before_adoption = _json_object(
+            _run_checked(
+                [str(python), "-c", schema_probe, str(demo_database)],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed pre-adoption schema probe",
+        )
+        if schema_before_adoption != {
+            "packaged": 5,
+            "recorded": [1, 2, 3, 4, 5],
+        }:
+            raise SmokeError("installed Lens evidence adoption requires unchanged schema v5")
+
+        ledger_before_adoption = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "claim",
+                    "ledger",
+                    "--db",
+                    str(demo_database),
+                    "--claim",
+                    claim_id,
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed pre-adoption evidence ledger",
+        ).get("evidence_ledger")
+        if not isinstance(ledger_before_adoption, list):
+            raise SmokeError("installed pre-adoption evidence ledger is invalid")
+
+        candidate_rank = candidate.get("rank")
+        candidate_snapshot_sha256 = candidate.get("snapshot_sha256")
+        candidate_quote_sha256 = candidate.get("quote_sha256")
+        if (
+            not isinstance(candidate_rank, int)
+            or not isinstance(candidate_snapshot_sha256, str)
+            or len(candidate_snapshot_sha256) != 64
+            or not isinstance(candidate_quote_sha256, str)
+            or len(candidate_quote_sha256) != 64
+        ):
+            raise SmokeError("installed Lens candidate confirmation is incomplete")
+        adoption_envelope = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "evidence",
+                    "add-from-lens",
+                    "--db",
+                    str(demo_database),
+                    "--mission",
+                    mission_id,
+                    "--claim",
+                    claim_id,
+                    "--lens-input",
+                    str(lens_receipt_path),
+                    "--candidate-rank",
+                    str(candidate_rank),
+                    "--stance",
+                    "context",
+                    "--expected-retrieval-receipt-sha256",
+                    str(lens_receipt_digest),
+                    "--expected-snapshot-sha256",
+                    candidate_snapshot_sha256,
+                    "--expected-start-byte",
+                    str(start_byte),
+                    "--expected-end-byte",
+                    str(end_byte),
+                    "--expected-quote-sha256",
+                    candidate_quote_sha256,
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed Lens evidence adoption",
+        )
+        adoption = adoption_envelope.get("lens_evidence_adoption")
+        if not isinstance(adoption, dict):
+            raise SmokeError("installed Lens evidence adoption omitted its receipt")
+        adopted_evidence = adoption.get("evidence")
+        adoption_boundary = adoption.get("semantic_boundary")
+        adoption_audit_id = adoption.get("adoption_audit_event_id")
+        if (
+            adoption.get("schema_version") != "minerva.lens-evidence-adoption.v1"
+            or adoption.get("kind") != "single_candidate_evidence_adoption"
+            or adoption.get("status") != "adopted"
+            or adoption.get("mission_id") != mission_id
+            or adoption.get("claim_id") != claim_id
+            or adoption.get("retrieval_receipt_sha256") != lens_receipt_digest
+            or adoption.get("query_sha256") != lens.get("query_sha256")
+            or adoption.get("snapshot_set_sha256") != lens.get("snapshot_set_sha256")
+            or adoption.get("candidate_rank") != candidate_rank
+            or adoption.get("source_id") != candidate.get("source_id")
+            or adoption.get("snapshot_id") != snapshot_id
+            or adoption.get("snapshot_sha256") != candidate_snapshot_sha256
+            or adoption.get("start_byte") != start_byte
+            or adoption.get("end_byte") != end_byte
+            or adoption.get("quote_sha256") != candidate_quote_sha256
+            or adoption.get("stance") != "context"
+            or adoption.get("supersedes_evidence_id") is not None
+            or not isinstance(adoption_audit_id, str)
+            or not adoption_audit_id.startswith("aud_")
+            or not isinstance(adopted_evidence, dict)
+            or adopted_evidence.get("mission_id") != mission_id
+            or adopted_evidence.get("claim_id") != claim_id
+            or adopted_evidence.get("snapshot_id") != snapshot_id
+            or adopted_evidence.get("snapshot_sha256") != candidate_snapshot_sha256
+            or adopted_evidence.get("start_byte") != start_byte
+            or adopted_evidence.get("end_byte") != end_byte
+            or adopted_evidence.get("quote") != quote
+            or adopted_evidence.get("stance") != "context"
+            or not isinstance(adoption_boundary, dict)
+            or adoption_boundary.get("single_candidate_only") is not True
+            or adoption_boundary.get("receipt_strictly_verified") is not True
+            or adoption_boundary.get("current_database_exactly_reproduced") is not True
+            or adoption_boundary.get("candidate_explicitly_confirmed") is not True
+            or adoption_boundary.get("operator_supplied_stance") is not True
+            or adoption_boundary.get("creates_one_evidence_card") is not True
+            or adoption_boundary.get("rank_used_as_epistemic_weight") is not False
+            or adoption_boundary.get("performs_bulk_or_automatic_adoption") is not False
+            or adoption_boundary.get("determines_truth_or_source_quality") is not False
+            or adoption_boundary.get("calculates_confidence") is not False
+            or adoption_boundary.get("alters_claim_status") is not False
+            or adoption_boundary.get("creates_or_retracts_findings") is not False
+            or adoption_boundary.get("persists_agent_inference") is not False
+            or adoption_boundary.get("invokes_model_provider_or_network") is not False
+        ):
+            raise SmokeError("installed Lens evidence adoption receipt is invalid")
+
+        adopted_evidence_id = adopted_evidence.get("id")
+        if not isinstance(adopted_evidence_id, str) or not adopted_evidence_id.startswith("evd_"):
+            raise SmokeError("installed Lens evidence adoption omitted its evidence identifier")
+        ledger_after_adoption = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "claim",
+                    "ledger",
+                    "--db",
+                    str(demo_database),
+                    "--claim",
+                    claim_id,
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed post-adoption evidence ledger",
+        ).get("evidence_ledger")
+        if not isinstance(ledger_after_adoption, list):
+            raise SmokeError("installed post-adoption evidence ledger is invalid")
+        adopted_ledger_entries = [
+            entry
+            for entry in ledger_after_adoption
+            if isinstance(entry, dict)
+            and isinstance(entry.get("evidence"), dict)
+            and entry["evidence"].get("id") == adopted_evidence_id
+        ]
+        if (
+            len(ledger_after_adoption) != len(ledger_before_adoption) + 1
+            or len(adopted_ledger_entries) != 1
+            or adopted_ledger_entries[0].get("withdrawn") is not False
+            or adopted_ledger_entries[0]["evidence"] != adopted_evidence
+        ):
+            raise SmokeError("installed Lens adoption did not add exactly one ledger entry")
+
+        audit_envelope = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "audit",
+                    "list",
+                    "--db",
+                    str(demo_database),
+                    "--mission",
+                    mission_id,
+                    "--limit",
+                    "500",
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed post-adoption audit ledger",
+        )
+        audit_events = audit_envelope.get("audit_events")
+        if not isinstance(audit_events, list):
+            raise SmokeError("installed post-adoption audit ledger is invalid")
+        adoption_events = [
+            event
+            for event in audit_events
+            if isinstance(event, dict) and event.get("entity_id") == adopted_evidence_id
+        ]
+        if (
+            [event.get("event_type") for event in adoption_events]
+            != ["evidence.card.created", "lens.candidate.adopted"]
+            or any(event.get("entity_type") != "evidence_card" for event in adoption_events)
+            or any(event.get("mission_id") != mission_id for event in adoption_events)
+            or adoption_events[1].get("id") != adoption_audit_id
+            or not isinstance(adoption_events[1].get("details"), dict)
+            or adoption_events[1]["details"].get("retrieval_receipt_sha256") != lens_receipt_digest
+            or adoption_events[1]["details"].get("candidate_rank") != candidate_rank
+            or adoption_events[1]["details"].get("quote_sha256") != candidate_quote_sha256
+            or adoption_events[1]["details"].get("stance") != "context"
+            or "quote" in adoption_events[1]["details"]
+        ):
+            raise SmokeError("installed Lens adoption audit binding is invalid")
+
+        schema_after_adoption = _json_object(
+            _run_checked(
+                [str(python), "-c", schema_probe, str(demo_database)],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed post-adoption schema probe",
+        )
+        if schema_after_adoption != schema_before_adoption:
+            raise SmokeError("installed Lens evidence adoption changed schema expectations")
+        if json_path.read_bytes() != json_bytes:
+            raise SmokeError("installed Lens evidence adoption changed the canonical packet")
+        packet_after_adoption = _run_checked(
+            [
+                str(minerva_command),
+                "packet",
+                "verify",
+                "--input",
+                str(json_path),
+            ],
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if packet_after_adoption != packet_verify_output:
+            raise SmokeError("installed Lens adoption changed packet-v2 verification")
 
         doctor = _json_object(
             _run_checked(

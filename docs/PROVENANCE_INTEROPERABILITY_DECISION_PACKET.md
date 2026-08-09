@@ -1,23 +1,23 @@
 # PROV-O and RO-Crate interoperability decision packet
 
-- Status: **Proposed — design record only; not accepted, not implemented.**
+- Status: **Accepted as non-authorizing architectural guidance; not implemented.**
 - Date: 2026-08-08
-- Decision: **pending explicit owner review.** Acceptance of this design would not
-  authorize an exporter, new canonical artifact, packet revision, file writer,
+- Decision: **the owner accepts the mapping direction only.** This acceptance does not
+  authorize an exporter, public profile/IRI, new canonical artifact, packet revision, file writer,
   capability, import path, publication, migration, trust-model change, external
   principal, signature, Athena/Icarus adapter, MCP/API surface, or source-byte
   disclosure.
 - Scope: a field-level interoperability mapping and proof plan. Schema v5,
   `minerva.research-brief.v2`, and every accepted trust boundary remain unchanged.
 
-## Decision needed
+## Remaining implementation decisions
 
 Minerva can expose useful PROV-O and RO-Crate metadata without weakening its native
 record, but only after the owner decides exactly **which Minerva projection is being
 mapped**, **which bytes may leave SQLite**, and **what canonical bytes a verifier is
 expected to reproduce**.
 
-The proposed direction is:
+The accepted guidance is:
 
 1. Treat standards output as an additive, derived interoperability view. It never
    replaces Minerva's native schema, exact citation validation, packet v2, correction
@@ -35,8 +35,9 @@ The proposed direction is:
 6. Preserve withdrawals, retractions, supersession, and promotion as explicit native
    history. Do not erase old entities or mislabel inspectable records as unavailable.
 
-This packet does not accept those recommendations. It makes the forks reviewable and
-records the evidence needed for an owner decision.
+Acceptance fixes these recommendations as architectural guidance while leaving every
+implementation and publication fork below open. It makes those forks reviewable and
+records the evidence needed for a later owner decision.
 
 ## Why no existing artifact is a lossless source
 
@@ -132,7 +133,7 @@ RDFC-1.0 needs a pinned implementation, exact algorithm/hash identifiers, offici
 test vectors, schema validation, size/node/edge/depth/iteration/time ceilings, and
 fail-closed poisoning tests.
 
-## Proposed profile architecture
+## Accepted profile guidance
 
 ### Two non-interchangeable layers
 
@@ -200,7 +201,7 @@ export and bind it into the configuration and receipt. Repeating the export with
 same database snapshot and explicit inputs then remains byte-identical. Whether an
 export operation also persists/audits that time is a separate owner decision.
 
-## Proposed field mapping
+## Accepted field-mapping guidance
 
 This table names the minimum mapping obligations. PROV-O and Schema.org terms are
 secondary interoperability hooks; the versioned Minerva terms are the lossless source
@@ -232,6 +233,7 @@ of native semantics.
 | Brief export row | export `prov:Activity` and artifact entities | Schema and semantic/file digests plus provenance; historical paths and file bytes are not reconstructible from the row |
 | Migration row | Minerva ledger entity/activity | Version, name, SQL checksum, applied time; normally outside a claim-scoped disclosure |
 | Lens receipt/candidate | search `prov:Activity`, plan and result entities | Preserve normalized query, algorithm/Unicode/bounds/filter/corpus/set receipt, score/rank/omissions, exact candidate span, and candidate-only semantic boundary; no timestamp/identity invented |
+| Lens evidence adoption audit | adoption `prov:Activity` linked to generated Evidence | Preserve the fixed `lens.candidate.adopted` details, evidence/mission/actor/run identity, and later-than-creation audit order; rank is selector-only and receipt digests are self-consistency provenance, not identity, authority, truth, or quality. The audit row does not contain the captured receipt or quote text |
 | Queue, Review, Lineage, Dossier | derived collection/view entities | Preserve their exact scope, completeness, work bounds, digests, omissions, and semantic non-effects; never promote cues, edges, or candidate grouping into truth/evidence/task semantics |
 
 The mapping must preserve exact native identifiers as literals even if a deterministic
@@ -241,9 +243,11 @@ Stored timestamp text must likewise survive exactly. It may receive an `xsd:date
 type only after lexical validation, and `created_at`, `imported_at`, `occurred_at`, and
 crate publication time must never be silently conflated.
 Lens, Queue, Review, Lineage, and Dossier receipts are future profile extensions and
-are not part of the recommended first claim-owned proof.
+are not part of the recommended first claim-owned proof. A claim-scoped audit closure
+may include the bounded Lens adoption audit for an included evidence card, but that
+does not import or reconstruct the captured Lens receipt.
 
-## Proposed first proof scope
+## Accepted first-proof guidance
 
 Recommendation: prove one **claim-owned structured closure** before attempting a
 mission-wide crate. The declared scope would include:
@@ -318,7 +322,8 @@ signature.
 
 ## Determinism and proof obligations
 
-Before an exporter can be proposed for acceptance, a proof implementation must pass:
+Before any proof implementation is authorized, its acceptance plan must require the
+following; any later implemented exporter must pass them before it can ship:
 
 1. Field-by-field mapping coverage for every record and enum in the declared scope,
    with an independently maintained inverse mapping test.
@@ -391,11 +396,10 @@ The following must be resolved explicitly before implementation:
 12. **Artifact lifecycle:** stdout-only preview, safe immutable file, attached directory,
     or archive; whether export must create an audit event and durable export ledger.
     Existing `brief_exports` cannot honestly represent a new crate artifact.
-13. **Acceptance boundary:** whether approving this mapping only accepts terminology,
-    or authorizes a separately reviewed proof implementation. Recommendation: mapping
-    acceptance alone authorizes no exporter.
+13. **Acceptance boundary:** resolved for this packet. Mapping acceptance fixes
+    terminology and direction only; it authorizes no proof implementation or exporter.
 
-## Consequences if the mapping is later accepted
+## Consequences of accepting the mapping guidance
 
 - Minerva gains a precise standards vocabulary without weakening native semantics or
   changing packet v2.
@@ -442,8 +446,9 @@ The following must be resolved explicitly before implementation:
 
 ## Decision checkpoint
 
-Until the owner resolves the choices above, this packet is the terminal dependency for
-standards interoperability. The repository may refine documentation and test designs,
-but must not add a canonical exporter, profile claim, context asset, new artifact,
-source-byte writer, capability, audit event, migration, packet v3 field, or external
-protocol on the strength of this proposal alone.
+Until the owner separately resolves the choices above and authorizes an implementation,
+this packet is the terminal dependency for standards interoperability. The repository
+may refine documentation and test designs, but must not add a canonical exporter,
+public profile claim, context asset, new artifact, source-byte writer, capability,
+audit event, migration, packet v3 field, or external protocol on the strength of this
+accepted guidance alone.

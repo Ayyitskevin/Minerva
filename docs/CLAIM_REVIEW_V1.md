@@ -264,8 +264,10 @@ review index; it does not change Claim Review, and an emitted cue does not becom
 unresolved work, a recommended action, priority, assignment, or completion state.
 Dossier v1 retains the focal Review already derived by Queue and cross-checks it
 against focal Lineage in the same read snapshot; it adds no new review policy or
-semantic promotion. The proposed PROV-O/RO-Crate interoperability decision packet is
-now drafted and awaits explicit owner disposition; it authorizes no exporter.
+semantic promotion. The PROV-O/RO-Crate interoperability decision packet is accepted
+only as non-authorizing guidance and still authorizes no exporter. A later decision
+also accepts the separate single-candidate Lens Evidence Adoption command; it reuses
+normal evidence validation and does not change this read-only Review contract.
 
 A persisted assign/defer/resolve queue, schema migration, external principal,
 cryptographic identity, Athena/Icarus adapter, MCP or other external/agent-facing API,

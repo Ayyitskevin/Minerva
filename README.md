@@ -28,6 +28,12 @@ be strictly verified without a database or reproduced exactly against the curren
 local database state; neither operation turns the receipt into an authenticated
 artifact or a historical corpus archive.
 
+Lens Evidence Adoption v1 adds one deliberately separate CLI mutation. A trusted
+operator may select one reproduced candidate, explicitly confirm its receipt digest,
+snapshot digest, byte span, and quote digest, choose a claim and stance, and pass it
+through normal evidence validation and append-only audit. Search/replay remain
+read-only; there is no bulk or automatic adoption.
+
 Claim Review v1 adds a complete-or-refuse, deterministic view of one claim's
 structural evidence gaps, active support/opposition conflict, recorded-status validity,
 and append-only withdrawal/retraction impacts. It is local and read-only: review cues
@@ -134,6 +140,12 @@ minerva claim lineage --db research.db --mission MIS_ID --claim CLM_ID
 minerva mission queue --db research.db --mission MIS_ID
 minerva lens search --db research.db --mission MIS_ID \
   --query "immutable provenance" > lens-receipt.json
+minerva evidence add-from-lens --db research.db --mission MIS_ID --claim CLM_ID \
+  --lens-input lens-receipt.json --candidate-rank 1 --stance supports \
+  --expected-retrieval-receipt-sha256 RECEIPT_SHA256 \
+  --expected-snapshot-sha256 SNAPSHOT_SHA256 \
+  --expected-start-byte 0 --expected-end-byte 42 \
+  --expected-quote-sha256 QUOTE_SHA256
 minerva dossier build --db research.db --mission MIS_ID --claim CLM_ID \
   --lens-input lens-receipt.json
 minerva brief export --db research.db --mission MIS_ID --output-dir ./export
@@ -186,6 +198,7 @@ cannot ship undocumented.
 | `minerva lens replay` | reproduce one captured Lens receipt against the current database |
 | `minerva dossier build` | compose one atomic local review dossier |
 | `minerva evidence add` | cite an exact byte span of a snapshot |
+| `minerva evidence add-from-lens` | adopt one explicitly confirmed Lens candidate as evidence |
 | `minerva evidence withdraw` | mark evidence as no longer standing, keeping it in the ledger |
 | `minerva finding add` | record a labeled finding, assumption, or open question |
 | `minerva finding retract` | record that a finding is no longer asserted, keeping its history |
@@ -230,8 +243,10 @@ bytes as text, base64, SHA-256, and half-open byte coordinates.
 Lens uses one query-only SQLite snapshot and re-verifies every searched source
 snapshot before scoring. It creates no run, audit event, evidence, finding,
 claim-status event, inference, or export record. A useful lead enters the
-research record only through the separate existing `evidence add` command with
-an explicit claim, stance, coordinates, quote, validation, and audit trail.
+research record only through a separate evidence mutation: either direct
+`evidence add`, or the explicit single-candidate bridge described below. Both require
+a claim and operator-supplied stance and reuse the same exact-citation validation and
+atomic evidence audit path.
 
 Capture the complete JSON envelope emitted by search, then check its canonical digest
 and internal Lens v1 invariants without opening SQLite:
@@ -276,7 +291,37 @@ external agent. Receipt hashes establish deterministic self-consistency, not ori
 authenticity, authority, approval, truth, quality, freshness, or permission to
 disclose the quoted material.
 
+After review, adopt exactly one returned lead only by repeating the values the
+operator inspected:
+
+```bash
+minerva evidence add-from-lens --db research.db \
+  --mission MIS_ID --claim CLM_ID --lens-input lens-receipt.json \
+  --candidate-rank 1 --stance supports \
+  --expected-retrieval-receipt-sha256 RECEIPT_SHA256 \
+  --expected-snapshot-sha256 SNAPSHOT_SHA256 \
+  --expected-start-byte START --expected-end-byte END \
+  --expected-quote-sha256 QUOTE_SHA256
+```
+
+The receipt is safely loaded and strictly verified before SQLite opens. One
+`BEGIN IMMEDIATE` transaction then exactly reproduces the complete receipt against
+current state, refuses an identical existing evidence evaluation even if it was
+withdrawn, creates one normally validated `EvidenceCard`, and records both the
+existing `evidence.card.created` event and a provenance-only
+`lens.candidate.adopted` event. Any failure rolls back the mutation and both audit
+events. Rank is only a selector; it does not become confidence, stance, truth, or
+source quality. Search, verification, replay, and dossier composition remain
+read-only, and no bulk/automatic adoption, provider, network, API/web/MCP, packet,
+capability, migration, or index is added.
+
+Run `uv run python scripts/evaluate_lens_evidence_adoption.py` for the fixed synthetic
+checks of exact candidate/audit binding, multibyte span accuracy, atomic rollback,
+duplicate/drift/isolation refusal, and zero provider/network/unauthorized mutation.
+
 See [Lens v1](docs/LENS_V1.md) for the scoring/replay contract and
+[Lens Evidence Adoption v1](docs/LENS_EVIDENCE_ADOPTION_V1.md) for the explicit
+single-candidate mutation and audit contract, and
 [the competitive landscape](docs/COMPETITIVE_LANDSCAPE.md) for product context.
 
 ## Claim gaps and correction impacts
@@ -780,10 +825,11 @@ content and integrity metadata is outside the Milestone 1 detection boundary.
 - [Decision log](docs/DECISIONS.md)
 - [Roadmap and explicit non-goals](docs/ROADMAP.md)
 - [Lens v1 retrieval and receipt contract](docs/LENS_V1.md)
+- [Lens Evidence Adoption v1 explicit mutation contract](docs/LENS_EVIDENCE_ADOPTION_V1.md)
 - [Claim Review v1 gap and correction-impact contract](docs/CLAIM_REVIEW_V1.md)
 - [Claim Lineage Graph v1 provenance-topology contract](docs/CLAIM_LINEAGE_V1.md)
 - [Mission Research Queue v1 structural-review-index contract](docs/MISSION_RESEARCH_QUEUE_V1.md)
 - [Review Dossier v1 atomic local composition contract](docs/REVIEW_DOSSIER_V1.md)
-- [Proposed PROV-O/RO-Crate interoperability decision packet](docs/PROVENANCE_INTEROPERABILITY_DECISION_PACKET.md)
+- [Accepted non-authorizing PROV-O/RO-Crate interoperability guidance](docs/PROVENANCE_INTEROPERABILITY_DECISION_PACKET.md)
 - [Competitive landscape and dependency roadmap](docs/COMPETITIVE_LANDSCAPE.md)
 - [Contributing](CONTRIBUTING.md)

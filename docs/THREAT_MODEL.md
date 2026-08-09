@@ -1,4 +1,4 @@
-# Current threat model: provenance foundation through Review Dossier v1
+# Current threat model: provenance foundation through Lens Evidence Adoption v1
 
 ## Boundary and assets
 
@@ -24,7 +24,10 @@ structural review cues, related-record IDs, child review digests, and aggregate
 receipts to the same protected local disclosure surface. Review Dossier combines
 those mission-wide and claim-scoped disclosures with exact Lens quotes, component
 digests, and structural cross-checks in one potentially large local result. It remains
-inside the trusted OS-user boundary and adds no egress.
+inside the trusted OS-user boundary and adds no egress. Lens Evidence Adoption adds
+the integrity of the operator's explicit candidate confirmations and the durable link
+between one reproduced receipt candidate, one evidence card, and two append-only audit
+events. It adds no new disclosure destination.
 
 ## Threats and controls
 
@@ -46,6 +49,12 @@ inside the trusted OS-user boundary and adds no egress.
 | A self-consistent forged receipt is mistaken for authentic history | Database-free verification recomputes schema/algorithm/runtime, query/snapshot/quote digests, score/order, counts/omissions/truncation, semantic constants, and the whole-receipt digest; output explicitly says snapshot content was not verified and authenticity/origin/authority/approval/freshness/disclosure permission are unestablished | A same-OS-user producer can construct a different internally valid receipt; there is no signature, cryptographic identity, trusted timestamp, historical database archive, or external integrity anchor |
 | Lens reproduction hides current corpus or algorithm drift | Strict receipt verification precedes DB construction/open; runtime and algorithm incompatibility fail separately; the captured normalized query/tokens, canonical filters, and bounds run through the existing query-only search/integrity path; the complete newly built receipt must equal the captured one or `lens_replay_mismatch` | Reproduction is current-state exact comparison, not as-of replay. Any same-mission snapshot append changes mission/filter accounting and therefore mismatches even if excluded by an explicit filter; only foreign-mission changes are irrelevant |
 | Lens verification/reproduction mutates state or triggers external behavior | Pure verifier plus one `Database.read()`/`query_only` replay; no identity, writer, audit, export, provider, credential, network, REST/web, MCP, packet, capability, or external-agent dependency; dump/main-file/non-invocation regressions | The operator may separately retain the shell-captured receipt or invoke an existing audited evidence command; those actions are outside verify/replay |
+| Hostile or mistaken Lens adoption selects different bytes than the operator reviewed | Safe captured-file load and strict receipt verification complete before database open; mission must equal the explicit mission; one-based rank plus expected receipt digest, snapshot digest, exact byte span, and quote digest must all match the selected candidate; normal exact-citation validation runs again | Confirmations prove equality to the selected self-consistent receipt, not that the operator understood the text, chose the right claim/stance, or had disclosure rights |
+| Lens receipt or database changes between review and adoption | The complete verified receipt is reproduced through the normal Lens integrity/search path inside the same `BEGIN IMMEDIATE` transaction as evidence creation and audit; any corpus/result/omission/order/digest mismatch refuses | This is equality to current local state, not historical/as-of replay or authenticated receipt origin; a same-OS-user attacker controlling the database and receipt remains inside the trust boundary |
+| Concurrent or repeated Lens adoption duplicates an evaluation | `BEGIN IMMEDIATE` serializes an exact tuple check and insert; duplicate identity includes mission, claim, snapshot identity/digest, span, quote, stance, and supersession and includes withdrawn cards | A different stance or explicit supersession target is intentionally a distinct operator evaluation and can be contradictory; Minerva does not decide which evaluation is correct |
+| Lens adoption bypasses evidence or correction rules | On the caller-owned transaction, the bridge first applies the evidence package's bounded predecessor-chain check, then calls the existing evidence insert seam with its normal direct-target, claim/snapshot mission, exact UTF-8 byte, immutable-snapshot, and stance checks; it never auto-withdraws an older card | A trusted operator can deliberately record a poor or contradictory stance. Supersession remains lineage and does not itself deactivate the prior card |
+| Lens rank/digest is mistaken for truth, confidence, or authority | Required operator-supplied stance; result and docs say rank is selector-only; semantic-boundary flags deny truth/quality/confidence/status/finding/inference effects; receipt digest is labeled self-consistency only | A consumer that ignores the typed boundary can still overinterpret a highly ranked candidate or a SHA-256 value |
+| Lens adoption succeeds without attributable audit provenance | Evidence insert, normal `evidence.card.created`, and bounded `lens.candidate.adopted` share one immediate transaction; before commit the service requires exactly adjacent creation/adoption rows, canonical details and metadata, and stored/returned adoption audit-event ID equality, so a silent or forged injected sink raises `lens_adoption_audit_invalid` and rolls back card/events/new run; deep doctor independently reconciles durable state; query/quote/path text is omitted | No external signature or trusted timestamp prevents a determined same-OS-user coordinated rewrite of database and audit history |
 | Claim Review hides adverse or cross-mission correction state | Mission and claim are both required and shape-validated; unknown/foreign claims share one non-reflective refusal; question ownership and the complete contiguous status chain are mission-verified before status text is exposed; target evidence and mission-owned affected records are selected in one query-only snapshot; success is complete-or-refuse rather than paginated; foreign-owner text is never returned | Completeness is over records admitted by their stored owner rows to the named mission. If foreign keys/triggers were defeated and an owner was moved to another mission while a target-mission relationship was forged, owner-first queries exclude it; deep doctor, not a scoped view, detects that whole-file corruption |
 | Claim Review mistakes counts or conflict for truth | Active/withdrawn stance counts are descriptive; status validity reuses the presence-only workflow rule; active support plus opposition is labeled only as a structural stance conflict; semantic-boundary fields forbid truth, confidence, or replacement-status claims | The view does not assess source quality, logical incompatibility, causal validity, or whether a human correction was justified |
 | Claim Review work or output amplification | Evidence, affected-record, citation-relationship (including inspected promotion-target rows), actual distinct-snapshot-BLOB-byte, and SQLite-VM ceilings; declared/actual snapshot length is checked before BLOB materialization; statement/reason sizes are constrained by schema; any exceeded limit refuses the whole result | The VM ceiling depends on the local SQLite version/query plan and is not a portable elapsed-time or memory bound; a successful maximum-size receipt can still be large |
@@ -118,8 +127,16 @@ inside the trusted OS-user boundary and adds no egress.
   equality. It is not historical/as-of replay, persists nothing, and any same-mission
   snapshot append causes a mismatch even if a filter excludes that snapshot.
 - A Lens candidate is never evidence, a finding, an inference, confidence, or claim
-  status. Adoption remains a separate explicit human mutation with normal validation
-  and audit behavior.
+  status. `evidence add-from-lens` is a separate explicit trusted-local-operator mutation: it requires
+  exact candidate confirmations and stance, reproduces current state, and uses normal
+  validation and audit behavior.
+- Lens evidence adoption creates exactly one evidence card and no other semantic
+  state. Receipt replay, exact duplicate refusal, evidence creation, and both audit
+  events share one `BEGIN IMMEDIATE`; a refusal leaves none of them. Search, verify,
+  replay, and dossier remain query-only.
+- Adoption rank is selection order only. It cannot calculate confidence, choose
+  stance, alter claim status, create/retract findings, persist inference, withdraw
+  earlier evidence, change source/snapshot bytes, or authorize bulk adoption.
 - Claim Review returns one complete-or-refuse, mission-and-claim-scoped structural
   receipt from a query-only snapshot. Every cited snapshot is re-verified; success
   reports configured bounds, measured admitted work, correction/promotion provenance,
@@ -195,11 +212,12 @@ caught-error versus process/power-loss limitation as existing export.
 Remote access, real authentication, encrypted storage, optional OS keyring support,
 multi-tenancy, signed exports, additional providers, provider-side retrieval/tools,
 and non-CLI integration authentication require a later threat model and explicit
-product/security approval. The accepted local Review Dossier slice does not authorize
-a persistent assign/defer/resolve queue, migration, external principal, cryptographic
-identity, Athena/Icarus adapter, MCP or other agent protocol, packet revision,
-Lens-to-evidence mutation, or canonical PROV-O/RO-Crate exporter. The proposed
+product/security approval. The accepted Lens Evidence Adoption slice does not
+authorize a persistent assign/defer/resolve queue, migration, external principal,
+cryptographic identity, Athena/Icarus adapter, MCP or other agent protocol, packet
+revision, bulk/automatic adoption, or canonical PROV-O/RO-Crate exporter. The
 [PROV-O/RO-Crate interoperability decision packet](PROVENANCE_INTEROPERABILITY_DECISION_PACKET.md)
-now records the offline-context, disclosure, identity, canonicalization, and
-correction-semantics threats; it remains unaccepted, and implementation of an exporter
-is a separate owner decision.
+is accepted only as non-authorizing architectural guidance: it records the offline-
+context, disclosure, identity, canonicalization, and correction-semantics threats,
+while a profile, context asset, serializer, source-byte mode, exporter, and publication
+surface remain separate owner decisions.

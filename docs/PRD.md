@@ -1,4 +1,4 @@
-# Minerva product requirements: provenance foundation through Review Dossier v1
+# Minerva product requirements: provenance foundation through Lens Evidence Adoption v1
 
 ## Product identity
 
@@ -67,9 +67,29 @@ CLI output.
 Lens is discovery, not adjudication. It has no identity or mutation path, creates no
 audit event, stance, evidence, finding, confidence, or inference, and cannot expand
 the explicit mission/corpus scope. A reviewed lead becomes evidence only through the
-existing separate evidence workflow and its normal human identity, validation, stance,
-and audit behavior. Lens adds no schema migration, provider/model runtime, network
+existing separate evidence workflow and its normal local OS-user attribution,
+validation, operator-supplied stance, and audit behavior. Lens adds no schema
+migration, provider/model runtime, network
 fetch, crawl, OCR, embedding, vector index, API, web, MCP, or packet revision.
+
+## Lens Evidence Adoption v1 outcome
+
+A trusted local CLI operator can select exactly one candidate from an
+operator-captured Lens receipt, repeat its receipt digest, rank, snapshot digest,
+half-open byte span, and quote digest, and choose one existing claim and explicit
+evidence stance. Minerva verifies the hostile receipt before database open, then in
+one `BEGIN IMMEDIATE` transaction exactly reproduces it against current state,
+refuses an identical existing evidence evaluation, applies the existing exact-byte
+evidence validation, and atomically records one `EvidenceCard` plus its normal
+creation audit and a bounded `lens.candidate.adopted` provenance event.
+
+The bridge is not part of Lens search and does not make Lens mutating. Rank is only a
+candidate selector. The operation does not choose stance, determine truth or source
+quality, calculate confidence, change claim status, create/retract findings, persist
+agent inference, withdraw older evidence, modify source/snapshot bytes, or perform
+bulk/automatic adoption. It adds no migration, index, provider/model/network path,
+REST/web/MCP operation, packet field/version, capability-manifest entry, external
+principal, or cryptographic identity.
 
 ## Claim Lineage Graph v1 outcome
 
@@ -200,6 +220,10 @@ publication, messaging, or autonomous research.
 - **Candidate context:** a deterministic Lens lead locating potentially relevant
   bytes in an immutable snapshot. Its stance is unassessed and its evidence status is
   candidate-only; it is neither a citation nor an evidence card.
+- **Lens evidence adoption:** one explicit trusted-local-operator mutation that binds a strictly
+  verified and currently reproduced Lens candidate to one claim and operator-supplied
+  stance through the normal evidence service. It is not an inference from search rank
+  and does not change Lens's candidate-only semantics.
 - **Claim lineage graph:** a deterministic, typed, complete-or-refuse view of the
   provenance records and append-only relationships owned by one claim. It preserves
   corrected history and exact citation custody but is neither a truth graph nor a
@@ -345,6 +369,13 @@ unresolved question under the same citation rules as human-authored material.
     not create a persistent artifact or assert candidate relevance, evidence, truth,
     actionability, confidence, priority, correction, adoption, provider, network, or
     protocol meaning.
+22. Lens Evidence Adoption validates one captured receipt and every explicit
+    confirmation before database open. Exact current replay, exact-evaluation
+    duplicate refusal, normal evidence creation, `evidence.card.created`, and
+    `lens.candidate.adopted` share one `BEGIN IMMEDIATE` transaction. The duplicate
+    check includes withdrawn cards. A successful operation creates exactly one card
+    and no other semantic state; search/replay remain query-only and no rank, digest,
+    or truncation state becomes truth, confidence, stance, quality, or completeness.
 
 ## User surfaces
 
@@ -357,6 +388,10 @@ unresolved question under the same citation rules as human-authored material.
   read-only with respect to Minerva state.
 - `minerva lens search` returns compact deterministic JSON candidate receipts over one
   immutable mission corpus. No equivalent REST, web, provider, or MCP operation exists.
+- `minerva evidence add-from-lens` and the public local
+  `minerva.evidence.LensEvidenceAdoptionService.adopt_candidate` application service
+  adopt one explicitly confirmed candidate through the existing evidence boundary.
+  No equivalent REST, web, provider, packet, capability, or MCP operation exists.
 - `minerva claim lineage` and the public local
   `minerva.lineage.ClaimLineageService.build_graph` application service return one
   deterministic, complete-or-refuse claim provenance graph. No equivalent REST, web,

@@ -5,7 +5,9 @@ receipt verification and current-database exact reproduction implemented under t
 owner's subsequent instruction to continue the accepted dependency order. A later
 continuation separately accepts Review Dossier v1, which consumes the same captured
 receipt and exact replay path without changing Lens search, verification, or adoption
-semantics.
+semantics. The later Lens Evidence Adoption v1 decision adds a separate, explicit
+evidence command; it does not make Lens search, verification, replay, or Dossier
+mutating.
 
 Lens is the narrow, local retrieval exception to the otherwise closed D-6
 retrieval/ingestion gate. It searches only immutable UTF-8 snapshots that an
@@ -45,6 +47,23 @@ minerva lens replay --db research.db --input lens-receipt.json
 `replay` means exact reproduction against one current local database read snapshot.
 Neither word means that Minerva persisted a canonical Lens artifact, archived a
 historical corpus, authenticated the producer, or authorized disclosure.
+
+After those review steps, the separately accepted bridge can adopt one explicitly
+confirmed candidate through normal evidence validation:
+
+```bash
+minerva evidence add-from-lens --db research.db \
+  --mission MIS_ID --claim CLM_ID --lens-input lens-receipt.json \
+  --candidate-rank 1 --stance supports \
+  --expected-retrieval-receipt-sha256 RECEIPT_SHA256 \
+  --expected-snapshot-sha256 SNAPSHOT_SHA256 \
+  --expected-start-byte START --expected-end-byte END \
+  --expected-quote-sha256 QUOTE_SHA256
+```
+
+That command is an evidence mutation, not a Lens command. Its exact current replay,
+duplicate check, evidence creation, and two audit events share one immediate write
+transaction. See [`LENS_EVIDENCE_ADOPTION_V1.md`](LENS_EVIDENCE_ADOPTION_V1.md).
 
 ## Scope and bounds
 
@@ -266,9 +285,12 @@ A Lens result is a lead for review, never evidence. Lens itself cannot:
 - adopt a quote into the research record.
 
 The candidate stance is always `unassessed` and its evidence status is always
-`candidate_only`. Adoption remains the existing, separate `evidence add`
-operation, which requires a claim, explicit stance, exact quote and coordinates,
-local human identity, normal integrity validation, and an atomic audit record.
+`candidate_only`. Adoption remains separate: direct `evidence add` accepts an exact
+quote and coordinates, while `evidence add-from-lens` requires a strictly verified,
+currently reproduced candidate plus explicit receipt/snapshot/span/quote-digest
+confirmation. Both require a claim, operator-supplied stance, local OS-user attribution, normal
+integrity validation, and atomic audit. Search rank never supplies stance or epistemic
+weight.
 
 Minerva has no source/snapshot retraction state. Immutable source deletion is
 blocked, and later evidence withdrawals, finding retractions, or inference
@@ -323,6 +345,8 @@ corpus.
 Review Dossier v1 may embed and reproduce a captured Lens receipt in the same current
 query-only snapshot as Queue, focal Review, and focal Lineage. That co-location is an
 operator-supplied review association only: a candidate is still unassessed and never
-becomes claim evidence. The proposed PROV-O/RO-Crate interoperability decision packet
-is now drafted and awaits explicit owner disposition; a proof serializer, canonical
-exporter, and Lens-to-evidence bridge remain separately owner-gated.
+becomes claim evidence. The PROV-O/RO-Crate interoperability decision packet
+is accepted only as non-authorizing architectural guidance; a public profile, proof
+serializer, and canonical exporter remain separately owner-gated. The explicit
+single-candidate bridge is now implemented under its own narrow decision and does not
+change this read-only Lens contract.

@@ -39,6 +39,13 @@ lens replay --> verified captured receipt --> one current query-only SQLite snap
                                                    +--> normal Lens integrity/search path
                                                         + exact whole-receipt comparison
 
+evidence add-from-lens --> verified receipt + explicit candidate confirmations
+                                                   |
+                                                   +--> one BEGIN IMMEDIATE transaction
+                                                        +--> exact current Lens replay
+                                                        +--> normal evidence validation
+                                                        +--> evidence + two audit events
+
 claim review CLI --> complete structural query --> one query-only SQLite snapshot
                                                      |
                                                      +--> verified citation/correction
@@ -73,7 +80,8 @@ they may not reimplement domain validation or write SQL directly.
 - `research`: missions, questions, claims, findings, and their command/query service.
 - `sources`: safe local-file reading, validation, secret-pattern defense, and
   immutable snapshot registration.
-- `evidence`: byte-span citations, stance, ledgers, withdrawal, and supersession.
+- `evidence`: byte-span citations, stance, ledgers, withdrawal, supersession, and the
+  explicit single-candidate Lens-to-evidence coordinator.
 - `lens`: bounded, model-free candidate-context retrieval, strict receipt
   self-verification, and current-database exact reproduction over verified immutable
   snapshots.
@@ -215,6 +223,64 @@ exact reproduction, never an as-of or historical-corpus replay.
 The verify/replay reports are bounded local DTOs. They write no file or database row,
 create no identity/run/audit event, invoke no provider/credential/network, and expose
 no REST/web, MCP, capability-manifest, packet, Athena/Icarus, or external-agent seam.
+
+## Lens evidence adoption write boundary
+
+`LensEvidenceAdoptionService.adopt_candidate(...)` is a public local evidence
+application service. Its CLI adapter safely loads one captured Lens envelope before
+database construction and supplies the typed receipt, explicit mission/claim, one-
+based candidate rank, operator-supplied stance, optional evidence supersession target, and exact
+confirmations for the retrieval-receipt digest, snapshot digest, byte span, and quote
+digest. The service accepts no input path or raw SQL. “Operator-supplied” is declared
+intent under the trusted single-OS-user boundary; `IdentityContext` attribution does
+not authenticate a human selector.
+
+Strict receipt verification, scope/identifier checks, and confirmation equality run
+before SQLite opens. The service then owns one `Database.transaction()`
+(`BEGIN IMMEDIATE`). A package-private Lens seam executes exact current receipt replay
+on that caller-owned connection without enabling `query_only`; it reuses the normal
+mission/filter, immutable-snapshot, normalization, scoring, omission, ordering, and
+receipt path. Public Lens search/replay and every dossier Lens read retain their
+connection-local query-only snapshots. There is no public writable Lens interface.
+
+Inside the same write transaction the service refuses an existing evidence card with
+the exact mission, claim, snapshot identity/digest, byte span, quote, stance, and
+supersession tuple. Withdrawn cards remain duplicates because withdrawal preserves
+history. The immediate lock serializes check and insert without a new uniqueness
+index. A different stance or distinct explicit supersession target remains a separate
+operator evaluation.
+
+For a supersession, the coordinator first calls the evidence package's bounded
+predecessor-chain validator. It then calls the package-private transaction form of the
+existing `EvidenceService` path, which retains its normal direct-target,
+exact-citation, mission/claim/snapshot ownership, snapshot-integrity, and stance
+checks. The card and normal
+`evidence.card.created` event are followed by `lens.candidate.adopted`, using the same
+mission, actor, run, connection, and transaction. Its bounded fixed details bind rank,
+claim, query/receipt/snapshot-set/snapshot/quote digests, exact span, reproduced
+truncation flag, stance, and supersession while omitting query, quote, source label,
+and path. Deep doctor reconciles the additional event to the card and its creation
+event. Before commit, the coordinator itself requires exactly two adjacent feature
+rows (creation then adoption), canonical metadata/detail JSON, and equality between
+the stored adoption audit-event ID, injected audit-sink return value, and result
+`adoption_audit_event_id`. A
+nonconforming sink raises `lens_adoption_audit_invalid` inside the same transaction.
+A caught failure commits neither domain state, feature event, nor newly introduced
+run/audit state.
+
+Success returns `minerva.lens-evidence-adoption.v1` in the
+`lens_evidence_adoption` CLI envelope. It contains the generated evidence and audit
+provenance, so the adoption result does not claim byte identity across different
+successful mutations. Retrieval digests bind the selected lead but do not establish
+origin, identity, authority, approval, truth, quality, or disclosure permission.
+
+This coordinator creates one evidence card only. Rank is a selector, never epistemic
+weight. It does not change search, calculate confidence, alter claim status, create or
+retract findings, persist inference, modify source bytes, withdraw older evidence,
+perform bulk adoption, or invoke a provider/network/external protocol. Schema remains
+v5; packet v2, capabilities v2, migrations, indexes, REST/web/MCP, and trust/identity
+boundaries are unchanged. See
+[`LENS_EVIDENCE_ADOPTION_V1.md`](LENS_EVIDENCE_ADOPTION_V1.md).
 
 ## Claim Review read boundary
 
@@ -633,12 +699,17 @@ user Markdown as raw HTML.
   canonical artifact. A dossier exists only as returned DTO/CLI output.
 - **Feedback lives** in structured errors, CLI exit status, health/ready endpoints,
   doctor output, tests, and the append-only audit ledger. External assistance adds
-  metadata-only requested/terminal events and explicit unknown outcomes.
+  metadata-only requested/terminal events and explicit unknown outcomes. Lens evidence
+  adoption additionally records a bounded `lens.candidate.adopted` event alongside
+  normal evidence creation, and deep doctor reconciles both.
 - **Deleting a snapshot breaks** evidence and brief provenance, so foreign keys and
   append-only triggers prohibit it. Deleting/rewriting the database is outside the app.
 - **Timing works** because one command owns one transaction; mutations use
   `BEGIN IMMEDIATE`, while request fulfillment, Lens search, Lens reproduction, and
   the complete five-component dossier each use one query-only WAL read snapshot.
+  Lens evidence adoption is the deliberate composition: exact replay, duplicate
+  refusal, evidence insertion, and both audit events share one immediate write
+  transaction while standalone Lens reads remain query-only.
   Bounded busy waits expose contention and deterministic ordering removes completion-
   order ambiguity. The declared external-call exception is bracketed, not atomic: it
   has one attempt, bounded timeout, post-call context revalidation, and no automatic

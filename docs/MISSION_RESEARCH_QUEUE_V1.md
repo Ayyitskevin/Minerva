@@ -278,7 +278,7 @@ Building the index never:
 - invokes Claim Lineage, a model/provider, a provider credential, or a network; or
 - exposes an HTTP, web, MCP, Athena, Icarus, or other external-agent protocol.
 
-Rebuilding after a separate audited human mutation may produce different cues and
+Rebuilding after a separate audited operator mutation may produce different cues and
 digests. That is a fresh derived view, not a Queue state transition.
 
 ## Verification expectations
@@ -319,9 +319,11 @@ A durable assign/defer/resolve queue requires its own owner-approved migration a
 day-one correction model. Later continuations separately accept current-database
 Lens receipt verification/replay and Review Dossier v1. Dossier retains one focal
 Review from this existing Queue derivation inside a caller-owned query-only snapshot;
-it neither changes the Queue receipt nor turns its cues into tasks. The proposed
-PROV-O/RO-Crate interoperability decision packet is now drafted and awaits explicit
-owner disposition. No migration, index, trust-model change, packet version,
+it neither changes the Queue receipt nor turns its cues into tasks. The PROV-O/RO-Crate
+interoperability decision packet is accepted only as non-authorizing guidance. A later
+decision separately accepts one explicit single-candidate Lens Evidence Adoption
+mutation; it does not turn a Queue cue into a task, selection, or adoption request.
+No migration, index, trust-model change, packet version,
 capability entry, external principal, cryptographic identity, Athena/Icarus adapter,
-scholarly network adapter, PROV-O/RO-Crate exporter, MCP/API, Lens-to-evidence bridge,
+scholarly network adapter, PROV-O/RO-Crate exporter, MCP/API, bulk/automatic adoption,
 provider runtime, publishing, messaging, or deployment is accepted by this decision.

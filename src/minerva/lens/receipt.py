@@ -202,14 +202,46 @@ def _replay_lens_receipt_in_snapshot(
     )
 
 
+def _replay_lens_receipt_in_transaction(
+    service: LensService,
+    receipt: LensSearchResult,
+    *,
+    connection: sqlite3.Connection,
+) -> LensReplayResult:
+    """Reproduce a verified request inside one caller-owned write transaction."""
+
+    return _replay_verified_receipt(
+        service,
+        verify_lens_receipt(receipt),
+        connection=connection,
+        writable_transaction=True,
+    )
+
+
 def _replay_verified_receipt(
     service: LensService,
     verified: LensSearchResult,
     *,
     connection: sqlite3.Connection | None,
+    writable_transaction: bool = False,
 ) -> LensReplayResult:
     try:
-        if connection is None:
+        if writable_transaction:
+            if connection is None:
+                raise IntegrityError(
+                    "lens_replay_transaction_invalid",
+                    "Lens adoption requires a caller-owned writable transaction.",
+                )
+            actual = service._search_normalized_in_transaction(
+                mission_id=verified.mission_id,
+                normalized_query=verified.normalized_query,
+                query_terms=verified.query_terms,
+                source_ids=verified.corpus_filter.source_ids,
+                snapshot_ids=verified.corpus_filter.snapshot_ids,
+                bounds=verified.bounds,
+                connection=connection,
+            )
+        elif connection is None:
             actual = service._search_normalized(
                 mission_id=verified.mission_id,
                 normalized_query=verified.normalized_query,

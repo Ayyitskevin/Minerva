@@ -331,37 +331,63 @@
   behavior, non-invocation, and zero research/audit mutation. They make no truth,
   relevance, priority, actionability, or research-quality claim.
 
+## Lens Evidence Adoption v1: explicit single-candidate evidence mutation
+
+- The repository owner's 2026-08-08 “let's do it” accepts only the local
+  `minerva evidence add-from-lens` command and
+  `minerva.evidence.LensEvidenceAdoptionService.adopt_candidate(...)` service. It
+  does not accept bulk/automatic adoption or any additional surface by implication.
+- The operator supplies one captured Lens receipt, mission, claim, candidate rank,
+  stance, optional supersession target, and exact confirmations for retrieval-receipt
+  digest, snapshot digest, byte span, and quote digest. Safe receipt load and strict
+  verification finish before database open.
+- One `BEGIN IMMEDIATE` owns exact current receipt reproduction, exact-evaluation
+  duplicate refusal (including withdrawn cards), normal evidence validation/insertion,
+  `evidence.card.created`, and `lens.candidate.adopted`. A refusal commits none of
+  them. Different stance or distinct supersession remains an explicit separate operator
+  evaluation.
+- `minerva.lens-evidence-adoption.v1` binds receipt/query/snapshot-set and selected
+  candidate provenance to the generated evidence and adoption audit ID. Rank is a
+  selector, not epistemic weight, and the result makes no deterministic-ID,
+  authenticity, truth, confidence, authority, or disclosure-permission claim.
+- Search, verification, replay, and dossier remain read-only. Adoption creates one
+  evidence card only and changes no claim status, finding, agent inference, older
+  evidence lifecycle, source/snapshot bytes, packet, queue, dossier, export, or
+  capability. It invokes no model/provider/network or external protocol.
+- Schema remains v5. No migration, index, packet v2 field/version, capabilities v2
+  entry, REST/web/MCP operation, external principal, cryptographic identity, or broad
+  D-6 behavior is added. Deep doctor reconciles the additional fixed audit provenance.
+- A fixed two-mission evaluator measures exact selected-candidate/audit binding,
+  multibyte span accuracy, operator-supplied stance preservation, exact authorized state delta,
+  rollback, duplicate/drift/isolation refusal, semantic non-effects, deep integrity,
+  schema stability, and zero provider/network/unauthorized mutation. It makes no
+  truth, relevance, confidence, evidence-strength, or source-quality claim.
+
 ## Next dependency-ordered capabilities
 
-Review Dossier v1 is now the accepted completed dependency. The following remaining
-order is proposed, not implementation authorization. Each future slice needs an
-explicit owner decision. No migration, trust-model, external-principal,
-cryptographic-identity, adapter, external/agent-facing API, packet-version, canonical
-standards exporter, or broad D-6 gate is open.
+Lens Evidence Adoption v1 is now the accepted completed dependency. The same owner
+instruction accepts the PROV-O/RO-Crate packet as architectural guidance only; no
+profile, context, proof serializer, exporter, source-byte disclosure mode, publication,
+or capability is authorized. The following remaining order is proposed, not
+implementation authorization. Each slice needs an explicit owner decision.
 
-1. **Owner disposition of the PROV-O/RO-Crate decision packet:** the design packet is
-   now drafted and proves why fidelity must be scoped separately for packet v2,
-   structured claim closure, and attached source-byte custody. The owner must decide
-   profile/IRI publication, scope, disclosure, `datePublished`, license, context
-   custody, canonicalization, identity, and artifact/audit lifecycle before any proof
-   serializer or canonical exporter is authorized.
-2. **Explicit Lens-to-evidence bridge (owner-gated):** if approved, require a
-   verified receipt, selected candidate, claim, stance, and exact digest confirmation,
-   then reuse normal evidence validation/audit. It may never make search itself
-   mutating or perform autonomous/bulk adoption.
-3. **Authenticated Athena seam (gate D-2):** first reverify the counterpart, then
+1. **Authenticated Athena seam (gate D-2):** first reverify the counterpart, then
    separately decide ADRs 0009/0010, the external-principal migration, asymmetric
    verification dependency, revocation, replay, and transport. No external research
    mutation is implied.
-4. **Icarus artifact exchange (gate D-3 after D-2):** requires its own canonical
+2. **Icarus artifact exchange (gate D-3 after D-2):** requires its own canonical
    request/result and import-before-evidence decision, likely including a migration;
    Minerva still performs no experiment or automatic adoption.
-5. **Read-only agent protocol (gate D-5 after D-2/D-3):** MCP or any new agent-facing
+3. **Read-only agent protocol (gate D-5 after D-2/D-3):** MCP or any new agent-facing
    API starts with authenticated, bounded read tools backed by existing services and
    exposes no correction, adoption, assistance, publication, or execution verbs.
-6. **Packet v3 (separate decision after a real consumer exists):** define the exact
+4. **Packet v3 (separate decision after a real consumer exists):** define the exact
    correction/inference delta, independent verifier, backward compatibility, and
    hostile-input limits without changing frozen v2 bytes by accident.
+5. **Standards proof/export decision:** only after the accepted guidance's unresolved
+   profile/IRI, disclosure, context custody, `datePublished`, license,
+   canonicalization, identity, and artifact/audit-lifecycle choices are settled. The
+   exporter remains deferred rather than implicitly following this bridge.
 
 Scholarly-source adapters follow only after licensing/network/import-custody approval.
 A read-only agent protocol follows only after D-2 authentication. Semantic retrieval
