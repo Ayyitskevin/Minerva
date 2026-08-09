@@ -73,7 +73,10 @@ release here is a tag plus this record.
   It protected no route — the review server has no unsafe form — and a security
   control that guards nothing reads as a defense the application does not have.
   The loopback host, origin, body-limit, and strict-header enforcement is
-  unchanged.
+  unchanged. `SECURITY.md`, the architecture, and the threat model's mitigation
+  column no longer describe that primitive as something Minerva has; the
+  standing requirement that a future unsafe form carry both an accepted local
+  origin and a CSRF token stays where it was, in the security invariants.
 
 ### Operator-facing
 

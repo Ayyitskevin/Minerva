@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+import re
+from collections.abc import Iterator, Sequence
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI, Request
@@ -9,6 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from minerva.web import security as web_security
 from minerva.web.security import LocalSecurityMiddleware
 
 pytestmark = pytest.mark.security
@@ -438,3 +441,161 @@ def test_lifespan_scopes_still_reach_the_application() -> None:
     asyncio.run(middleware({"type": "lifespan"}, receive, send))
 
     assert reached == ["lifespan"]
+
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+# The documents that tell a reader what defends the local HTTP boundary. Game
+# plans, DECISIONS.md, and the execution state are records of what happened and
+# are deliberately not in this list.
+_SECURITY_DOCUMENTS = ("SECURITY.md", "docs/ARCHITECTURE.md", "docs/THREAT_MODEL.md")
+
+# What a security document calls a control -> the object in
+# `minerva.web.security` that has to exist for the claim to be true.
+_DOCUMENTED_WEB_CONTROLS = {
+    "CSRF": "CsrfProtector",
+    "Origin": "LocalSecurityMiddleware",
+}
+
+# A statement naming a control the code does not have must qualify it: as an
+# absence, or as a requirement on work that has not happened yet.
+_QUALIFIERS = ("must", "future", "would", "does not exist", "no longer")
+
+# ...and must not assert it as present anyway.
+_PRESENT_TENSE_CLAIMS = ("exists", "existing", "reserved", "already", "in place")
+
+
+def _sentences(paragraph: str) -> Iterator[str]:
+    yield from (part.strip() for part in re.split(r"(?<=[.!?])\s+", paragraph) if part.strip())
+
+
+def _statements(markdown: str) -> Iterator[str]:
+    """Yield the sentence-sized claims a Markdown document makes.
+
+    Table cells are yielded whole and one at a time: a mitigation named in one
+    column is not qualified by prose in another. Everything else is unwrapped to
+    one string per paragraph or list item before it is split on sentence
+    punctuation, because these documents hard-wrap and a single claim routinely
+    spans two source lines.
+    """
+
+    wrapped: list[str] = []
+    for line in [*markdown.splitlines(), ""]:
+        stripped = line.strip()
+        if (not stripped or stripped.startswith(("|", "-", "*", "#", ">"))) and wrapped:
+            yield from _sentences(" ".join(wrapped))
+            wrapped = []
+        if stripped.startswith("|"):
+            yield from (cell.strip() for cell in stripped.strip("|").split("|") if cell.strip())
+        elif stripped:
+            wrapped.append(stripped)
+
+
+def _names(text: str, control: str) -> bool:
+    return re.search(rf"\b{re.escape(control)}\b", text, re.IGNORECASE) is not None
+
+
+def _is_qualified(statement: str, control: str) -> bool:
+    lowered = statement.lower()
+    qualified = any(marker in lowered for marker in (*_QUALIFIERS, f"no {control.lower()}"))
+    return qualified and not any(claim in lowered for claim in _PRESENT_TENSE_CLAIMS)
+
+
+def _controls_the_code_lacks() -> dict[str, str]:
+    return {
+        control: symbol
+        for control, symbol in _DOCUMENTED_WEB_CONTROLS.items()
+        if not hasattr(web_security, symbol)
+    }
+
+
+def _security_documents() -> dict[str, str]:
+    return {
+        name: (_REPOSITORY_ROOT / name).read_text(encoding="utf-8") for name in _SECURITY_DOCUMENTS
+    }
+
+
+@pytest.mark.security
+def test_security_documents_do_not_present_a_control_the_code_lacks() -> None:
+    """A security document may not name a control this module does not expose.
+
+    Deleting the unwired `CsrfProtector` took a false affordance out of a module
+    where a test could fail on it and left four copies of it in SECURITY.md, the
+    architecture, and the threat model -- which is where an auditor looks. This
+    pins those documents to the module the way the capability manifest is pinned
+    to the CLI parser: a control the code does not have may be named only as an
+    absence or as a requirement on a form that does not exist yet, never as
+    something Minerva has.
+
+    Both rules are heuristics over prose and neither is complete. The qualifier
+    requirement catches a flat assertion, which carries no qualifier at all;
+    `_PRESENT_TENSE_CLAIMS` catches the "exists and must be wired into any
+    future form" shape that actually shipped. A sentence asserting presence
+    inside a qualified clause escapes both, and "every unsafe form must carry
+    the CSRF token Minerva provides" passes today. Natural-language
+    completeness is not reachable here, so the guarantee is that these shapes
+    fire -- not that no false claim can be written.
+    """
+
+    documents = _security_documents()
+
+    unmentioned = sorted(
+        control
+        for control in _DOCUMENTED_WEB_CONTROLS
+        if not any(_names(text, control) for text in documents.values())
+    )
+    assert not unmentioned, (
+        "no security document names these controls any more, so this test proves nothing "
+        f"about them; either the documents lost a claim or the pairing is dead: {unmentioned}"
+    )
+
+    missing = _controls_the_code_lacks()
+    unqualified = sorted(
+        f"{name}: {statement}"
+        for name, text in documents.items()
+        for statement in _statements(text)
+        for control in missing
+        if _names(statement, control) and not _is_qualified(statement, control)
+    )
+    assert not unqualified, (
+        f"a security document presents a control `minerva.web.security` does not expose "
+        f"({missing}): {unqualified}"
+    )
+
+
+@pytest.mark.security
+def test_threat_model_mitigations_name_only_controls_that_exist() -> None:
+    """The `Current controls` column has no honest way to name a missing control.
+
+    Prose can qualify a claim; a cell in a column headed `Current controls`
+    cannot, because the column heading has already said the claim is present
+    tense. The cross-site-request-forgery row listed a "signed SameSite CSRF
+    primitive" there after the primitive had been deleted.
+    """
+
+    document = (_REPOSITORY_ROOT / "docs/THREAT_MODEL.md").read_text(encoding="utf-8")
+    rows = [
+        [cell.strip() for cell in line.strip().strip("|").split("|")]
+        for line in document.splitlines()
+        if line.startswith("|")
+    ]
+    header = next(index for index, row in enumerate(rows) if "Current controls" in row)
+    column = rows[header].index("Current controls")
+    mitigations = [row[column] for row in rows[header + 2 :] if len(row) == len(rows[header])]
+
+    assert any(
+        _names(mitigation, control)
+        for mitigation in mitigations
+        for control in _DOCUMENTED_WEB_CONTROLS
+    ), "no mitigation names a control this test knows about, so it would prove nothing"
+
+    claimed = sorted(
+        f"{control}: {mitigation}"
+        for mitigation in mitigations
+        for control in _controls_the_code_lacks()
+        if _names(mitigation, control)
+    )
+    assert not claimed, (
+        f"the threat model lists a control `minerva.web.security` does not expose as a "
+        f"current mitigation: {claimed}"
+    )

@@ -17,7 +17,7 @@ evidence leaves the machine.
 | Threat | Current controls | Residual risk |
 | --- | --- | --- |
 | Remote browser reaches local service | Default `127.0.0.1` bind; loopback Host and Origin allowlist; no permissive CORS | Malicious software already running as the OS user shares the trust boundary |
-| Cross-site request forgery | Read-only HTML; non-local Origin rejection for REST mutations; signed SameSite CSRF primitive required before any unsafe form | OS-user malware can read local state/process memory |
+| Cross-site request forgery | Read-only HTML with no server-rendered form to forge; non-local Origin rejection for REST mutations; no cookie or ambient browser credential a forged request could replay | OS-user malware can read local state/process memory |
 | Oversized or malformed requests | Whole-request byte cap before framework parsing; Pydantic field bounds; bounded pagination | Body buffering uses memory up to the configured cap |
 | Oversized or adversarial research packet | Reject above 20 MiB before JSON decoding; strict fail-fast DTOs; bound JSON object width/depth and error classification; linear-time dependency and citation-supersession checks | A packet within the cap still consumes bounded parse and validation memory |
 | Unsafe standalone packet path | Reject `..`; descriptor-relative component walk with `O_NOFOLLOW`; `O_PATH`-pin and type-check the final target before readable open; metadata cap before read; two stable reads | A trusted same-OS-user process can still coordinate changes outside the finite observation window |
