@@ -44,8 +44,8 @@ they may not reimplement domain validation or write SQL directly.
   claim-scoped request fulfillment, Markdown/JSON rendering, digesting, and contained
   file export.
 - `api`: strict Pydantic request/response adapters and structured error mapping.
-- `web`: loopback-only, read-only server-rendered review pages, local HTTP controls,
-  and CSRF primitives reserved for any future unsafe browser form.
+- `web`: loopback-only, read-only server-rendered review pages, and local HTTP
+  controls. There is no CSRF primitive; any future unsafe browser form must add one.
 - `assist`: provider-neutral preview, authorization, bounded context, response
   validation, candidate labeling, and metadata-only invocation audit coordination.
 - `cli`: local operator commands, optional external-assistance consent, demo,
@@ -306,10 +306,12 @@ The application binds to `127.0.0.1` by default and refuses a non-loopback host 
 future authenticated multi-user work deliberately changes the boundary. Middleware
 enforces loopback `Host`/`Origin`, a body limit, CSP and defensive response headers.
 The Milestone 1 HTML surface is read-only; REST mutations use strict JSON contracts and
-reject non-local browser origins. A signed same-site CSRF cookie/token primitive exists
-and must be wired into any future unsafe browser form. There is no CORS middleware.
-Jinja autoescaping and plain `<pre>` brief previews prevent stored content from becoming
-executable HTML; Minerva does not render user Markdown as raw HTML.
+reject non-local browser origins. Minerva has no CSRF primitive; any future unsafe
+browser form must add same-site CSRF protection to the local-origin check, taken from
+the git history (`git log -- src/minerva/web/security.py`) rather than written from
+scratch. There is no CORS middleware. Jinja autoescaping and plain `<pre>` brief
+previews prevent stored content from becoming executable HTML; Minerva does not render
+user Markdown as raw HTML.
 
 ## Four operational invariants
 

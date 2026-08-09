@@ -6,10 +6,11 @@ Minerva is an alpha, single-OS-user local application tested on Linux/POSIX with
 Python 3.12–3.14. Other operating systems are not currently verified or supported.
 It binds to `127.0.0.1` by default. The read-only HTML surface, loopback Host/Origin
 checks, and REST Origin checks reduce browser-origin risk; they are not authentication
-and do not isolate mutually untrusted processes running as the same OS user. A CSRF
-primitive is reserved for a future unsafe browser form but is not part of the current
-read-only HTML boundary. Do not expose the server through a reverse proxy, tunnel,
-container port publish, or non-loopback bind.
+and do not isolate mutually untrusted processes running as the same OS user. There is
+no CSRF primitive in the code, and the read-only HTML surface has no form to forge; any
+future unsafe browser form must add same-site CSRF protection as well as the
+local-origin check. Do not expose the server through a reverse proxy, tunnel, container
+port publish, or non-loopback bind.
 
 Source snapshots and research databases can contain sensitive material. Protect the
 database and export directory with OS permissions and backups. Secret-pattern scanning
