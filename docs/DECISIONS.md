@@ -10,6 +10,7 @@
 - [ADR 0008: Persist human-adopted agent inferences as a separate labeled record](adr/0008-persisted-agent-inferences.md)
 - [ADR 0009: External principals and signed request attribution](adr/0009-external-principals-and-request-attribution.md) — **Proposed (gate D-2)**
 - [ADR 0010: The Athena coordination adapter seam](adr/0010-athena-coordination-adapter-seam.md) — **Proposed (gate D-2)**
+- [Workspace research-memory season](#workspace-research-memory-season-decision-0-2026-08-20) — **Accepted 2026-08-20 (Decision 0)**
 
 ## Milestone 1 implementation decisions
 
@@ -849,3 +850,34 @@ correctness can actually be verified. Nothing about the boundary changed:
 limits, and the strict header set, and no route gained or lost a defense.
 
 This closes plan 2's F2-SURFACES-4.
+
+## Workspace research-memory season (Decision 0, 2026-08-20)
+
+Kevin recorded Decision 0 on 2026-08-20: this season optimizes Minerva as the
+fleet's research-memory on mickey rather than opening gate D-2, productizing an
+MCP/agent protocol, or parking the repository.
+
+What this accepts:
+
+- Identity stays the local-first provenance laboratory. The governing rule is
+  unchanged. PRD invariants and accepted ADRs are not rewritten.
+- Daily use is the season's optimization: a Grok-seat clone, recovery of the
+  unpublished Lens/review stack after rebase onto current `main`, one persistent
+  local SQLite database, loopback review, and a documented same-OS-user CLI
+  loop for filing evidence.
+- Gate D-2 remains closed. Athena still cannot hold a keypair. A signature
+  still attests only to the extent the verifier could not have produced it, and
+  a server-held key still attests a deployment, never an agent.
+- Same-OS-user CLI access to one local database is the existing trust model. It
+  is not D-2, not multi-user authorization, and not a remote bind.
+
+What this does not authorize:
+
+- MCP, Tailscale or reverse-proxy bind, packet `v3`, a PROV-O/RO-Crate
+  exporter, extra providers, vector search, URL fetching, Icarus exchange
+  (D-3), or a read-only agent protocol (D-5).
+- Creating the persistent database, shipping systemd, or merging Lens. Those
+  are later phases that still need their own review and the eleven gates.
+- Editing another seat's clone or writing Minerva state into ORACLE.
+
+The written form is [VISION.md](VISION.md) and [WORKSPACE.md](WORKSPACE.md).

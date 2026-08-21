@@ -80,6 +80,10 @@ release here is a tag plus this record.
 
 ### Operator-facing
 
+- `docs/VISION.md` records Decision 0 (2026-08-20): this season treats Minerva
+  as the fleet's research-memory on mickey. Doctrine is unchanged. Gate D-2,
+  MCP, and remote bind stay closed. `docs/WORKSPACE.md` is the checkout,
+  database, and seat-loop map; it does not create the database.
 - `restore` accepts an intact backup at any older recorded schema version and
   migrates it forward on the private staged copy, deep-validated before
   publication, recording a `database.migrated` event where the migration
