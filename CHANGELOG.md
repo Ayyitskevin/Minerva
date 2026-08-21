@@ -108,6 +108,10 @@ release here is a tag plus this record.
 - README names `/api/v1/openapi.json` as the OpenAPI document. Interactive
   `/docs` and `/redoc` stay off, and FastAPI's default `/openapi.json` is not
   served. A test holds that surface to the README.
+- `docs/WORKSPACE.md` nightly backup example uses a dated output path.
+  `backup` refuses to overwrite, so `--output ~/data/minerva/backups/research.db`
+  can succeed once and then fail forever. A test holds the example off that
+  colliding filename.
 - `restore` accepts an intact backup at any older recorded schema version and
   migrates it forward on the private staged copy, deep-validated before
   publication, recording a `database.migrated` event where the migration
