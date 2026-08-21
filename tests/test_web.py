@@ -111,6 +111,38 @@ def _create_review_data(client: TestClient) -> dict[str, Any]:
     }
 
 
+@pytest.mark.security
+def test_interactive_api_docs_stay_disabled(web_client: TestClient) -> None:
+    """The README must name the OpenAPI document; Swagger UI is not a surface.
+
+    create_app sets docs_url and redoc_url to None and serves the spec only at
+    /api/v1/openapi.json. README used to say OpenAPI was "available" without a
+    path, which reads as FastAPI's default /docs.
+    """
+
+    readme = " ".join(
+        (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8").split()
+    )
+    docs = web_client.get("/docs")
+    redoc = web_client.get("/redoc")
+    default_spec = web_client.get("/openapi.json")
+    spec = web_client.get("/api/v1/openapi.json")
+
+    assert "The OpenAPI document is at `/api/v1/openapi.json`." in readme
+    assert "Interactive `/docs` and `/redoc` are disabled" in readme
+    assert "FastAPI's default `/openapi.json` is not served." in readme
+    assert docs.status_code == 404
+    assert redoc.status_code == 404
+    assert default_spec.status_code == 404
+    assert spec.status_code == 200
+    payload = spec.json()
+    assert str(payload["openapi"]).startswith("3.")
+    assert payload["info"]["title"] == "Minerva"
+    assert "/api/v1/missions" in payload["paths"]
+    assert "/docs" not in payload["paths"]
+    assert "/redoc" not in payload["paths"]
+
+
 def test_empty_mission_list_and_packaged_styles_render(web_client: TestClient) -> None:
     missions = web_client.get("/missions")
     styles = web_client.get("/static/style.css")
