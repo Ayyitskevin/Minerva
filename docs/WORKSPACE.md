@@ -27,15 +27,16 @@ uv run minerva --help
 Research state is one SQLite file plus exported packets. It does not live in
 git, in ORACLE, or on the Syncthing mesh.
 
-Recommended path on mickey, owner-only, created in Phase 3 rather than by this
-document:
+Recommended path on mickey, owner-only:
 
 ```text
 ~/data/minerva/research.db
 ~/data/minerva/backups/
+~/data/minerva/exports/
 ```
 
-Initialize once, then keep using that file:
+That tree is created. It does not live in git. Initialize once, then keep using
+that file:
 
 ```bash
 install -d -m 700 ~/data/minerva ~/data/minerva/backups
@@ -51,8 +52,10 @@ and call it the record.
 uv run minerva serve --db ~/data/minerva/research.db --host 127.0.0.1 --port 8765
 ```
 
-A user systemd unit is optional and is not required to start dogfooding. There
-is no reverse proxy and no Tailscale bind in this season.
+A user systemd unit may run that exact command. The host argument is rejected
+unless it is `127.0.0.1`. There is no reverse proxy and no Tailscale bind in
+this season. An example unit lives in `contrib/systemd/`. Machine-local units
+stay out of git.
 
 ## How a seat files evidence
 
@@ -61,10 +64,11 @@ They do not paste findings into Buzz and they do not treat an Athena issue body
 as a citation.
 
 The vertical slice is the same as the README: `mission create`, `question add`,
-`claim add`, `source import`, `evidence add` with an exact UTF-8 byte span,
-`finding add` or an explicitly labeled assumption, then `brief export` and
-`audit list`. Corrections are `evidence withdraw` and `finding retract`. There
-is still no delete verb.
+`claim add`, `source import`, `evidence add` or `evidence add-from-lens` with an
+exact UTF-8 byte span, `finding add` or an explicitly labeled assumption, then
+`brief export` and `audit list`. `lens search` returns unassessed leads, not
+evidence. Corrections are `evidence withdraw` and `finding retract`. There is
+still no delete verb.
 
 Before calling the slice complete on live data:
 
@@ -92,8 +96,15 @@ later archive a digest-addressed packet; Minerva does not write into the vault.
 The eleven commands in `AGENTS.md` are the repository gates. They are not a
 deploy. Provider tests use fakes only.
 
-## Not yet
+## Runtime on mickey (2026-08-21)
 
-Persistent DB creation, the first real mission, systemd, and the Lens rebase
-are later phases. This file records the intended layout so those phases do not
-invent a second database path.
+The Grok seat created the persistent database and seeded mission
+`Mickey AI workspace — sibling ownership` through the CLI, including one
+`evidence add-from-lens` adoption. Review is `http://127.0.0.1:8765/missions`
+(loopback). Briefs go under `~/data/minerva/exports/`. Backups are dated files
+under `~/data/minerva/backups/`. None of those paths are in git.
+
+## Not this season
+
+Gate D-2, MCP, Tailscale bind, packet `v3`, and writing Minerva state into
+ORACLE remain closed.

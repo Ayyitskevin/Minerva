@@ -45,12 +45,13 @@ seams remain in [ADR 0002](adr/0002-system-boundaries.md).
 ## This season
 
 1. Freeze this identity in-repo without rewriting the PRD or accepted ADRs.
+   **Done** (Decision 0, PR #37).
 2. Recover the unpublished local Lens/review stack onto current `main` after
-   rebase and the eleven repository gates.
+   rebase and the eleven repository gates. **Done** (PR #38).
 3. Run one persistent local database on mickey, with loopback review, so a
-   real mission can accrue evidence.
+   real mission can accrue evidence. **Running** — see [WORKSPACE.md](WORKSPACE.md).
 4. Document how a seat files a snapshot and an evidence card against that
-   database.
+   database. **In progress** (CLI + WORKSPACE.md; wrapper stays machine-local).
 
 ## Non-goals this season
 

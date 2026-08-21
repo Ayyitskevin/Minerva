@@ -1,0 +1,16 @@
+# Example user unit. Copy out of git and fill the paths.
+# Host MUST remain 127.0.0.1 — the CLI rejects any other bind.
+
+[Unit]
+Description=Minerva research-memory review server (loopback only)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/minerva/checkout
+ExecStart=/path/to/minerva/checkout/.venv/bin/minerva serve --db /path/to/minerva/research.db --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target
