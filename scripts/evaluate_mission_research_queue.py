@@ -126,6 +126,7 @@ def _adopt(
     return tuple(
         adoption.adopt_inference(
             preview=preview,
+            expected_request_sha256=preview.request_sha256,
             candidate_index=index,
             candidate=FindingCandidate(
                 statement=statement,

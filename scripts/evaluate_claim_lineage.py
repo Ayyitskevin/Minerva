@@ -218,6 +218,7 @@ def evaluate_claim_lineage() -> dict[str, object]:
         )
         inference = adoption.adopt_inference(
             preview=preview,
+            expected_request_sha256=preview.request_sha256,
             candidate_index=0,
             candidate=FindingCandidate(
                 statement="A promoted inference keeps separate model provenance.",

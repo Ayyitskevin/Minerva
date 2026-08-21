@@ -886,6 +886,7 @@ What this does not authorize:
   (D-3), or a read-only agent protocol (D-5).
 - Creating the persistent database, shipping systemd, or merging Lens. Those
   are later phases that still need their own review and the eleven gates.
+  Landing the Lens stack on `main` is that later phase, not a reopening of D-2.
 - Editing another seat's clone or writing Minerva state into ORACLE.
 
 The written form is [VISION.md](VISION.md) and [WORKSPACE.md](WORKSPACE.md).

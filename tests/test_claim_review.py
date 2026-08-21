@@ -432,6 +432,7 @@ def _impact_scenario(lab: Lab) -> _ImpactScenario:
     inferences = tuple(
         adoption.adopt_inference(
             preview=preview,
+            expected_request_sha256=preview.request_sha256,
             candidate_index=index,
             candidate=FindingCandidate(
                 statement=f"Reviewed candidate inference {index}.",
@@ -928,6 +929,7 @@ def test_tampered_finding_and_inference_claim_scope_fail_closed(lab: Lab) -> Non
     adoption = AdoptionService(lab.database, clock=fixed_clock, id_factory=lab.ids)
     inference = adoption.adopt_inference(
         preview=preview,
+        expected_request_sha256=preview.request_sha256,
         candidate_index=0,
         candidate=FindingCandidate(
             statement="An inference whose citation link will be tampered.",

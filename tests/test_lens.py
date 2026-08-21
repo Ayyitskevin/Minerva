@@ -354,6 +354,7 @@ def test_source_deletion_is_blocked_and_downstream_retractions_do_not_hide_snaps
     adoption = AdoptionService(lab.database, clock=fixed_clock, id_factory=lab.ids)
     inference = adoption.adopt_inference(
         preview=preview,
+        expected_request_sha256=preview.request_sha256,
         candidate_index=0,
         candidate=FindingCandidate(
             statement="A reviewed candidate inference.",

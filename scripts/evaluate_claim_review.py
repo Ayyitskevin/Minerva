@@ -284,6 +284,7 @@ def evaluate_claim_review() -> dict[str, object]:
         )
         live_inference = adoption.adopt_inference(
             preview=preview,
+            expected_request_sha256=preview.request_sha256,
             candidate_index=0,
             candidate=FindingCandidate(
                 statement="A live adopted inference depends on the original support.",
@@ -296,6 +297,7 @@ def evaluate_claim_review() -> dict[str, object]:
         )
         retracted_inference = adoption.adopt_inference(
             preview=preview,
+            expected_request_sha256=preview.request_sha256,
             candidate_index=1,
             candidate=FindingCandidate(
                 statement="A retracted adopted inference remains inspectable.",
