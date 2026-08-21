@@ -778,7 +778,8 @@ minerva serve --db research.db --host 127.0.0.1 --port 8765
 
 Open `http://127.0.0.1:8765/`. Health, readiness, and the capability manifest are at
 `/healthz`, `/readyz`, and `/api/v1/capabilities`. Versioned REST contracts live under
-`/api/v1`; OpenAPI is available locally while the process is running. Model assistance
+`/api/v1`. The OpenAPI document is at `/api/v1/openapi.json`. Interactive `/docs` and
+`/redoc` are disabled; FastAPI's default `/openapi.json` is not served. Model assistance
 cannot be invoked from the API or web interface.
 
 ## Operations and verification

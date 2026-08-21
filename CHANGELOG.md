@@ -105,6 +105,9 @@ release here is a tag plus this record.
   database, and seat-loop map. The mickey runtime (loopback serve, persistent
   DB, first mission) is documented there without putting database bytes in git.
 - `contrib/systemd/` holds a loopback-only example unit. It is not a deploy.
+- README names `/api/v1/openapi.json` as the OpenAPI document. Interactive
+  `/docs` and `/redoc` stay off, and FastAPI's default `/openapi.json` is not
+  served. A test holds that surface to the README.
 - `restore` accepts an intact backup at any older recorded schema version and
   migrates it forward on the private staged copy, deep-validated before
   publication, recording a `database.migrated` event where the migration
