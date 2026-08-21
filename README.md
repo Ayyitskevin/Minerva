@@ -21,6 +21,43 @@ offline, then resolve it against one local database snapshot and write a claim-s
 canonical v2 brief plus a digest-bound result manifest without changing research or
 audit state.
 
+Lens v1 adds bounded, deterministic lexical discovery over those already-imported
+immutable mission snapshots. It returns exact-byte candidate context for review and
+cannot create evidence or mutate research state. Captured Lens CLI receipts can also
+be strictly verified without a database or reproduced exactly against the current
+local database state; neither operation turns the receipt into an authenticated
+artifact or a historical corpus archive.
+
+Lens Evidence Adoption v1 adds one deliberately separate CLI mutation. A trusted
+operator may select one reproduced candidate, explicitly confirm its receipt digest,
+snapshot digest, byte span, and quote digest, choose a claim and stance, and pass it
+through normal evidence validation and append-only audit. Search/replay remain
+read-only; there is no bulk or automatic adoption.
+
+Claim Review v1 adds a complete-or-refuse, deterministic view of one claim's
+structural evidence gaps, active support/opposition conflict, recorded-status validity,
+and append-only withdrawal/retraction impacts. It is local and read-only: review cues
+do not determine truth, calculate confidence, recommend a status, or perform a
+correction.
+
+Claim Lineage Graph v1 adds the corresponding complete, typed provenance topology for
+one claim. It retains every claim-owned status, evidence, finding, adopted inference,
+withdrawal, retraction, promotion, and exact referenced snapshot while excluding
+claimless and sibling-claim state. The graph is deterministic, local, and read-only;
+it is neither a truth graph nor a correction or queue operation.
+
+Mission Research Queue v1 composes every Claim Review cue across one mission into a
+deterministic structural review index. It retains every reviewed claim and the exact
+review-receipt digest behind each cue, but it is not a persisted task queue: an item never
+means unresolved work, required action, severity, priority, assignment, or completion.
+
+Review Dossier v1 composes that mission index, its exact focal Claim Review, the focal
+Claim Lineage graph, and one operator-captured Lens receipt reproduced against the
+same current query-only database snapshot. Its cross-checks reconcile shared
+provenance—including the citation, retraction, and promotion state of affected
+claim-owned records reported by Review—without assessing Lens candidates against the
+claim or turning cues or candidates into research state.
+
 Milestone 2B adds one deliberately narrow, optional assistance surface. A local CLI
 operator can preview a bounded request made from one claim and its active evidence,
 then explicitly authorize that exact request for OpenAI or Anthropic using their own
@@ -98,6 +135,19 @@ minerva source import --db research.db --mission MIS_ID --root ./sources \
 minerva evidence add --db research.db --mission MIS_ID --claim CLM_ID \
   --snapshot SNP_ID --start 0 --end 42 --quote "EXACT QUOTE" --stance supports
 minerva claim show --db research.db --claim CLM_ID
+minerva claim review --db research.db --mission MIS_ID --claim CLM_ID
+minerva claim lineage --db research.db --mission MIS_ID --claim CLM_ID
+minerva mission queue --db research.db --mission MIS_ID
+minerva lens search --db research.db --mission MIS_ID \
+  --query "immutable provenance" > lens-receipt.json
+minerva evidence add-from-lens --db research.db --mission MIS_ID --claim CLM_ID \
+  --lens-input lens-receipt.json --candidate-rank 1 --stance supports \
+  --expected-retrieval-receipt-sha256 RECEIPT_SHA256 \
+  --expected-snapshot-sha256 SNAPSHOT_SHA256 \
+  --expected-start-byte 0 --expected-end-byte 42 \
+  --expected-quote-sha256 QUOTE_SHA256
+minerva dossier build --db research.db --mission MIS_ID --claim CLM_ID \
+  --lens-input lens-receipt.json
 minerva brief export --db research.db --mission MIS_ID --output-dir ./export
 minerva audit list --db research.db --mission MIS_ID
 minerva doctor --db research.db --deep
@@ -123,9 +173,9 @@ reconciled against its `research.finding.retracted` audit event.
 ## Command reference
 
 Every verb the CLI exposes. `--help` on any of them lists its arguments, and the
-sections below cover the packet, request, assistance, and operations verbs in
-depth. A test asserts this table stays complete, so a new verb cannot ship
-undocumented.
+sections below cover retrieval, review, lineage, queue, packet, request, assistance, and
+operations verbs in depth. A test asserts this table stays complete, so a new verb
+cannot ship undocumented.
 
 | Command | Purpose |
 | --- | --- |
@@ -133,14 +183,22 @@ undocumented.
 | `minerva mission create` | create a research mission |
 | `minerva mission list` | list missions, newest first |
 | `minerva mission show` | show one mission and its questions |
+| `minerva mission queue` | build the deterministic mission research review index |
 | `minerva question add` | add a research question to a mission |
 | `minerva claim add` | add a falsifiable claim under a question |
 | `minerva claim show` | show one claim, its status, and its findings |
 | `minerva claim ledger` | show a claim's complete evidence ledger, withdrawals included |
+| `minerva claim review` | show complete evidence gaps and correction impacts for one claim |
+| `minerva claim lineage` | show the complete provenance lineage graph for one claim |
 | `minerva claim status` | append a claim status, never overwriting one |
 | `minerva source import` | import one file as an immutable snapshot |
 | `minerva source show` | show snapshot metadata, or its stored bytes |
+| `minerva lens search` | search immutable mission snapshots for candidate context |
+| `minerva lens verify` | verify one captured Lens receipt without a database |
+| `minerva lens replay` | reproduce one captured Lens receipt against the current database |
+| `minerva dossier build` | compose one atomic local review dossier |
 | `minerva evidence add` | cite an exact byte span of a snapshot |
+| `minerva evidence add-from-lens` | adopt one explicitly confirmed Lens candidate as evidence |
 | `minerva evidence withdraw` | mark evidence as no longer standing, keeping it in the ledger |
 | `minerva finding add` | record a labeled finding, assumption, or open question |
 | `minerva finding retract` | record that a finding is no longer asserted, keeping its history |
@@ -163,6 +221,299 @@ There is no verb that deletes a mission, claim, snapshot, citation, finding, or
 audit event. Corrections extend the record: `claim status` appends, `evidence
 withdraw` and `finding retract` mark without removing, and `backup` refuses to
 overwrite. That absence is the contract, not an unfinished surface.
+
+## Lens candidate retrieval
+
+Search the immutable snapshots already imported into one mission without a
+model, provider, index, schema change, or network call:
+
+```bash
+minerva lens search --db research.db --mission MIS_ID \
+  --query "immutable provenance" --limit 10
+```
+
+Repeat `--source SRC_ID` and/or `--snapshot SNP_ID` to narrow the permitted
+corpus; supplying both searches their intersection. Results are deterministic
+`candidate_context` leads, not evidence. Each compact JSON receipt records the
+normalized query and digest, Unicode/algorithm versions, ordered searched
+snapshot identities and corpus digest, configured bounds, exclusions and
+omissions, integer score components, stable rank, and the exact quoted UTF-8
+bytes as text, base64, SHA-256, and half-open byte coordinates.
+
+Lens uses one query-only SQLite snapshot and re-verifies every searched source
+snapshot before scoring. It creates no run, audit event, evidence, finding,
+claim-status event, inference, or export record. A useful lead enters the
+research record only through a separate evidence mutation: either direct
+`evidence add`, or the explicit single-candidate bridge described below. Both require
+a claim and operator-supplied stance and reuse the same exact-citation validation and
+atomic evidence audit path.
+
+Capture the complete JSON envelope emitted by search, then check its canonical digest
+and internal Lens v1 invariants without opening SQLite:
+
+```bash
+minerva lens search --db research.db --mission MIS_ID \
+  --query "immutable provenance" --limit 10 > lens-receipt.json
+minerva lens verify --input lens-receipt.json
+```
+
+`verify` accepts exactly the normal `{"lens": {...}}` CLI envelope through the shared
+no-follow, stable-regular-file reader, caps it at 8 MiB (8,388,608 bytes) before JSON
+decoding, and rejects malformed, duplicate-field, non-standard-number, excessively
+shaped, incomplete/unknown-field, version-incompatible, and internally inconsistent
+input. Its bounded report confirms receipt self-consistency only. In particular,
+`searched_snapshot_content_verified` is false: no database was opened and no source
+bytes were independently rehashed.
+
+To rerun the captured normalized query, tokens, filters, and bounds against one
+current local database snapshot and require an exact whole-receipt match:
+
+```bash
+minerva lens replay --db research.db --input lens-receipt.json
+```
+
+Replay first performs the same strict standalone verification. It then uses the
+already-verified, fixed-point normalized query/token sequence directly and executes
+the existing Lens search path. Success is
+`minerva.lens-replay.v1` with `exact_receipt_match: true`,
+`current_database_snapshot_matched: true`, and `historical_corpus_replay: false`.
+Any changed selection, snapshot metadata/bytes, result, omission count, score, order,
+or digest refuses as `lens_replay_mismatch`; algorithm or Unicode-runtime drift has
+its own earlier compatibility refusal. This is exact reproduction against current
+state, not time travel or restoration of the historical corpus. Any same-mission
+snapshot append changes the receipt's mission/filter accounting and mismatches even
+when an explicit filter excludes it; foreign-mission changes remain isolated.
+
+Both commands are local and read-only. They write no artifact, research row, audit
+event, evidence, finding, inference, status, confidence, source byte, or packet; read
+no credential; and invoke no model, provider, network, REST/web endpoint, MCP, or
+external agent. Receipt hashes establish deterministic self-consistency, not origin,
+authenticity, authority, approval, truth, quality, freshness, or permission to
+disclose the quoted material.
+
+After review, adopt exactly one returned lead only by repeating the values the
+operator inspected:
+
+```bash
+minerva evidence add-from-lens --db research.db \
+  --mission MIS_ID --claim CLM_ID --lens-input lens-receipt.json \
+  --candidate-rank 1 --stance supports \
+  --expected-retrieval-receipt-sha256 RECEIPT_SHA256 \
+  --expected-snapshot-sha256 SNAPSHOT_SHA256 \
+  --expected-start-byte START --expected-end-byte END \
+  --expected-quote-sha256 QUOTE_SHA256
+```
+
+The receipt is safely loaded and strictly verified before SQLite opens. One
+`BEGIN IMMEDIATE` transaction then exactly reproduces the complete receipt against
+current state, refuses an identical existing evidence evaluation even if it was
+withdrawn, creates one normally validated `EvidenceCard`, and records both the
+existing `evidence.card.created` event and a provenance-only
+`lens.candidate.adopted` event. Any failure rolls back the mutation and both audit
+events. Rank is only a selector; it does not become confidence, stance, truth, or
+source quality. Search, verification, replay, and dossier composition remain
+read-only, and no bulk/automatic adoption, provider, network, API/web/MCP, packet,
+capability, migration, or index is added.
+
+Run `uv run python scripts/evaluate_lens_evidence_adoption.py` for the fixed synthetic
+checks of exact candidate/audit binding, multibyte span accuracy, atomic rollback,
+duplicate/drift/isolation refusal, and zero provider/network/unauthorized mutation.
+
+See [Lens v1](docs/LENS_V1.md) for the scoring/replay contract and
+[Lens Evidence Adoption v1](docs/LENS_EVIDENCE_ADOPTION_V1.md) for the explicit
+single-candidate mutation and audit contract, and
+[the competitive landscape](docs/COMPETITIVE_LANDSCAPE.md) for product context.
+
+## Claim gaps and correction impacts
+
+Inspect one claim's complete evidence ledger and every correction-relevant
+finding/inference relationship admitted by explicit deterministic bounds:
+
+```bash
+minerva claim review --db research.db --mission MIS_ID --claim CLM_ID
+```
+
+The `minerva.claim-review.v1` receipt reports active and withdrawn stance counts,
+missing support/opposition, any active support-and-opposition conflict, whether the
+recorded workflow status still has its required active stances, and the effects of
+evidence withdrawals and finding/inference retractions. Evidence entries retain source
+and snapshot identity, digest, exact UTF-8 byte coordinates, quote digest,
+supersession, provenance, and correction history. Supersession is historical lineage;
+it does not deactivate the superseded evidence card, so only an explicit withdrawal
+removes a card from the active stance set.
+
+The view is complete-or-refuse. If all target evidence, affected records, citation
+relationships, verified snapshot bytes, or SQLite instruction work cannot fit the
+configured bounds, it returns `claim_review_work_limit` instead of a partial result.
+Success is always `complete: true` and `truncated: false`, with measured work and a
+whole-receipt SHA-256.
+
+That digest establishes deterministic receipt self-consistency only. It is not a
+signature or proof of origin, authenticity, authority, approval, or permission to
+disclose the claim and correction data.
+
+Review observations are structural, not conclusions. Supporting and opposing cards
+coexisting is reported as a stance contradiction, not a vote or truth judgment;
+counts never become confidence or sufficiency. A still-live adopted inference whose
+evidence was later withdrawn is explicitly flagged as failing its active-citation
+policy. If it was not already promoted, promotion is now blocked; an earlier promotion
+remains append-only history and its human finding is reviewed separately. The reverse
+boundary is explicit too: retracting that finding does not retract a still-live source
+inference. A live inference with withdrawn evidence currently remains in the Markdown
+brief until a human explicitly retracts it, while adopted inferences remain absent
+from canonical v2 JSON. Claim Review makes that reading-surface risk inspectable but
+changes nothing.
+
+The command uses one query-only SQLite snapshot, verifies every referenced citation
+and distinct source snapshot, and writes no run, audit, evidence, finding, inference,
+status, export, or queue state. See [Claim Review v1](docs/CLAIM_REVIEW_V1.md) for the
+receipt, bound, correction, and semantic-non-effect contract.
+
+Repository evaluation is deliberately scoped. `scripts/evaluate_claim_review.py`
+measures fixed structural gap labels, recorded-status validity, six withdrawal-impact
+edge classes, repeated-run determinism, identifier-based mission isolation, and zero
+database-dump/main-file mutation. UTF-8 citation coordinates and quote digests,
+promotion lineage, hostile scope, bounds, and installed-wheel behavior are covered by
+the Claim Review unit, CLI, and distribution tests rather than reported as evaluation
+metrics.
+
+## Claim provenance lineage
+
+Build the complete claim-owned provenance closure without changing the database:
+
+```bash
+minerva claim lineage --db research.db --mission MIS_ID --claim CLM_ID
+```
+
+The `minerva.claim-lineage.v1` receipt is produced by the versioned
+`structural-ledger-lineage` algorithm with scope `claim_owned_closure_v1`. Its typed
+nodes retain the owning question, claim, complete status chain, all claim-owned
+evidence/findings/adopted inferences, withdrawals, retractions, promotions, and every
+referenced immutable snapshot. Typed edges preserve status sequence, citations,
+supersession, correction, and promotion relationships. Mission-level claimless
+findings, sibling claims, unreferenced snapshots, audit/run nodes, and reverse
+dependents are outside this deliberately narrow closure. The CLI prints one JSON-only
+`claim_lineage` envelope around the receipt.
+
+Every citation carries its exact quote as text and base64 bytes, half-open UTF-8 byte
+coordinates, quote length/digest, snapshot digest, source/snapshot metadata, stance,
+and provenance. Stable node/edge ordering and set/receipt SHA-256 values make identical
+successful inputs byte-identical. These hashes establish self-consistency, not truth,
+authenticity, authority, approval, or disclosure permission.
+
+The command uses one query-only SQLite snapshot and is complete-or-refuse. Node, edge,
+citation-byte, distinct-snapshot-byte, output-byte, and SQLite-work bounds cannot cause
+partial topology: an exceeded bound refuses instead of truncating. Graph construction
+creates no run, audit event, evidence, finding, inference, status, correction,
+promotion, queue, export, file, packet, provider request, or network activity. It does
+not score, calculate confidence, recommend a claim status, or expose a new agent
+protocol. See [Claim Lineage Graph v1](docs/CLAIM_LINEAGE_V1.md) for the exact receipt,
+scope, bounds, integrity, and semantic-non-effect contract.
+
+Run `uv run python scripts/evaluate_claim_lineage.py` for the fixed synthetic topology
+evaluation: typed node and owner-link precision/recall, edge precision/recall, exact
+citation-byte accuracy, deterministic output, mission/claim isolation, and zero
+unauthorized mutation.
+
+## Mission research review index
+
+Build one complete structural index of every Claim Review cue in a mission:
+
+```bash
+minerva mission queue --db research.db --mission MIS_ID
+```
+
+`minerva.mission-research-queue.v1` uses the versioned
+`claim-review-cue-aggregation` algorithm and scope
+`mission_claim_review_cues_v1`. It reviews every mission-owned claim in stable
+`(created_at, id)` order inside one query-only SQLite snapshot, retains a summary and
+Claim Review receipt digest for every reviewed claim, and emits one
+`structural_review_cue` item for every pinned Claim Review v1 cue. Claim Lineage is
+not invoked: its topology remains available through the separate claim command, but
+it does not define queue reason codes.
+
+Item order is canonical presentation only. It is not ranking by importance, age,
+severity, confidence, actionability, or recommended traversal. In the pinned Claim
+Review taxonomy, every claim has at least one structural cue: absence of support or
+opposition is a gap, while their coexistence is a structural stance conflict.
+Accordingly, item presence does not mean unfinished work, and an item never has an
+assigned, deferred, resolved, open, or completed state. Historical withdrawal or
+retraction cues remain visible because the index mirrors Claim Review rather than
+silently filtering them into an action policy.
+
+The assembler nevertheless retains a self-consistent zero-cue child review as a
+reviewed-claim summary with `item_count: 0`. That defensive completeness shape does
+not change the current Claim Review guarantee; honest Claim Review v1 state still
+produces at least one cue per claim.
+
+The result is complete-or-refuse. Aggregate claim, item, distinct verified-evidence,
+distinct evidence-quote-byte, affected-record, relationship, snapshot-byte,
+canonical-output-byte, and SQLite-work bounds cover the whole mission review; a limit
+refuses the operation instead of returning a plausible prefix. Claim-set, review-set,
+item-set, and whole-receipt SHA-256 values bind the deterministic result. Those hashes
+establish self-consistency only, not freshness, truth, authenticity, authority,
+approval, priority, or disclosure permission.
+
+Building the index creates no queue row, assignment, completion marker, run, audit
+event, evidence, finding, inference, status, correction, export, file, packet, or
+provider request. It reads no credential, contacts no network, and exposes no REST,
+web, MCP, Athena, Icarus, or other external-agent protocol. See
+[Mission Research Queue v1](docs/MISSION_RESEARCH_QUEUE_V1.md) for the exact receipt,
+bounds, reason provenance, exclusions, and semantic non-effects.
+
+Run `uv run python scripts/evaluate_mission_research_queue.py` for the fixed synthetic
+evaluation. It measures exact claim coverage, reason-label accuracy, cue-entry
+precision/recall including related record-ID sets, all 14 reason codes, canonical
+ordering, digest validity, byte determinism, mission isolation, and zero unauthorized
+mutation. It reports no priority, relevance, truth, confidence, severity,
+actionability, or completion metric.
+
+## Atomic local review dossier
+
+First capture an ordinary Lens search receipt, then compose it with the current
+mission and focal-claim review views:
+
+```bash
+minerva lens search --db research.db --mission MIS_ID \
+  --query "immutable provenance" > lens-receipt.json
+minerva dossier build --db research.db --mission MIS_ID --claim CLM_ID \
+  --lens-input lens-receipt.json
+```
+
+`minerva.review-dossier.v1` uses algorithm
+`current-snapshot-review-composition` version `1` and scope
+`mission_claim_with_captured_lens_v1`. The captured receipt is strictly verified
+before SQLite opens, must name the explicit mission, and must reproduce exactly
+through the normal Lens path. One subsequent query-only SQLite snapshot and one
+cumulative VM budget own that replay, the complete mission Queue, the exact focal
+Review retained by Queue, and the focal Lineage graph.
+
+The receipt embeds all five component results and binds their ordered receipt digests
+with `component_set_sha256`. Explicit cross-checks require Queue and Review digest/cue
+agreement; Review and Lineage claim, status, exact evidence/withdrawal agreement;
+affected claim-owned citation sets, retraction records, inference promotions,
+promoted-finding retracted state, and provenance agreement; matching identities for
+any snapshots shared by Lens and Lineage; and an exact current-database Lens replay.
+The affected-record check covers only the subset reported by Review; Lineage can
+retain additional unaffected owned records. Dossier success is complete and
+untruncated even when the embedded Lens search independently records bounded
+truncation; that state is retained as `lens_retrieval_truncated` and in the complete
+Lens receipt.
+
+Composition creates no durable dossier, identity, run, audit event, task, evidence,
+finding, inference, status, correction, export, file, packet, or capability. It does
+not connect a Lens candidate to the claim, make a Queue cue actionable, or interpret a
+Lineage edge as truth. Digests prove self-consistency, not origin, authenticity,
+approval, authority, freshness, quality, truth, or disclosure permission. See
+[Review Dossier v1](docs/REVIEW_DOSSIER_V1.md) for the exact component, bound,
+cross-check, digest, exclusion, and semantic contract.
+
+Run `uv run python scripts/evaluate_review_dossier.py` for the fixed synthetic
+evaluation. It checks component and receipt binding, every structural cross-check,
+multibyte citation and Lens-candidate byte accuracy, deterministic output, mission
+isolation, explicit Lens truncation, the candidate/evidence boundary, and zero
+unauthorized database mutation. These are fixture-bound structural metrics, not
+claims about relevance, truth, priority, source quality, or research completeness.
 
 ## Canonical research packet
 
@@ -473,4 +824,12 @@ content and integrity metadata is outside the Milestone 1 detection boundary.
 - [Threat model](docs/THREAT_MODEL.md)
 - [Decision log](docs/DECISIONS.md)
 - [Roadmap and explicit non-goals](docs/ROADMAP.md)
+- [Lens v1 retrieval and receipt contract](docs/LENS_V1.md)
+- [Lens Evidence Adoption v1 explicit mutation contract](docs/LENS_EVIDENCE_ADOPTION_V1.md)
+- [Claim Review v1 gap and correction-impact contract](docs/CLAIM_REVIEW_V1.md)
+- [Claim Lineage Graph v1 provenance-topology contract](docs/CLAIM_LINEAGE_V1.md)
+- [Mission Research Queue v1 structural-review-index contract](docs/MISSION_RESEARCH_QUEUE_V1.md)
+- [Review Dossier v1 atomic local composition contract](docs/REVIEW_DOSSIER_V1.md)
+- [Accepted non-authorizing PROV-O/RO-Crate interoperability guidance](docs/PROVENANCE_INTEROPERABILITY_DECISION_PACKET.md)
+- [Competitive landscape and dependency roadmap](docs/COMPETITIVE_LANDSCAPE.md)
 - [Contributing](CONTRIBUTING.md)

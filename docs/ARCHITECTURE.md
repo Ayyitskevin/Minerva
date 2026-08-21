@@ -26,6 +26,47 @@ request fulfill --> verified inert request --> one query-only SQLite snapshot
                                                   |
                                                   +--> claim-scoped canonical v2
                                                        + digest-bound result file
+
+lens CLI --> bounded lexical query --> one query-only SQLite snapshot
+                                           |
+                                           +--> verified immutable bytes
+                                                 + deterministic candidate receipt
+
+lens verify --> no-follow 8 MiB reader --> strict receipt self-verifier
+
+lens replay --> verified captured receipt --> one current query-only SQLite snapshot
+                                                   |
+                                                   +--> normal Lens integrity/search path
+                                                        + exact whole-receipt comparison
+
+evidence add-from-lens --> verified receipt + explicit candidate confirmations
+                                                   |
+                                                   +--> one BEGIN IMMEDIATE transaction
+                                                        +--> exact current Lens replay
+                                                        +--> normal evidence validation
+                                                        +--> evidence + two audit events
+
+claim review CLI --> complete structural query --> one query-only SQLite snapshot
+                                                     |
+                                                     +--> verified citation/correction
+                                                          impact receipt
+
+claim lineage CLI --> complete claim-owned closure --> one query-only SQLite snapshot
+                                                        |
+                                                        +--> verified typed nodes/edges
+                                                             + deterministic JSON receipt
+
+mission queue CLI --> complete Claim Review cue index --> one query-only SQLite snapshot
+                                                               |
+                                                               +--> reviewed claims/cues
+                                                                    + deterministic receipt
+
+dossier CLI --> verified captured Lens receipt --> one query-only SQLite snapshot
+                                                     |
+                                                     +--> exact Lens reproduction
+                                                     +--> mission Queue + retained focal Review
+                                                     +--> focal Claim Lineage
+                                                     +--> cross-checked deterministic dossier
 ```
 
 The SQLite database is authoritative for structured research state and source
@@ -39,7 +80,20 @@ they may not reimplement domain validation or write SQL directly.
 - `research`: missions, questions, claims, findings, and their command/query service.
 - `sources`: safe local-file reading, validation, secret-pattern defense, and
   immutable snapshot registration.
-- `evidence`: byte-span citations, stance, ledgers, withdrawal, and supersession.
+- `evidence`: byte-span citations, stance, ledgers, withdrawal, supersession, and the
+  explicit single-candidate Lens-to-evidence coordinator.
+- `lens`: bounded, model-free candidate-context retrieval, strict receipt
+  self-verification, and current-database exact reproduction over verified immutable
+  snapshots.
+- `review`: complete-or-refuse structural evidence-gap, active-stance-conflict,
+  and correction-impact receipts over existing claim ledgers.
+- `lineage`: complete-or-refuse typed provenance topology over one existing
+  claim-owned ledger closure, with exact citation and snapshot verification.
+- `research_queue`: complete-or-refuse mission-wide aggregation of the pinned Claim
+  Review cue taxonomy into a non-normative structural review index.
+- `dossier`: complete-or-refuse atomic read composition of a mission Queue, its
+  retained focal Claim Review, focal Claim Lineage, and a verified/currently
+  reproduced operator-captured Lens receipt.
 - `synthesis`: canonical research-packet assembly, citation verification,
   claim-scoped request fulfillment, Markdown/JSON rendering, digesting, and contained
   file export.
@@ -50,11 +104,12 @@ they may not reimplement domain validation or write SQL directly.
   validation, candidate labeling, and metadata-only invocation audit coordination.
 - `cli`: local operator commands, optional external-assistance consent, demo,
   backup/restore, doctor, and server startup.
-- `integrations`: strict, SQLite-independent research-packet and research-request DTOs,
-  parsers, canonical serializers, verifiers, shared safe standalone file reader, and
-  bounded metadata reports plus two live, narrowly reviewed provider adapters. Only
-  `integrations/ai/openai.py` and `integrations/ai/anthropic.py` may import their SDK
-  and network client; there are no live sibling-system adapters.
+- `integrations`: strict, SQLite-independent research-packet, research-request, and
+  captured-Lens-receipt parsers, canonical serializers, verifiers, shared safe
+  standalone file reader, and bounded metadata reports plus two live, narrowly
+  reviewed provider adapters. Only `integrations/ai/openai.py` and
+  `integrations/ai/anthropic.py` may import their SDK and network client; there are no
+  live sibling-system adapters.
 
 Imports point inward: adapters may import domain services; domain packages do not
 import FastAPI, Jinja, or CLI modules. Cross-domain writes are coordinated by an
@@ -116,6 +171,328 @@ context, or a caught provider failure. No database transaction can include the r
 operation. Process termination can leave only the requested event, and a timeout or
 connection loss is recorded as an unknown provider outcome because the provider may
 have processed the request. Minerva does not retry it automatically.
+
+## Lens read boundary
+
+`LensService` is a query application service, not a source importer or evidence
+service. Its SQL remains inside the service layer; the CLI only parses bounds and
+presents the returned DTO. Search validates query, limits, and canonical allowlists
+before opening one `Database.read()` transaction, then enables connection-local
+`PRAGMA query_only=ON`. Mission lookup, allowlist validation, deterministic corpus
+selection, snapshot loading, integrity verification, and scoring all occur against
+that same consistent read snapshot.
+
+Snapshot selection is a bounded prefix ordered by `(imported_at, snapshot_id)`.
+Source and snapshot filters intersect and every requested identifier must resolve in
+the mission. The existing source-integrity verifier checks stored bytes, length,
+SHA-256, UTF-8 decoding, and import-audit provenance before Lens sees text. Ranking is
+pure Python over original bytes using the versioned lexical rule in
+[`LENS_V1.md`](LENS_V1.md); SQLite collation, `LIKE`, FTS, provider code, and mutable
+indexes are not part of the result.
+
+The service returns immutable candidate DTOs and a receipt only. It has no identity,
+clock, ID factory, audit sink, transaction writer, provider, credential, export, or
+adoption dependency. Candidate text carries exact source byte coordinates but remains
+semantically distinct from `EvidenceCard`, `Finding`, and `AgentInference`. The
+existing evidence service is the only path from a reviewed lead into evidence state.
+
+Captured search output has one additional local file boundary. `lens verify` accepts
+only the normal `{"lens": {...}}` CLI envelope through the shared descriptor-pinned,
+no-follow stable regular-file reader. The 8 MiB limit is enforced before strict UTF-8
+JSON decoding; duplicate fields, non-standard numbers, excessive JSON shape and
+producer-impossible fanout, unknown fields, unsupported versions, and inconsistent
+derived values fail with bounded non-reflective errors. Verification recomputes query,
+snapshot-set, quote, score/order, omission/truncation, and whole-receipt relationships
+without constructing or opening a database. Its report consequently says snapshot
+content was not independently verified. A successful check establishes receipt
+self-consistency only, not origin, authenticity, authority, approval, truth, quality,
+freshness, or disclosure permission.
+
+`LensService.replay_receipt(...)` first applies that pure verifier, then executes the
+captured mission, canonical filters, deterministic bounds, normalized query, and token
+sequence through the normal Lens implementation in one current query-only SQLite
+snapshot. A package-private normalized-search seam preserves the exact captured
+request after verification proves it is the version-2 Unicode normalization fixed
+point; it is not a second public query contract. Snapshot bytes and import audit are re-verified as
+usual, and the newly built receipt must equal the captured receipt exactly. Any
+same-mission snapshot append changes at least the mission/filter accounting and causes
+`lens_replay_mismatch`, even when an explicit filter excludes it and the candidate
+array is unchanged. Foreign-mission changes are irrelevant. This is current-state
+exact reproduction, never an as-of or historical-corpus replay.
+
+The verify/replay reports are bounded local DTOs. They write no file or database row,
+create no identity/run/audit event, invoke no provider/credential/network, and expose
+no REST/web, MCP, capability-manifest, packet, Athena/Icarus, or external-agent seam.
+
+## Lens evidence adoption write boundary
+
+`LensEvidenceAdoptionService.adopt_candidate(...)` is a public local evidence
+application service. Its CLI adapter safely loads one captured Lens envelope before
+database construction and supplies the typed receipt, explicit mission/claim, one-
+based candidate rank, operator-supplied stance, optional evidence supersession target, and exact
+confirmations for the retrieval-receipt digest, snapshot digest, byte span, and quote
+digest. The service accepts no input path or raw SQL. “Operator-supplied” is declared
+intent under the trusted single-OS-user boundary; `IdentityContext` attribution does
+not authenticate a human selector.
+
+Strict receipt verification, scope/identifier checks, and confirmation equality run
+before SQLite opens. The service then owns one `Database.transaction()`
+(`BEGIN IMMEDIATE`). A package-private Lens seam executes exact current receipt replay
+on that caller-owned connection without enabling `query_only`; it reuses the normal
+mission/filter, immutable-snapshot, normalization, scoring, omission, ordering, and
+receipt path. Public Lens search/replay and every dossier Lens read retain their
+connection-local query-only snapshots. There is no public writable Lens interface.
+
+Inside the same write transaction the service refuses an existing evidence card with
+the exact mission, claim, snapshot identity/digest, byte span, quote, stance, and
+supersession tuple. Withdrawn cards remain duplicates because withdrawal preserves
+history. The immediate lock serializes check and insert without a new uniqueness
+index. A different stance or distinct explicit supersession target remains a separate
+operator evaluation.
+
+For a supersession, the coordinator first calls the evidence package's bounded
+predecessor-chain validator. It then calls the package-private transaction form of the
+existing `EvidenceService` path, which retains its normal direct-target,
+exact-citation, mission/claim/snapshot ownership, snapshot-integrity, and stance
+checks. The card and normal
+`evidence.card.created` event are followed by `lens.candidate.adopted`, using the same
+mission, actor, run, connection, and transaction. Its bounded fixed details bind rank,
+claim, query/receipt/snapshot-set/snapshot/quote digests, exact span, reproduced
+truncation flag, stance, and supersession while omitting query, quote, source label,
+and path. Deep doctor reconciles the additional event to the card and its creation
+event. Before commit, the coordinator itself requires exactly two adjacent feature
+rows (creation then adoption), canonical metadata/detail JSON, and equality between
+the stored adoption audit-event ID, injected audit-sink return value, and result
+`adoption_audit_event_id`. A
+nonconforming sink raises `lens_adoption_audit_invalid` inside the same transaction.
+A caught failure commits neither domain state, feature event, nor newly introduced
+run/audit state.
+
+Success returns `minerva.lens-evidence-adoption.v1` in the
+`lens_evidence_adoption` CLI envelope. It contains the generated evidence and audit
+provenance, so the adoption result does not claim byte identity across different
+successful mutations. Retrieval digests bind the selected lead but do not establish
+origin, identity, authority, approval, truth, quality, or disclosure permission.
+
+This coordinator creates one evidence card only. Rank is a selector, never epistemic
+weight. It does not change search, calculate confidence, alter claim status, create or
+retract findings, persist inference, modify source bytes, withdraw older evidence,
+perform bulk adoption, or invoke a provider/network/external protocol. Schema remains
+v5; packet v2, capabilities v2, migrations, indexes, REST/web/MCP, and trust/identity
+boundaries are unchanged. See
+[`LENS_EVIDENCE_ADOPTION_V1.md`](LENS_EVIDENCE_ADOPTION_V1.md).
+
+## Claim Review read boundary
+
+`ClaimReviewService` is a query application service over the existing claim,
+evidence, finding, and adopted-inference ledgers. The CLI supplies an explicit mission,
+claim, and deterministic bounds; all SQL, scope validation, derivation, integrity
+checking, and receipt construction remain in the service. One `Database.read()`
+transaction with `PRAGMA query_only=ON` owns the complete operation.
+
+Before using the shared claim reader, the review service verifies that the claim's
+question resolves in the mission and that its complete status-event chain starts at
+version one, remains contiguous, and contains no foreign-mission event. The selected
+status DTO must then match the verified latest event exactly.
+
+The service first bounds the target evidence ledger and every correction-relevant
+finding, inference, and citation relationship. It also caps distinct snapshot bytes
+and cumulative local SQLite virtual-machine work. Stored BLOB length is checked
+against declared snapshot length and the configured byte ceiling before snapshot
+content is returned to Python. A limit that would omit required admitted state raises
+`claim_review_work_limit`; no partial prefix is returned. Every referenced evidence
+card then passes the shared exact-citation and immutable-snapshot verifier with one
+snapshot cache. Stable entity ordering and compact sorted-key JSON produce a
+whole-result SHA-256 receipt with no generated ID or observation time.
+
+The derived status check reuses the existing presence-only rule: provisional support
+requires active support, contested requires active support and opposition, and
+unsupported requires active opposition. Coexisting active support and opposition is
+reported separately as a structural stance conflict. Neither condition is a truth,
+quality, confidence, sufficiency, or replacement-status judgment. Supersession remains
+lineage rather than deactivation; only an explicit withdrawal changes the active
+stance set.
+
+Affected records retain withdrawal, retraction, and inference-promotion provenance.
+Selected promotion targets must resolve in the same mission and claim with the copied
+statement, uncertainty, statement kind, and citation set before that provenance is
+returned. Promotion-target citation rows count against the relationship ceiling even
+when that finding is not otherwise an affected output record. Supersession self-links
+and cycles are rejected.
+The receipt describes current synthesis/promotion consequences but performs no
+correction and creates no queue. The service has no identity, writer, audit, export,
+provider, credential, network, packet, capability-manifest, HTTP/external/agent API,
+or web dependency. Its local Python application-service interface is public. See
+[`CLAIM_REVIEW_V1.md`](CLAIM_REVIEW_V1.md) for the versioned read contract.
+
+Claim Review is not a replacement for deep doctor. Its complete-or-refuse promise is
+over the records admitted to the named mission by their stored owner rows. If a
+same-OS-user attacker has already disabled foreign keys/triggers and moved an owner
+record into another mission while forging a target-mission relationship row, the
+owner-first query excludes that foreign owner rather than scanning every mission.
+Deep doctor remains responsible for detecting such whole-database referential
+corruption; the view never returns the foreign record's text.
+
+## Claim Lineage Graph read boundary
+
+`ClaimLineageService.build_graph(...)` is a public local query application service
+over the existing research, evidence, correction, and adopted-inference ledgers. The
+CLI supplies an explicit mission, claim, and deterministic bounds and emits the
+returned receipt inside a JSON-only `claim_lineage` envelope. All SQL, scope checks,
+closure discovery, integrity resolution, ordering, and digest construction remain in
+the service. One
+`Database.read()` transaction with connection-local `PRAGMA query_only=ON` owns the
+complete operation.
+
+The versioned algorithm is `structural-ledger-lineage` with scope
+`claim_owned_closure_v1`. Starting at the target claim, it admits the owning question,
+complete status chain, every claim-owned evidence card, finding, and adopted inference,
+their withdrawals/retractions/promotions and citation relationships, plus exactly the
+referenced immutable snapshots. Snapshot nodes carry source identity/metadata and both
+source and snapshot provenance. Evidence nodes carry exact quote text/base64 bytes,
+UTF-8 coordinates, quote/snapshot digests, stance, supersession, and provenance. The
+typed edges preserve status order, citation, supersession, correction, and promotion
+topology without interpreting any edge as truth, causality, confidence, or priority.
+
+The excluded record classes are explicit in the receipt:
+`sibling_claims`, `claimless_findings`, `unreferenced_snapshots`, `audit_events`,
+`research_runs`, `brief_exports`, `lens_candidates`,
+`ephemeral_assistance_candidates`, and `reverse_dependents`. Creator/run/time values
+remain attached as provenance, but audit and run records do not become graph nodes.
+Claimless findings stay excluded even when they cite target-claim evidence, and the
+service never follows reverse dependents or expands to a sibling claim.
+
+The service preflights and measures all required nodes, edges, citation bytes,
+distinct snapshot bytes, canonical output bytes, and cumulative SQLite virtual-machine
+work. Crossing any configured ceiling raises `claim_lineage_work_limit`; invalid bounds
+or scope raise `claim_lineage_bounds_invalid` or `claim_lineage_scope_invalid`, and
+inconsistent admitted ledger state raises `claim_lineage_inconsistent` or the existing
+exact citation/snapshot integrity error. Success is always complete and untruncated.
+
+Determinism does not depend on SQL row order. Node kinds use their fixed enum order;
+status events then order by `(version, id)`, snapshots by `(recorded_at, id)`, and other
+same-kind records by `(recorded_at, id)`. Edges order by fixed relation-enum order,
+then source and target node ID. Compact sorted-key serialization produces node-set,
+edge-set, snapshot-set, and whole-receipt SHA-256 values without a generated ID or
+observation time.
+
+The lineage service has no identity, clock, ID factory, writer, audit sink, export,
+queue, provider, credential, network, packet, capability-manifest, HTTP/web, MCP, or
+other external-agent dependency. It makes no truth, quality, confidence, sufficiency,
+score, or status recommendation and performs no correction or adoption. Its scoped
+owner-first closure is not a replacement for deep doctor's whole-database referential
+and audit-integrity scan. See [`CLAIM_LINEAGE_V1.md`](CLAIM_LINEAGE_V1.md) for the
+receipt and semantic contract.
+
+## Mission Research Queue read boundary
+
+`MissionResearchQueueService.build_queue(...)` is a public local query application
+service over every owner-admitted claim in one explicitly named mission. The CLI
+supplies the mission and aggregate deterministic bounds and emits the returned receipt
+inside a JSON-only `mission_research_queue` envelope. All claim discovery, review
+derivation, scope checks, integrity resolution, bounds, ordering, and digest
+construction remain in the service.
+
+One `Database.read()` transaction with connection-local `PRAGMA query_only=ON` owns
+the whole mission build. Claims are admitted in `(created_at, id)` order. A
+connection-bound internal Claim Review derivation reuses the existing review SQL,
+scope, citation/snapshot verification, cue taxonomy, and receipt construction under
+the queue's one cumulative SQLite progress handler; the queue neither loops the
+public multi-connection wrapper nor creates a parallel review implementation.
+
+Every complete pinned Claim Review v1 receipt yields a reviewed-claim summary and
+review digest. Every cue yields one `structural_review_cue` item carrying category,
+code, explanation, related record IDs, claim/question identity, and the source review
+digest. Claim summaries remain separately represented so claim-set completeness is
+bound directly rather than inferred from the item array. Under the current taxonomy
+every claim emits at least one cue, because missing support/opposition is a gap while
+coexistence is a structural stance conflict. The assembler nevertheless retains a
+self-consistent zero-cue child review with `item_count: 0`; that defensive shape does
+not assert that honest Claim Review v1 state can be cue-free.
+
+Claim Lineage is not part of this build path. Its typed graph remains a separate
+operator inspection surface, but it defines topology and recorded human rationale,
+not queue reason codes or actionability. Mission-owned claimless findings may occur
+only as related IDs already admitted by Claim Review through a target claim's
+correction impact; they never become queue roots.
+
+Claims order by `(created_at, id)` and cues use the fixed Claim Review catalog order.
+That canonical sequence is presentation only; it is not priority, severity, age,
+confidence, actionability, or recommended traversal. Compact sorted-key serialization
+produces claim-set, review-set, item-set, and whole-receipt SHA-256 values without a
+generated identifier or observation time.
+
+Aggregate claim, item, distinct verified-evidence-card, distinct evidence-quote-byte,
+affected-record, relationship, actual snapshot-byte, canonical-output-byte, and
+cumulative SQLite-VM ceilings protect the whole operation. One internal
+verified-citation cache binds the evidence count and quote-byte sum to the union of
+target ledgers and admitted correction-citation closure; a metadata-only length
+preflight must admit every new evidence ID and its quote bytes against the remaining
+aggregate budgets before quote text reaches Python. Crossing any ceiling raises
+`mission_research_queue_work_limit` and returns no prefix. Invalid bounds raise
+`mission_research_queue_bounds_invalid`; inconsistent admitted review/cue state raises
+`mission_research_queue_inconsistent` or the existing exact citation/snapshot integrity
+error as applicable.
+
+The queue service has no identity, clock, ID factory, writer, audit sink, export,
+provider, credential, network, packet, capability-manifest, Claim Lineage, HTTP/web,
+MCP, or other external-agent dependency. The result is a non-normative review index,
+not a persisted task queue: it creates no assignment, deferment, resolution,
+completion, research state, or action recommendation. See
+[`MISSION_RESEARCH_QUEUE_V1.md`](MISSION_RESEARCH_QUEUE_V1.md) for the receipt and
+semantic contract.
+
+## Review Dossier read boundary
+
+`ReviewDossierService.build_dossier(...)` is a public local query application service
+over one explicit mission, focal claim, and typed captured `LensSearchResult`. The
+`minerva dossier build` CLI reads the ordinary `{"lens": {...}}` file with the
+existing no-follow bounded reader, supplies the parsed receipt to the service, and
+emits one JSON-only `review_dossier` envelope. Paths and file parsing do not enter the
+domain service.
+
+Bounds and scope are validated and the complete captured Lens receipt is strictly
+self-verified before database construction/open. Its mission must equal the explicit
+mission. This is an input-safety and current-state binding step, not authentication:
+the operator-captured receipt remains an unsigned copy of ordinary CLI output.
+
+One `Database.read()` transaction with connection-local `PRAGMA query_only=ON` and one
+cumulative SQLite progress handler then owns the full composition. Fixed execution
+order first reproduces the Lens receipt through the established normalized search and
+snapshot-integrity path, then builds the complete mission Queue while retaining the
+focal Claim Review already derived by Queue, and finally builds focal Claim Lineage.
+Package-private connection-bound seams prevent child services from opening drifting
+snapshots or replacing the dossier's cumulative work handler; their standalone public
+behavior is unchanged. Queue and Lineage bounds name the same SQLite VM ceiling as
+the dossier because that one budget covers all components.
+
+Success embeds five complete results in fixed order: Queue, focal Review, focal
+Lineage, Lens search, and Lens replay. Structural cross-checks require mission and
+question agreement; exactly one focal queue summary; Queue/Review digest and cue
+equality; Review/Lineage claim, current status, evidence, withdrawal, affected
+claim-owned finding/inference payload and provenance agreement, including citation
+sets, retraction records, inference promotions, and promoted-finding retracted state;
+matching metadata for any snapshot shared by Lens and Lineage; and exact Lens
+current-database reproduction. This affected-record check covers the claim-owned
+subset reported by Review, not every otherwise-unaffected owned record retained by
+Lineage. A disjoint Lens/Lineage snapshot set is valid and does not imply candidate
+relevance.
+
+Every component retains its established receipt digest. A compact sorted-key
+component-set frame binds the five ordered component receipts, and a second compact
+sorted-key digest binds the complete dossier excluding only its own digest field.
+Canonical output bytes are measured to a fixed point. There is no generated ID or
+observation timestamp. Queue, Lineage, cumulative SQLite, and final-output ceilings
+are complete-or-refuse. Embedded Lens omissions and truncation remain explicit and do
+not make the outer dossier partial.
+
+The service has no identity, clock, ID factory, writer, audit sink, exporter,
+provider, credential, network, packet, capability-manifest, HTTP/web, MCP, or other
+external-agent dependency. It does not assess Lens candidates against the focal
+claim, create evidence, convert queue cues into task state, interpret Lineage edges as
+truth, perform a correction, or adopt anything. See
+[`REVIEW_DOSSIER_V1.md`](REVIEW_DOSSIER_V1.md) for the exact receipt, cross-check,
+bound, digest, exclusion, and semantic contract.
 
 ## Exact citations
 
@@ -317,14 +694,22 @@ user Markdown as raw HTML.
 
 - **State lives** in the migrated SQLite database and intentionally written immutable
   export/request-result files. Provider credentials and candidate responses are
-  ephemeral and never become research state.
+  ephemeral and never become research state. An operator-captured Lens stdout file is
+  input for local checking or dossier composition, not an application-persisted
+  canonical artifact. A dossier exists only as returned DTO/CLI output.
 - **Feedback lives** in structured errors, CLI exit status, health/ready endpoints,
   doctor output, tests, and the append-only audit ledger. External assistance adds
-  metadata-only requested/terminal events and explicit unknown outcomes.
+  metadata-only requested/terminal events and explicit unknown outcomes. Lens evidence
+  adoption additionally records a bounded `lens.candidate.adopted` event alongside
+  normal evidence creation, and deep doctor reconciles both.
 - **Deleting a snapshot breaks** evidence and brief provenance, so foreign keys and
   append-only triggers prohibit it. Deleting/rewriting the database is outside the app.
 - **Timing works** because one command owns one transaction; mutations use
-  `BEGIN IMMEDIATE`, while request fulfillment uses one query-only WAL read snapshot.
+  `BEGIN IMMEDIATE`, while request fulfillment, Lens search, Lens reproduction, and
+  the complete five-component dossier each use one query-only WAL read snapshot.
+  Lens evidence adoption is the deliberate composition: exact replay, duplicate
+  refusal, evidence insertion, and both audit events share one immediate write
+  transaction while standalone Lens reads remain query-only.
   Bounded busy waits expose contention and deterministic ordering removes completion-
   order ambiguity. The declared external-call exception is bracketed, not atomic: it
   has one attempt, bounded timeout, post-call context revalidation, and no automatic

@@ -18,8 +18,14 @@ from minerva.core.doctor import run_doctor
 from minerva.core.errors import IntegrityError, SecurityBoundaryError
 from minerva.core.operations import OperationsService
 from minerva.core.types import IdentityContext, local_identity
-from minerva.evidence.models import EvidenceStance
-from minerva.evidence.service import EvidenceService
+from minerva.dossier import ReviewDossierBounds, ReviewDossierService
+from minerva.evidence import (
+    EvidenceService,
+    EvidenceStance,
+    LensCandidateConfirmation,
+    LensEvidenceAdoptionService,
+)
+from minerva.integrations.lens_receipt_file import load_lens_receipt
 from minerva.integrations.research_packet_file import (
     load_research_packet,
     packet_inspection_report,
@@ -29,8 +35,19 @@ from minerva.integrations.research_request_file import (
     load_research_request,
     request_verification_report,
 )
+from minerva.lens import (
+    LensBounds,
+    LensService,
+    lens_receipt_verification_result,
+)
+from minerva.lineage import ClaimLineageBounds, ClaimLineageService
 from minerva.research.models import ClaimStatus, FindingStatus, StatementKind
 from minerva.research.service import ResearchService
+from minerva.research_queue import (
+    MissionResearchQueueBounds,
+    MissionResearchQueueService,
+)
+from minerva.review import ClaimReviewBounds, ClaimReviewService
 from minerva.sources.service import SourceService
 from minerva.synthesis.request_fulfillment import ResearchRequestFulfillmentService
 from minerva.synthesis.service import SynthesisService
@@ -102,6 +119,27 @@ def _cmd_mission_show(args: argparse.Namespace) -> Outcome:
     return Outcome(result)
 
 
+def _cmd_mission_queue(args: argparse.Namespace) -> Outcome:
+    result = MissionResearchQueueService(_database(args)).build_queue(
+        mission_id=cast(str, args.mission),
+        bounds=MissionResearchQueueBounds(
+            max_claims=cast(int, args.max_claims),
+            max_items=cast(int, args.max_items),
+            max_evidence_cards=cast(int, args.max_evidence_cards),
+            max_distinct_evidence_quote_bytes=cast(
+                int,
+                args.max_distinct_evidence_quote_bytes,
+            ),
+            max_affected_records=cast(int, args.max_affected_records),
+            max_relationships=cast(int, args.max_relationships),
+            max_distinct_snapshot_bytes=cast(int, args.max_distinct_snapshot_bytes),
+            max_output_bytes=cast(int, args.max_output_bytes),
+            max_sqlite_vm_steps=cast(int, args.max_sqlite_vm_steps),
+        ),
+    )
+    return _command_result("mission_research_queue", result)
+
+
 def _cmd_question_add(args: argparse.Namespace) -> Outcome:
     question = ResearchService(_database(args)).add_question(
         mission_id=cast(str, args.mission),
@@ -124,6 +162,37 @@ def _cmd_claim_add(args: argparse.Namespace) -> Outcome:
 
 def _cmd_claim_show(args: argparse.Namespace) -> Outcome:
     return _claim_with_ledger(_database(args), cast(str, args.claim))
+
+
+def _cmd_claim_review(args: argparse.Namespace) -> Outcome:
+    result = ClaimReviewService(_database(args)).review_claim(
+        mission_id=cast(str, args.mission),
+        claim_id=cast(str, args.claim),
+        bounds=ClaimReviewBounds(
+            max_evidence_cards=cast(int, args.max_evidence_cards),
+            max_affected_records=cast(int, args.max_affected_records),
+            max_relationships=cast(int, args.max_relationships),
+            max_snapshot_bytes=cast(int, args.max_snapshot_bytes),
+            max_sqlite_vm_steps=cast(int, args.max_sqlite_vm_steps),
+        ),
+    )
+    return _command_result("claim_review", result)
+
+
+def _cmd_claim_lineage(args: argparse.Namespace) -> Outcome:
+    result = ClaimLineageService(_database(args)).build_graph(
+        mission_id=cast(str, args.mission),
+        claim_id=cast(str, args.claim),
+        bounds=ClaimLineageBounds(
+            max_nodes=cast(int, args.max_nodes),
+            max_edges=cast(int, args.max_edges),
+            max_citation_bytes=cast(int, args.max_citation_bytes),
+            max_snapshot_bytes=cast(int, args.max_snapshot_bytes),
+            max_output_bytes=cast(int, args.max_output_bytes),
+            max_sqlite_vm_steps=cast(int, args.max_sqlite_vm_steps),
+        ),
+    )
+    return _command_result("claim_lineage", result)
 
 
 def _cmd_claim_status(args: argparse.Namespace) -> Outcome:
@@ -157,6 +226,78 @@ def _cmd_source_show(args: argparse.Namespace) -> Outcome:
     return Outcome(payload)
 
 
+def _cmd_lens_search(args: argparse.Namespace) -> Outcome:
+    result = LensService(_database(args)).search(
+        mission_id=cast(str, args.mission),
+        query=cast(str, args.query),
+        source_ids=cast(list[str] | None, args.source),
+        snapshot_ids=cast(list[str] | None, args.snapshot),
+        bounds=LensBounds(
+            max_results=cast(int, args.limit),
+            max_snapshots=cast(int, args.max_snapshots),
+            max_corpus_bytes=cast(int, args.max_corpus_bytes),
+            max_quote_bytes=cast(int, args.max_quote_bytes),
+        ),
+    )
+    return _command_result("lens", result)
+
+
+def _cmd_lens_verify(args: argparse.Namespace) -> Outcome:
+    receipt = load_lens_receipt(cast(Path, args.input))
+    return _command_result(
+        "lens_receipt_verification",
+        lens_receipt_verification_result(receipt),
+    )
+
+
+def _cmd_lens_replay(args: argparse.Namespace) -> Outcome:
+    receipt = load_lens_receipt(cast(Path, args.input))
+    return _command_result(
+        "lens_replay",
+        LensService(_database(args)).replay_receipt(receipt),
+    )
+
+
+def _cmd_dossier_build(args: argparse.Namespace) -> Outcome:
+    lens_receipt = load_lens_receipt(cast(Path, args.lens_input))
+    max_sqlite_vm_steps = cast(int, args.max_sqlite_vm_steps)
+    result = ReviewDossierService(_database(args)).build_dossier(
+        mission_id=cast(str, args.mission),
+        claim_id=cast(str, args.claim),
+        lens_receipt=lens_receipt,
+        bounds=ReviewDossierBounds(
+            mission_queue=MissionResearchQueueBounds(
+                max_claims=cast(int, args.queue_max_claims),
+                max_items=cast(int, args.queue_max_items),
+                max_evidence_cards=cast(int, args.queue_max_evidence_cards),
+                max_distinct_evidence_quote_bytes=cast(
+                    int,
+                    args.queue_max_distinct_evidence_quote_bytes,
+                ),
+                max_affected_records=cast(int, args.queue_max_affected_records),
+                max_relationships=cast(int, args.queue_max_relationships),
+                max_distinct_snapshot_bytes=cast(
+                    int,
+                    args.queue_max_distinct_snapshot_bytes,
+                ),
+                max_output_bytes=cast(int, args.queue_max_output_bytes),
+                max_sqlite_vm_steps=max_sqlite_vm_steps,
+            ),
+            claim_lineage=ClaimLineageBounds(
+                max_nodes=cast(int, args.lineage_max_nodes),
+                max_edges=cast(int, args.lineage_max_edges),
+                max_citation_bytes=cast(int, args.lineage_max_citation_bytes),
+                max_snapshot_bytes=cast(int, args.lineage_max_snapshot_bytes),
+                max_output_bytes=cast(int, args.lineage_max_output_bytes),
+                max_sqlite_vm_steps=max_sqlite_vm_steps,
+            ),
+            max_output_bytes=cast(int, args.max_output_bytes),
+            max_sqlite_vm_steps=max_sqlite_vm_steps,
+        ),
+    )
+    return _command_result("review_dossier", result)
+
+
 def _cmd_evidence_add(args: argparse.Namespace) -> Outcome:
     evidence = EvidenceService(_database(args)).add_evidence(
         mission_id=cast(str, args.mission),
@@ -170,6 +311,34 @@ def _cmd_evidence_add(args: argparse.Namespace) -> Outcome:
         identity=_identity("cli:evidence-add"),
     )
     return _command_result("evidence", evidence)
+
+
+def _cmd_evidence_add_from_lens(args: argparse.Namespace) -> Outcome:
+    # The captured file is a hostile local-artifact boundary. Read and verify
+    # it before constructing the database. The evidence application service
+    # validates every explicit confirmation before it opens SQLite.
+    receipt = load_lens_receipt(cast(Path, args.lens_input))
+    confirmation = LensCandidateConfirmation(
+        rank=cast(int, args.candidate_rank),
+        snapshot_sha256=cast(str, args.expected_snapshot_sha256),
+        start_byte=cast(int, args.expected_start_byte),
+        end_byte=cast(int, args.expected_end_byte),
+        quote_sha256=cast(str, args.expected_quote_sha256),
+    )
+    result = LensEvidenceAdoptionService(_database(args)).adopt_candidate(
+        receipt=receipt,
+        mission_id=cast(str, args.mission),
+        claim_id=cast(str, args.claim),
+        confirmation=confirmation,
+        expected_retrieval_receipt_sha256=cast(
+            str,
+            args.expected_retrieval_receipt_sha256,
+        ),
+        stance=EvidenceStance(cast(str, args.stance)),
+        supersedes_evidence_id=cast(str | None, args.supersedes),
+        identity=_identity("cli:evidence-add-from-lens"),
+    )
+    return _command_result("lens_evidence_adoption", result)
 
 
 def _cmd_evidence_withdraw(args: argparse.Namespace) -> Outcome:
@@ -504,6 +673,30 @@ def build_parser() -> argparse.ArgumentParser:
     _add_database(mission_show)
     mission_show.add_argument("--mission", required=True)
     _set_handler(mission_show, _cmd_mission_show)
+    mission_queue = mission_commands.add_parser(
+        "queue",
+        help="build the deterministic mission research review index",
+    )
+    _add_database(mission_queue)
+    mission_queue.add_argument("--mission", required=True)
+    mission_queue.add_argument("--max-claims", type=int, default=100)
+    mission_queue.add_argument("--max-items", type=int, default=1_400)
+    mission_queue.add_argument("--max-evidence-cards", type=int, default=5_000)
+    mission_queue.add_argument(
+        "--max-distinct-evidence-quote-bytes",
+        type=int,
+        default=67_108_864,
+    )
+    mission_queue.add_argument("--max-affected-records", type=int, default=10_000)
+    mission_queue.add_argument("--max-relationships", type=int, default=50_000)
+    mission_queue.add_argument(
+        "--max-distinct-snapshot-bytes",
+        type=int,
+        default=67_108_864,
+    )
+    mission_queue.add_argument("--max-output-bytes", type=int, default=67_108_864)
+    mission_queue.add_argument("--max-sqlite-vm-steps", type=int, default=8_000_000)
+    _set_handler(mission_queue, _cmd_mission_queue)
 
     question_parser = commands.add_parser("question", help="manage research questions")
     question_commands = question_parser.add_subparsers(dest="question_command", required=True)
@@ -530,6 +723,33 @@ def build_parser() -> argparse.ArgumentParser:
             "ledger", help="show a claim's complete evidence ledger, withdrawals included"
         )
     )
+    claim_review = claim_commands.add_parser(
+        "review",
+        help="show complete evidence gaps and correction impacts for one claim",
+    )
+    _add_database(claim_review)
+    claim_review.add_argument("--mission", required=True)
+    claim_review.add_argument("--claim", required=True)
+    claim_review.add_argument("--max-evidence-cards", type=int, default=200)
+    claim_review.add_argument("--max-affected-records", type=int, default=200)
+    claim_review.add_argument("--max-relationships", type=int, default=2_000)
+    claim_review.add_argument("--max-snapshot-bytes", type=int, default=16_777_216)
+    claim_review.add_argument("--max-sqlite-vm-steps", type=int, default=4_000_000)
+    _set_handler(claim_review, _cmd_claim_review)
+    claim_lineage = claim_commands.add_parser(
+        "lineage",
+        help="show the complete provenance lineage graph for one claim",
+    )
+    _add_database(claim_lineage)
+    claim_lineage.add_argument("--mission", required=True)
+    claim_lineage.add_argument("--claim", required=True)
+    claim_lineage.add_argument("--max-nodes", type=int, default=1_000)
+    claim_lineage.add_argument("--max-edges", type=int, default=2_000)
+    claim_lineage.add_argument("--max-citation-bytes", type=int, default=16_777_216)
+    claim_lineage.add_argument("--max-snapshot-bytes", type=int, default=16_777_216)
+    claim_lineage.add_argument("--max-output-bytes", type=int, default=67_108_864)
+    claim_lineage.add_argument("--max-sqlite-vm-steps", type=int, default=4_000_000)
+    _set_handler(claim_lineage, _cmd_claim_lineage)
     claim_status = claim_commands.add_parser(
         "status", help="append a claim status, never overwriting one"
     )
@@ -562,6 +782,104 @@ def build_parser() -> argparse.ArgumentParser:
     source_show.add_argument("--metadata-only", action="store_true")
     _set_handler(source_show, _cmd_source_show)
 
+    lens_parser = commands.add_parser(
+        "lens",
+        help="search immutable snapshots for candidate context",
+    )
+    lens_commands = lens_parser.add_subparsers(dest="lens_command", required=True)
+    lens_search = lens_commands.add_parser(
+        "search",
+        help="search immutable mission snapshots for candidate context",
+    )
+    _add_database(lens_search)
+    lens_search.add_argument("--mission", required=True)
+    lens_search.add_argument("--query", required=True)
+    lens_search.add_argument("--source", action="append")
+    lens_search.add_argument("--snapshot", action="append")
+    lens_search.add_argument("--limit", type=int, default=20)
+    lens_search.add_argument("--max-snapshots", type=int, default=50)
+    lens_search.add_argument("--max-corpus-bytes", type=int, default=16_777_216)
+    lens_search.add_argument("--max-quote-bytes", type=int, default=1_024)
+    _set_handler(lens_search, _cmd_lens_search)
+    lens_verify = lens_commands.add_parser(
+        "verify",
+        help="verify one captured Lens receipt without a database",
+    )
+    lens_verify.add_argument("--input", required=True, type=Path)
+    _set_handler(lens_verify, _cmd_lens_verify)
+    lens_replay = lens_commands.add_parser(
+        "replay",
+        help="reproduce one captured Lens receipt against the current database",
+    )
+    _add_database(lens_replay)
+    lens_replay.add_argument("--input", required=True, type=Path)
+    _set_handler(lens_replay, _cmd_lens_replay)
+
+    dossier_parser = commands.add_parser(
+        "dossier",
+        help="compose deterministic local review views",
+    )
+    dossier_commands = dossier_parser.add_subparsers(
+        dest="dossier_command",
+        required=True,
+    )
+    dossier_build = dossier_commands.add_parser(
+        "build",
+        help="compose one atomic local review dossier",
+    )
+    _add_database(dossier_build)
+    dossier_build.add_argument("--mission", required=True)
+    dossier_build.add_argument("--claim", required=True)
+    dossier_build.add_argument("--lens-input", required=True, type=Path)
+    dossier_build.add_argument("--queue-max-claims", type=int, default=100)
+    dossier_build.add_argument("--queue-max-items", type=int, default=1_400)
+    dossier_build.add_argument("--queue-max-evidence-cards", type=int, default=5_000)
+    dossier_build.add_argument(
+        "--queue-max-distinct-evidence-quote-bytes",
+        type=int,
+        default=67_108_864,
+    )
+    dossier_build.add_argument(
+        "--queue-max-affected-records",
+        type=int,
+        default=10_000,
+    )
+    dossier_build.add_argument(
+        "--queue-max-relationships",
+        type=int,
+        default=50_000,
+    )
+    dossier_build.add_argument(
+        "--queue-max-distinct-snapshot-bytes",
+        type=int,
+        default=67_108_864,
+    )
+    dossier_build.add_argument(
+        "--queue-max-output-bytes",
+        type=int,
+        default=67_108_864,
+    )
+    dossier_build.add_argument("--lineage-max-nodes", type=int, default=1_000)
+    dossier_build.add_argument("--lineage-max-edges", type=int, default=2_000)
+    dossier_build.add_argument(
+        "--lineage-max-citation-bytes",
+        type=int,
+        default=16_777_216,
+    )
+    dossier_build.add_argument(
+        "--lineage-max-snapshot-bytes",
+        type=int,
+        default=16_777_216,
+    )
+    dossier_build.add_argument(
+        "--lineage-max-output-bytes",
+        type=int,
+        default=67_108_864,
+    )
+    dossier_build.add_argument("--max-output-bytes", type=int, default=134_217_728)
+    dossier_build.add_argument("--max-sqlite-vm-steps", type=int, default=4_000_000)
+    _set_handler(dossier_build, _cmd_dossier_build)
+
     evidence_parser = commands.add_parser("evidence", help="manage exact evidence cards")
     evidence_commands = evidence_parser.add_subparsers(dest="evidence_command", required=True)
     evidence_add = evidence_commands.add_parser("add", help="cite an exact byte span of a snapshot")
@@ -579,6 +897,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evidence_add.add_argument("--supersedes")
     _set_handler(evidence_add, _cmd_evidence_add)
+    evidence_add_from_lens = evidence_commands.add_parser(
+        "add-from-lens",
+        help="adopt one explicitly confirmed Lens candidate as evidence",
+    )
+    _add_database(evidence_add_from_lens)
+    evidence_add_from_lens.add_argument("--mission", required=True)
+    evidence_add_from_lens.add_argument("--claim", required=True)
+    evidence_add_from_lens.add_argument("--lens-input", required=True, type=Path)
+    evidence_add_from_lens.add_argument("--candidate-rank", required=True, type=int)
+    evidence_add_from_lens.add_argument(
+        "--stance",
+        required=True,
+        choices=[item.value for item in EvidenceStance],
+    )
+    evidence_add_from_lens.add_argument(
+        "--expected-retrieval-receipt-sha256",
+        required=True,
+    )
+    evidence_add_from_lens.add_argument("--expected-snapshot-sha256", required=True)
+    evidence_add_from_lens.add_argument("--expected-start-byte", required=True, type=int)
+    evidence_add_from_lens.add_argument("--expected-end-byte", required=True, type=int)
+    evidence_add_from_lens.add_argument("--expected-quote-sha256", required=True)
+    evidence_add_from_lens.add_argument("--supersedes")
+    _set_handler(evidence_add_from_lens, _cmd_evidence_add_from_lens)
     evidence_withdraw = evidence_commands.add_parser(
         "withdraw", help="mark evidence as no longer standing, keeping it in the ledger"
     )

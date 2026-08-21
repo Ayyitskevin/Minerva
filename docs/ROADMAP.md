@@ -113,6 +113,286 @@
 - `minerva.research-brief.v2` is unchanged: a retracted finding is absent from
   the packet rather than flagged inside it.
 
+## Lens v1: bounded local retrieval (narrow D-6 exception)
+
+- `minerva lens search` performs deterministic, model-free lexical retrieval only
+  over immutable snapshots already imported into one named mission.
+- One query-only SQLite snapshot owns mission/filter validation, deterministic
+  `(imported_at, snapshot_id)` corpus selection, and shared snapshot integrity checks.
+- Every `candidate_context` lead carries exact UTF-8 bytes and half-open coordinates,
+  source/snapshot identity, normalized query and digest, searched snapshot-set digest,
+  algorithm/Unicode versions, integer score components, total rank, configured bounds,
+  omissions, truncation, and a whole-receipt digest.
+- Candidate stance is unassessed and evidence status is candidate-only. Search has no
+  identity, audit, mutation, evidence, finding, inference, provider, network, export,
+  or packet side effect; normal evidence creation remains separate and explicit.
+- No migration or index is added. Legacy databases still follow the normal explicit
+  migration contract; packet v2 and the capability manifest are unchanged.
+- A checked-in synthetic harness measures precision/recall, exact byte round trips,
+  byte-identical determinism, mission isolation, and zero unauthorized mutation.
+
+## Claim Review v1: evidence gaps and correction impacts
+
+- `minerva claim review` derives one deterministic
+  `minerva.claim-review.v1` receipt from an explicitly named mission and claim.
+- The view reports active/withdrawn stance counts, missing support or opposition,
+  active support-and-opposition conflict, recorded-status requirements, and the
+  impacts of evidence withdrawal and finding/inference retraction. These are
+  structural observations, never truth, evidence quality, confidence, sufficiency,
+  or a recommended status.
+- The complete target-claim evidence ledger retains snapshot digest, exact UTF-8
+  coordinates, quote digest, supersession lineage, provenance, and correction state.
+  Supersession does not deactivate an older card; only an explicit withdrawal removes
+  it from the active stance set.
+- Correction-relevant findings and inferences show retained retraction history,
+  synthesis effects, promotion relationships, and live citations that became
+  inactive. A retracted inference does not retract its promoted human finding, and
+  retracting that finding does not retract a still-live source inference.
+- The view is complete-or-refuse. Evidence, affected-record, relationship,
+  distinct-snapshot-byte, and SQLite-work bounds return
+  `claim_review_work_limit` instead of a truncated result; success always records
+  `complete: true`, `truncated: false`, measured work, and a whole-receipt SHA-256.
+  That hash establishes deterministic self-consistency only, not origin,
+  authenticity, authority, approval, disclosure permission, or research correctness.
+- One query-only SQLite snapshot owns scope and reads. Shared citation/snapshot
+  integrity checks run before the receipt returns. There is no identity, audit,
+  evidence, finding, inference, status, queue, provider, network, export, packet, or
+  capability-manifest side effect, and no migration or index is added.
+- A current risk is made explicit rather than repaired: an unretracted adopted
+  inference remains in the Markdown brief after one of its citations is withdrawn,
+  although an unpromoted inference can no longer be promoted. An earlier promotion
+  remains append-only history and its finding is reviewed separately. Claim Review
+  flags the inactive-citation condition; canonical v2 JSON still contains no adopted
+  inferences, and correction remains a separate human retraction.
+- The fixed synthetic Claim Review harness measures four structural gap labels,
+  recorded-status validity, six withdrawal-impact edge classes, repeated determinism,
+  identifier-based mission isolation, and database-dump/main-file non-mutation.
+  UTF-8 citation/digest, promotion, bounds, hostile scope, non-invocation, digest
+  verification, and installed-wheel behavior remain separate tests, not evaluation
+  metrics.
+
+## Claim Lineage Graph v1: complete claim-owned provenance topology
+
+- The repository owner's 2026-08-08 continuation narrowly accepts
+  `minerva claim lineage` and the public local
+  `minerva.lineage.ClaimLineageService.build_graph` application service. No family of
+  graph APIs or later roadmap item is accepted by implication.
+- `minerva.claim-lineage.v1` uses algorithm `structural-ledger-lineage`, scope
+  `claim_owned_closure_v1`, fixed typed node/edge order, compact canonical JSON, and
+  node-set, edge-set, snapshot-set, and whole-receipt SHA-256 values.
+- The graph retains the owning question, complete status history, all claim-owned
+  evidence, findings, adopted inferences, withdrawals, retractions, promotions, and
+  every referenced snapshot. Exact citation text/base64 bytes, UTF-8 coordinates,
+  quote/snapshot digests, source/snapshot metadata, stance, and provenance remain
+  inspectable.
+- Fixed exclusions prevent silent expansion to sibling claims, claimless findings,
+  unreferenced snapshots, audit/run/export/candidate nodes, or reverse dependents.
+  Creator/run/time values remain attached as provenance rather than becoming run or
+  audit nodes.
+- Node, edge, citation-byte, actual distinct-snapshot-byte, output-byte, and cumulative
+  SQLite-VM bounds are complete-or-refuse. One query-only read snapshot supplies the
+  whole graph; an exceeded bound returns `claim_lineage_work_limit`, never a partial
+  topology.
+- The graph is structural recorded provenance only. It assigns no truth, evidence
+  quality, confidence, sufficiency, score, priority, or recommended status and creates
+  no correction, research state, queue, audit event, export/file/packet, provider call,
+  network activity, protocol, migration, index, or capability claim.
+
+## Mission Research Queue v1: deterministic structural review index
+
+- The repository owner's 2026-08-08 instruction to continue the accepted dependency
+  order narrowly accepts `minerva mission queue` and the public local
+  `minerva.research_queue.MissionResearchQueueService.build_queue` application
+  service. It does not accept persistence, a family of queue operations, or any later
+  roadmap item by implication.
+- `minerva.mission-research-queue.v1` uses algorithm
+  `claim-review-cue-aggregation` and scope `mission_claim_review_cues_v1`. One
+  query-only SQLite snapshot admits every mission-owned claim in stable
+  `(created_at, id)` order and derives a complete pinned Claim Review v1 receipt for
+  each claim.
+- Every pinned Claim Review cue becomes one `structural_review_cue` item. Each item
+  retains its category, code, explanation, related record IDs, source review digest,
+  and claim/question identity. Every reviewed claim has a separate summary and review
+  digest, so claim-set completeness is bound independently from the item array.
+- Item order is deterministic presentation, not a relevance score, severity, priority,
+  age, actionability judgment, or recommended traversal. Under Claim Review v1 every
+  claim has at least one cue: missing support or opposition is a gap, while both
+  coexisting is a structural stance conflict. Item presence therefore never means
+  unresolved or required work. The assembler still retains a self-consistent zero-cue
+  child review as a reviewed-claim summary rather than inferring claim completeness
+  from items.
+- Claim Lineage remains a separate inspection surface. It supplies deterministic
+  topology but no queue reason-code contract, so Queue v1 neither invokes it nor
+  converts status/correction rationale into work items. Mission-owned claimless
+  findings may appear only as related IDs when existing Claim Review admits their
+  correction impact; they never become queue roots.
+- Aggregate claim, item, evidence, affected-record, relationship, snapshot-byte,
+  output-byte, and SQLite-VM bounds are complete-or-refuse. Claim-set, review-set,
+  item-set, and whole-receipt digests bind the result without a generated ID or
+  observation time.
+- The fixed synthetic Queue harness measures exact claim coverage, reason labels and
+  cue entries across the 14-code catalog, related record-ID sets, canonical ordering,
+  digest validity, determinism, mission isolation, and zero mutation. It reports no
+  priority, relevance, truth, confidence, severity, actionability, or completion
+  metric.
+- The index is non-normative and read-only. It creates no persisted queue, assignment,
+  defer/resolve/completion state, identity, run, audit event, evidence, finding,
+  inference, status, correction, export/file/packet, provider call, network activity,
+  protocol, migration, index, or capability claim.
+
+## Lens v1 receipt verification and current-database reproduction
+
+- The repository owner's instruction to continue the accepted dependency order
+  narrowly accepts local `minerva lens verify`, `minerva lens replay`, the strict
+  captured-receipt loader/verifier, and `LensService.replay_receipt(...)`. It does not
+  accept a canonical Lens export, historical corpus archive, adoption bridge, external
+  protocol, or any later roadmap item by implication.
+- Both commands accept the normal `{"lens": {...}}` search CLI envelope through the
+  shared no-follow stable regular-file reader. The input is capped at 8 MiB before
+  strict UTF-8 JSON decoding; duplicate fields, non-standard numbers, excessive JSON
+  shape/fanout, omitted or unknown fields, unsupported versions, and inconsistent
+  derived values fail with stable bounded errors.
+- Database-free verification recomputes the canonical receipt digest and every
+  receipt-contained v1 invariant needed to trust its internal structure: pinned
+  schema/algorithm/normalization/runtime, canonical query and filters, snapshot-set
+  identity/count/bytes, quote byte/text/digest/span relationships, integer
+  scoring/explanation/order, omissions, and truncation. Its bounded report explicitly
+  says searched snapshot content was not independently verified.
+- Database-backed reproduction first verifies the receipt, then executes its captured
+  mission, normalized query/token sequence, filters, and bounds through the existing
+  Lens search/integrity path in one current query-only SQLite snapshot. A
+  package-private normalized-search seam preserves the exact captured request after
+  validation proves it is the version-2 Unicode normalization fixed point; it is not
+  a second public search contract.
+- Success requires exact complete-receipt equality and reports
+  `historical_corpus_replay: false`. Any same-mission snapshot append changes at least
+  mission/filter accounting and causes `lens_replay_mismatch`, even if an explicit
+  filter excludes that snapshot and candidate results are unchanged. Foreign-mission
+  changes do not affect the receipt. No as-of database or historical-source promise
+  is made.
+- Verification/reproduction writes no artifact, database row, source byte, evidence,
+  finding, inference, status, confidence, queue state, packet, or audit event; creates
+  no identity/run; reads no credential; and invokes no model, provider, network,
+  REST/web endpoint, MCP, Athena/Icarus adapter, or external-agent protocol.
+- Receipt digests and successful reproduction establish deterministic
+  self-consistency and equality to one current read, not origin, external
+  authenticity, identity, authority, approval, truth, quality, historical freshness,
+  or disclosure permission. Schema remains v5; no migration, index, capability entry,
+  or packet field/version is added.
+- Fixture-bound evaluation and regression tests cover strict hostile/tampered input,
+  deterministic reports, exact current reproduction, algorithm/Unicode/corpus/result
+  drift, mission isolation, content verification only on replay, no model/provider/
+  network invocation, and zero research/audit mutation. They make no external quality
+  or authenticity claim.
+
+## Review Dossier v1: atomic local review composition
+
+- The repository owner's 2026-08-08 continuation instruction narrowly accepts the
+  next dependency only: local `minerva dossier build` and
+  `minerva.dossier.ReviewDossierService.build_dossier(...)`. It does not accept a
+  persisted/canonical dossier artifact, REST/web or agent-facing surface, mutation
+  control, capability claim, or any later roadmap item by implication.
+- `minerva.review-dossier.v1` uses algorithm
+  `current-snapshot-review-composition` version `"1"` and scope
+  `mission_claim_with_captured_lens_v1`. Its five fixed components are the complete
+  mission Queue, the exact focal Review retained by that Queue build, focal Claim
+  Lineage, the verified operator-captured Lens search, and exact current-database Lens
+  replay.
+- The existing bounded captured-receipt reader and strict verifier run before database
+  open. The receipt must name the explicit dossier mission. One query-only SQLite
+  snapshot and one cumulative VM guard then own Lens reproduction, Queue/Review, and
+  Lineage. Package-private connection seams reuse existing component services rather
+  than creating parallel query or validation paths.
+- All structural cross-checks are mandatory: component mission/question scope; exactly
+  one focal queue summary; Queue/Review receipt and cue equality; Review/Lineage claim,
+  current-status, evidence, and withdrawal agreement; affected claim-owned
+  finding/inference payload, citation, retraction, promotion, and provenance agreement;
+  any shared Lens/Lineage snapshot identity; and exact Lens replay. The affected-record
+  check is limited to the subset reported by Review; unaffected owned Lineage records
+  need not appear in Review. A disjoint Lens/Lineage snapshot set is allowed and makes
+  no relevance claim.
+- Queue, Lineage, Lens, component-output, cumulative SQLite, and final dossier-output
+  bounds remain explicit. Dossier success is complete and untruncated, while the
+  embedded Lens receipt may independently retain its explicit bounded truncation and
+  omissions. Work fields record component and output counts.
+- Existing component receipts remain intact. A fixed ordered component-set digest and
+  whole-dossier SHA-256 bind compact sorted-key UTF-8 JSON without a generated ID or
+  observation time. The replay report is bound by a digest of its complete canonical
+  representation. Hashes establish self-consistency, not identity, signature,
+  authority, approval, historical freshness, truth, quality, or disclosure permission.
+- The dossier is local composition only. It creates no durable artifact, identity,
+  run, audit event, task/queue state, evidence, finding, inference, status, correction,
+  export, file, packet, provider call, network activity, protocol, migration, index, or
+  capability. Lens candidates remain unassessed non-evidence; queue items remain
+  non-actionable cues; Lineage edges remain structural provenance.
+- Regression, evaluation, and installed-wheel coverage bind deterministic output,
+  hostile pre-open input refusal, current Lens equality, cross-component reconciliation,
+  multibyte citation custody, mission/claim isolation, bounded complete-or-refuse
+  behavior, non-invocation, and zero research/audit mutation. They make no truth,
+  relevance, priority, actionability, or research-quality claim.
+
+## Lens Evidence Adoption v1: explicit single-candidate evidence mutation
+
+- The repository owner's 2026-08-08 “let's do it” accepts only the local
+  `minerva evidence add-from-lens` command and
+  `minerva.evidence.LensEvidenceAdoptionService.adopt_candidate(...)` service. It
+  does not accept bulk/automatic adoption or any additional surface by implication.
+- The operator supplies one captured Lens receipt, mission, claim, candidate rank,
+  stance, optional supersession target, and exact confirmations for retrieval-receipt
+  digest, snapshot digest, byte span, and quote digest. Safe receipt load and strict
+  verification finish before database open.
+- One `BEGIN IMMEDIATE` owns exact current receipt reproduction, exact-evaluation
+  duplicate refusal (including withdrawn cards), normal evidence validation/insertion,
+  `evidence.card.created`, and `lens.candidate.adopted`. A refusal commits none of
+  them. Different stance or distinct supersession remains an explicit separate operator
+  evaluation.
+- `minerva.lens-evidence-adoption.v1` binds receipt/query/snapshot-set and selected
+  candidate provenance to the generated evidence and adoption audit ID. Rank is a
+  selector, not epistemic weight, and the result makes no deterministic-ID,
+  authenticity, truth, confidence, authority, or disclosure-permission claim.
+- Search, verification, replay, and dossier remain read-only. Adoption creates one
+  evidence card only and changes no claim status, finding, agent inference, older
+  evidence lifecycle, source/snapshot bytes, packet, queue, dossier, export, or
+  capability. It invokes no model/provider/network or external protocol.
+- Schema remains v5. No migration, index, packet v2 field/version, capabilities v2
+  entry, REST/web/MCP operation, external principal, cryptographic identity, or broad
+  D-6 behavior is added. Deep doctor reconciles the additional fixed audit provenance.
+- A fixed two-mission evaluator measures exact selected-candidate/audit binding,
+  multibyte span accuracy, operator-supplied stance preservation, exact authorized state delta,
+  rollback, duplicate/drift/isolation refusal, semantic non-effects, deep integrity,
+  schema stability, and zero provider/network/unauthorized mutation. It makes no
+  truth, relevance, confidence, evidence-strength, or source-quality claim.
+
+## Next dependency-ordered capabilities
+
+Lens Evidence Adoption v1 is now the accepted completed dependency. The same owner
+instruction accepts the PROV-O/RO-Crate packet as architectural guidance only; no
+profile, context, proof serializer, exporter, source-byte disclosure mode, publication,
+or capability is authorized. The following remaining order is proposed, not
+implementation authorization. Each slice needs an explicit owner decision.
+
+1. **Authenticated Athena seam (gate D-2):** first reverify the counterpart, then
+   separately decide ADRs 0009/0010, the external-principal migration, asymmetric
+   verification dependency, revocation, replay, and transport. No external research
+   mutation is implied.
+2. **Icarus artifact exchange (gate D-3 after D-2):** requires its own canonical
+   request/result and import-before-evidence decision, likely including a migration;
+   Minerva still performs no experiment or automatic adoption.
+3. **Read-only agent protocol (gate D-5 after D-2/D-3):** MCP or any new agent-facing
+   API starts with authenticated, bounded read tools backed by existing services and
+   exposes no correction, adoption, assistance, publication, or execution verbs.
+4. **Packet v3 (separate decision after a real consumer exists):** define the exact
+   correction/inference delta, independent verifier, backward compatibility, and
+   hostile-input limits without changing frozen v2 bytes by accident.
+5. **Standards proof/export decision:** only after the accepted guidance's unresolved
+   profile/IRI, disclosure, context custody, `datePublished`, license,
+   canonicalization, identity, and artifact/audit-lifecycle choices are settled. The
+   exporter remains deferred rather than implicitly following this bridge.
+
+Scholarly-source adapters follow only after licensing/network/import-custody approval.
+A read-only agent protocol follows only after D-2 authentication. Semantic retrieval
+follows only when a pinned local index/model receipt can preserve deterministic custody.
+
 ## Later milestones, not implemented now
 - Authenticated Athena mission/identity coordination adapter that may produce the
   existing request artifact only after a separately reviewed identity/authorization

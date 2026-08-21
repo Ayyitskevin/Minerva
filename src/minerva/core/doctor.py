@@ -47,6 +47,7 @@ class DoctorReport:
 
 
 _ASSISTANCE_REQUESTED_EVENT = "assistance.invocation.requested"
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}\Z")
 
 _REQUIRED_TRIGGERS = frozenset(
     {
@@ -526,6 +527,7 @@ def _verify_material_audit_links(connection: sqlite3.Connection) -> int:
         "research.claim.status_changed": 0,
         "source.snapshot.imported": 0,
         "evidence.card.created": 0,
+        "lens.candidate.adopted": 0,
         "evidence.card.withdrawn": 0,
         "research.finding.created": 0,
         "research.finding.retracted": 0,
@@ -684,10 +686,25 @@ def _verify_material_audit_links(connection: sqlite3.Connection) -> int:
         expected_counts["source.snapshot.imported"] += 1
         reconciled += 2
 
+    lens_adoption_audit: dict[str, sqlite3.Row] = {}
+    for event in connection.execute(
+        """
+        SELECT sequence, entity_type, entity_id, mission_id, actor_id, run_id, details_json
+        FROM audit_events
+        WHERE event_type = 'lens.candidate.adopted'
+        ORDER BY sequence
+        """
+    ):
+        evidence_id = str(event["entity_id"])
+        if evidence_id in lens_adoption_audit:
+            raise IntegrityError("audit_link_invalid", "Stored audit history is inconsistent.")
+        lens_adoption_audit[evidence_id] = event
+
     for row in connection.execute(
         """
         SELECT id, mission_id, claim_id, snapshot_id, snapshot_sha256,
-               start_byte, end_byte, stance, supersedes_evidence_id, creator_id, run_id
+               start_byte, end_byte, quote, stance, supersedes_evidence_id,
+               creator_id, run_id
         FROM evidence_cards ORDER BY id
         """
     ):
@@ -718,6 +735,73 @@ def _verify_material_audit_links(connection: sqlite3.Connection) -> int:
         )
         expected_counts["evidence.card.created"] += 1
         reconciled += 1
+
+        lens_event = lens_adoption_audit.pop(str(row["id"]), None)
+        if lens_event is not None:
+            if not _event_metadata_matches(
+                lens_event,
+                entity_type="evidence_card",
+                mission_id=str(row["mission_id"]),
+                actor_id=str(row["creator_id"]),
+                run_id=str(row["run_id"]),
+            ):
+                raise IntegrityError("audit_link_invalid", "Stored audit history is inconsistent.")
+            creation_sequence_row = connection.execute(
+                """
+                SELECT sequence FROM audit_events
+                WHERE event_type = 'evidence.card.created' AND entity_id = ?
+                """,
+                (str(row["id"]),),
+            ).fetchone()
+            if creation_sequence_row is None or int(lens_event["sequence"]) <= int(
+                creation_sequence_row["sequence"]
+            ):
+                raise IntegrityError("audit_link_invalid", "Stored audit history is inconsistent.")
+            lens_details = _parse_audit_details(str(lens_event["details_json"]))
+            candidate_rank = lens_details.get("candidate_rank")
+            query_digest = lens_details.get("query_sha256")
+            receipt_digest = lens_details.get("retrieval_receipt_sha256")
+            snapshot_set_digest = lens_details.get("snapshot_set_sha256")
+            retrieval_truncated = lens_details.get("retrieval_truncated")
+            if (
+                type(candidate_rank) is not int
+                or not 1 <= candidate_rank <= 100
+                or type(retrieval_truncated) is not bool
+                or not isinstance(query_digest, str)
+                or _SHA256_HEX.fullmatch(query_digest) is None
+                or not isinstance(receipt_digest, str)
+                or _SHA256_HEX.fullmatch(receipt_digest) is None
+                or not isinstance(snapshot_set_digest, str)
+                or _SHA256_HEX.fullmatch(snapshot_set_digest) is None
+            ):
+                raise IntegrityError("audit_link_invalid", "Stored audit history is inconsistent.")
+            _require_event_details(
+                lens_details,
+                {
+                    "candidate_rank": candidate_rank,
+                    "claim_id": str(row["claim_id"]),
+                    "end_byte": int(row["end_byte"]),
+                    "query_sha256": query_digest,
+                    "quote_sha256": sha256(str(row["quote"]).encode("utf-8")).hexdigest(),
+                    "retrieval_receipt_sha256": receipt_digest,
+                    "retrieval_truncated": retrieval_truncated,
+                    "snapshot_id": str(row["snapshot_id"]),
+                    "snapshot_set_sha256": snapshot_set_digest,
+                    "snapshot_sha256": str(row["snapshot_sha256"]),
+                    "stance": str(row["stance"]),
+                    "start_byte": int(row["start_byte"]),
+                    "supersedes": (
+                        str(row["supersedes_evidence_id"])
+                        if row["supersedes_evidence_id"] is not None
+                        else None
+                    ),
+                },
+            )
+            expected_counts["lens.candidate.adopted"] += 1
+            reconciled += 1
+
+    if lens_adoption_audit:
+        raise IntegrityError("audit_link_invalid", "Stored audit history is inconsistent.")
 
     for row in connection.execute(
         """

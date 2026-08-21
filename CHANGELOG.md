@@ -10,6 +10,22 @@ release here is a tag plus this record.
 
 ### Research record
 
+- `minerva lens search` returns deterministic, model-free **candidate context**
+  from snapshots already imported into one mission. A candidate is an unassessed
+  lead, not evidence, a finding, or research state. Captured receipts can be
+  verified without a database and replayed against the current local snapshot
+  set; neither operation authenticates the receipt or archives the corpus.
+- `minerva claim review`, `claim lineage`, `mission queue`, and `dossier build`
+  are complete-or-refuse local read-only receipts: gaps and correction impacts,
+  claim-owned provenance topology, a structural review index, and an atomic
+  composition of those views plus one captured Lens replay. Cues are not tasks,
+  lineage is not truth, and a dossier does not promote evidence.
+- `minerva evidence add-from-lens` adopts **one** reproduced candidate after
+  explicit receipt, snapshot, span, and quote confirmations plus a chosen claim
+  and stance. Search and replay stay read-only. There is no bulk or automatic
+  adoption. `doctor --deep` reconciles `lens.candidate.adopted` against the
+  evidence card in both directions, alongside the existing inference
+  adopt/retract/promote audit links from Phase 0E.
 - A model-drafted candidate the operator judges correct can be **adopted** into
   the record as a labeled `agent_inference` (gate D-1, ADR 0008): its statement,
   uncertainty, and citations, plus the provenance needed to reconstruct what
@@ -80,6 +96,9 @@ release here is a tag plus this record.
 
 ### Operator-facing
 
+- Lens, Claim Review, Lineage, Queue, Dossier, and `evidence add-from-lens` are
+  on the CLI. Packet `v2` bytes are unchanged; capabilities do not advertise a
+  sibling or MCP surface for them.
 - `docs/VISION.md` records Decision 0 (2026-08-20): this season treats Minerva
   as the fleet's research-memory on mickey. Doctrine is unchanged. Gate D-2,
   MCP, and remote bind stay closed. `docs/WORKSPACE.md` is the checkout,

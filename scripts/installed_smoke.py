@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import shutil
@@ -50,6 +51,51 @@ def _json_object(document: str, *, label: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise SmokeError(f"{label} did not return a JSON object")
     return value
+
+
+def _canonical_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _installed_database_state(
+    python: Path,
+    database_path: Path,
+    *,
+    cwd: Path,
+    environment: dict[str, str],
+) -> tuple[str, str]:
+    state_probe = """
+import json
+import sys
+from hashlib import sha256
+from pathlib import Path
+
+from minerva.core.db import Database
+
+database = Database(Path(sys.argv[1]))
+with database.read() as connection:
+    dump = tuple(connection.iterdump())
+encoded = json.dumps(
+    dump,
+    ensure_ascii=False,
+    sort_keys=True,
+    separators=(",", ":"),
+    allow_nan=False,
+).encode("utf-8")
+print(sha256(encoded).hexdigest())
+""".strip()
+    dump_sha256 = _run_checked(
+        [str(python), "-c", state_probe, str(database_path)],
+        cwd=cwd,
+        environment=environment,
+    )
+    return sha256(database_path.read_bytes()).hexdigest(), dump_sha256
 
 
 def _single_wheel(dist_directory: Path) -> Path:
@@ -224,6 +270,16 @@ def smoke_wheel(dist_directory: Path) -> Path:
             "from importlib.metadata import version; "
             "from pathlib import Path; "
             "import minerva; "
+            "from minerva.dossier import (ReviewDossierBounds, ReviewDossierResult, "
+            "ReviewDossierService); "
+            "from minerva.evidence import (LensCandidateConfirmation, "
+            "LensEvidenceAdoptionResult, LensEvidenceAdoptionService); "
+            "from minerva.integrations.lens_receipt_file import load_lens_receipt; "
+            "from minerva.lens import (LensReceiptVerificationResult, LensReplayResult, "
+            "LensService, lens_receipt_verification_result, verify_lens_receipt); "
+            "from minerva.lineage import ClaimLineageService; "
+            "from minerva.review import ClaimReviewService; "
+            "from minerva.research_queue import MissionResearchQueueService; "
             "print(version('minerva-research')); "
             "print(Path(minerva.__file__).resolve())"
         )
@@ -271,10 +327,898 @@ if unexpected:
         mission_id = demo.get("mission_id")
         if not isinstance(mission_id, str):
             raise SmokeError("installed demo did not return a mission identifier")
+
+        lens_arguments = [
+            str(minerva_command),
+            "lens",
+            "search",
+            "--db",
+            str(demo_database),
+            "--mission",
+            mission_id,
+            "--query",
+            "runtime",
+            "--limit",
+            "3",
+        ]
+        lens_output = _run_checked(
+            lens_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if lens_output != _run_checked(
+            lens_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        ):
+            raise SmokeError("installed Lens search is not byte-deterministic")
+        lens_envelope = _json_object(lens_output, label="installed Lens search")
+        lens = lens_envelope.get("lens")
+        if not isinstance(lens, dict):
+            raise SmokeError("installed Lens search omitted its retrieval receipt")
+        candidates = lens.get("candidates")
+        semantic_boundary = lens.get("semantic_boundary")
+        if (
+            lens.get("schema_version") != "minerva.lens-search.v1"
+            or lens.get("kind") != "candidate_context_search"
+            or lens.get("mission_id") != mission_id
+            or lens.get("algorithm") != "bounded-unicode-line-lexical"
+            or not isinstance(lens.get("query_sha256"), str)
+            or len(lens["query_sha256"]) != 64
+            or not isinstance(lens.get("snapshot_set_sha256"), str)
+            or len(lens["snapshot_set_sha256"]) != 64
+            or not isinstance(lens.get("retrieval_receipt_sha256"), str)
+            or len(lens["retrieval_receipt_sha256"]) != 64
+            or not isinstance(candidates, list)
+            or not candidates
+            or not isinstance(semantic_boundary, dict)
+            or semantic_boundary.get("candidate_context_only") is not True
+            or semantic_boundary.get("creates_evidence") is not False
+            or semantic_boundary.get("persists_agent_inference") is not False
+        ):
+            raise SmokeError("installed Lens retrieval receipt is invalid")
+        candidate = candidates[0]
+        if not isinstance(candidate, dict):
+            raise SmokeError("installed Lens candidate context is invalid")
+        snapshot_id = candidate.get("snapshot_id")
+        quote = candidate.get("quote")
+        start_byte = candidate.get("start_byte")
+        end_byte = candidate.get("end_byte")
+        quote_utf8_base64 = candidate.get("quote_utf8_base64")
+        if (
+            candidate.get("kind") != "candidate_context"
+            or candidate.get("mission_id") != mission_id
+            or not isinstance(snapshot_id, str)
+            or not isinstance(quote, str)
+            or not isinstance(start_byte, int)
+            or not isinstance(end_byte, int)
+            or not isinstance(quote_utf8_base64, str)
+        ):
+            raise SmokeError("installed Lens candidate provenance is incomplete")
+        shown = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "source",
+                    "show",
+                    "--db",
+                    str(demo_database),
+                    "--snapshot",
+                    snapshot_id,
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed Lens snapshot round trip",
+        )
+        source_text = shown.get("text")
+        if (
+            not isinstance(source_text, str)
+            or source_text.encode()[start_byte:end_byte] != quote.encode()
+            or base64.b64decode(quote_utf8_base64, validate=True) != quote.encode()
+        ):
+            raise SmokeError("installed Lens byte span does not round trip")
+
+        lens_receipt_payload = dict(lens)
+        lens_receipt_digest = lens_receipt_payload.pop("retrieval_receipt_sha256")
+        if lens_receipt_digest != sha256(_canonical_bytes(lens_receipt_payload)).hexdigest():
+            raise SmokeError("installed Lens retrieval receipt digest does not verify")
+
+        lens_receipt_path = smoke_directory / "lens-receipt.json"
+        lens_receipt_path.write_bytes(lens_output.encode("utf-8"))
+        if not lens_receipt_path.is_file() or lens_receipt_path.is_symlink():
+            raise SmokeError("installed Lens receipt was not captured as a regular file")
+
+        lens_state_before = _installed_database_state(
+            python,
+            demo_database,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        lens_verify_arguments = [
+            str(minerva_command),
+            "lens",
+            "verify",
+            "--input",
+            str(lens_receipt_path),
+        ]
+        lens_verify_output = _run_checked(
+            lens_verify_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if lens_verify_output != _run_checked(
+            lens_verify_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        ):
+            raise SmokeError("installed Lens receipt verification is not byte-deterministic")
+        lens_verification_envelope = _json_object(
+            lens_verify_output,
+            label="installed Lens receipt verification",
+        )
+        lens_verification = lens_verification_envelope.get("lens_receipt_verification")
+        if not isinstance(lens_verification, dict):
+            raise SmokeError("installed Lens receipt verification omitted its report")
+        verification_boundary = lens_verification.get("semantic_boundary")
+        expected_verification_boundary = {
+            "reads_research_database": False,
+            "deterministic_self_consistency_only": True,
+            "establishes_origin_or_authenticity": False,
+            "establishes_authority_or_approval": False,
+            "establishes_disclosure_permission": False,
+            "establishes_lasting_freshness": False,
+            "determines_source_truth_or_quality": False,
+            "creates_evidence_or_inference": False,
+            "alters_claims_findings_or_confidence": False,
+            "mutates_research_or_audit_state": False,
+            "writes_artifact_or_export": False,
+            "invokes_model_provider_or_network": False,
+            "exposes_external_agent_protocol": False,
+        }
+        if (
+            lens_verification.get("schema_version") != "minerva.lens-receipt-verification.v1"
+            or lens_verification.get("kind") != "receipt_verification"
+            or lens_verification.get("status") != "verified"
+            or lens_verification.get("receipt_schema_version") != lens.get("schema_version")
+            or lens_verification.get("algorithm") != lens.get("algorithm")
+            or lens_verification.get("algorithm_version") != lens.get("algorithm_version")
+            or lens_verification.get("unicode_database_version")
+            != lens.get("unicode_database_version")
+            or lens_verification.get("query_sha256") != lens.get("query_sha256")
+            or lens_verification.get("snapshot_set_sha256") != lens.get("snapshot_set_sha256")
+            or lens_verification.get("retrieval_receipt_sha256") != lens_receipt_digest
+            or lens_verification.get("searched_snapshot_count")
+            != lens.get("searched_snapshot_count")
+            or lens_verification.get("result_count") != lens.get("result_count")
+            or lens_verification.get("truncated") != lens.get("truncated")
+            or lens_verification.get("canonical_digest_verified") is not True
+            or lens_verification.get("internal_consistency_verified") is not True
+            or lens_verification.get("runtime_compatible") is not True
+            or lens_verification.get("searched_snapshot_content_verified") is not False
+            or verification_boundary != expected_verification_boundary
+            or len(lens_verify_output) >= 2_000
+        ):
+            raise SmokeError("installed Lens receipt verification report is invalid")
+
+        lens_replay_arguments = [
+            str(minerva_command),
+            "lens",
+            "replay",
+            "--db",
+            str(demo_database),
+            "--input",
+            str(lens_receipt_path),
+        ]
+        lens_replay_output = _run_checked(
+            lens_replay_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if lens_replay_output != _run_checked(
+            lens_replay_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        ):
+            raise SmokeError("installed Lens receipt replay is not byte-deterministic")
+        lens_replay_envelope = _json_object(
+            lens_replay_output,
+            label="installed Lens receipt replay",
+        )
+        lens_replay = lens_replay_envelope.get("lens_replay")
+        if not isinstance(lens_replay, dict):
+            raise SmokeError("installed Lens receipt replay omitted its report")
+        replay_boundary = lens_replay.get("semantic_boundary")
+        expected_replay_boundary = dict(expected_verification_boundary)
+        expected_replay_boundary["reads_research_database"] = True
+        if (
+            lens_replay.get("schema_version") != "minerva.lens-replay.v1"
+            or lens_replay.get("kind") != "current_database_exact_reproduction"
+            or lens_replay.get("status") != "reproduced"
+            or lens_replay.get("receipt_schema_version") != lens.get("schema_version")
+            or lens_replay.get("algorithm") != lens.get("algorithm")
+            or lens_replay.get("algorithm_version") != lens.get("algorithm_version")
+            or lens_replay.get("unicode_database_version") != lens.get("unicode_database_version")
+            or lens_replay.get("query_sha256") != lens.get("query_sha256")
+            or lens_replay.get("snapshot_set_sha256") != lens.get("snapshot_set_sha256")
+            or lens_replay.get("retrieval_receipt_sha256") != lens_receipt_digest
+            or lens_replay.get("searched_snapshot_count") != lens.get("searched_snapshot_count")
+            or lens_replay.get("result_count") != lens.get("result_count")
+            or lens_replay.get("exact_receipt_match") is not True
+            or lens_replay.get("current_database_snapshot_matched") is not True
+            or lens_replay.get("historical_corpus_replay") is not False
+            or lens_replay.get("searched_snapshot_content_verified") is not True
+            or replay_boundary != expected_replay_boundary
+            or len(lens_replay_output) >= 2_000
+        ):
+            raise SmokeError("installed Lens receipt replay report is invalid")
+        lens_state_after = _installed_database_state(
+            python,
+            demo_database,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if lens_state_before != lens_state_after:
+            raise SmokeError("installed Lens receipt verification or replay changed database state")
+
         claim_ids = demo.get("claim_ids")
-        if not isinstance(claim_ids, list) or not claim_ids or not isinstance(claim_ids[0], str):
-            raise SmokeError("installed demo did not return a claim identifier")
-        claim_id = claim_ids[0]
+        if not isinstance(claim_ids, list) or not claim_ids:
+            raise SmokeError("installed demo did not return claim identifiers")
+        demo_claim_ids = tuple(item for item in claim_ids if isinstance(item, str))
+        if len(demo_claim_ids) != len(claim_ids):
+            raise SmokeError("installed demo returned an invalid claim identifier")
+        claim_id = demo_claim_ids[0]
+
+        dossier_state_before = _installed_database_state(
+            python,
+            demo_database,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        dossier_arguments = [
+            str(minerva_command),
+            "dossier",
+            "build",
+            "--db",
+            str(demo_database),
+            "--mission",
+            mission_id,
+            "--claim",
+            claim_id,
+            "--lens-input",
+            str(lens_receipt_path),
+        ]
+        dossier_output = _run_checked(
+            dossier_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        dossier_second_output = _run_checked(
+            dossier_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if dossier_output != dossier_second_output:
+            raise SmokeError("installed Review Dossier is not byte-deterministic")
+        dossier_state_after = _installed_database_state(
+            python,
+            demo_database,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if dossier_state_before != dossier_state_after:
+            raise SmokeError("installed Review Dossier changed database state")
+
+        dossier_envelope = _json_object(
+            dossier_output,
+            label="installed Review Dossier",
+        )
+        dossier = dossier_envelope.get("review_dossier")
+        if not isinstance(dossier, dict):
+            raise SmokeError("installed Review Dossier omitted its receipt")
+        dossier_components = dossier.get("component_receipts")
+        dossier_crosschecks = dossier.get("cross_checks")
+        dossier_queue = dossier.get("mission_research_queue")
+        dossier_review = dossier.get("claim_review")
+        dossier_lineage = dossier.get("claim_lineage")
+        dossier_lens = dossier.get("lens_search")
+        dossier_replay = dossier.get("lens_replay")
+        dossier_work = dossier.get("work")
+        dossier_boundary = dossier.get("semantic_boundary")
+        if (
+            dossier.get("schema_version") != "minerva.review-dossier.v1"
+            or dossier.get("kind") != "review_dossier"
+            or dossier.get("algorithm") != "current-snapshot-review-composition"
+            or dossier.get("algorithm_version") != "1"
+            or dossier.get("scope") != "mission_claim_with_captured_lens_v1"
+            or dossier.get("completion_policy") != "complete_or_refuse"
+            or dossier.get("complete") is not True
+            or dossier.get("truncated") is not False
+            or dossier.get("lens_retrieval_truncated") != lens.get("truncated")
+            or dossier.get("mission_id") != mission_id
+            or dossier.get("claim_id") != claim_id
+            or dossier.get("component_order")
+            != [
+                "mission_research_queue",
+                "claim_review",
+                "claim_lineage",
+                "lens_search",
+                "lens_replay",
+            ]
+            or not isinstance(dossier_components, list)
+            or len(dossier_components) != 5
+            or not all(isinstance(item, dict) for item in dossier_components)
+            or not isinstance(dossier_crosschecks, dict)
+            or not dossier_crosschecks
+            or not all(value is True for value in dossier_crosschecks.values())
+            or not isinstance(dossier_queue, dict)
+            or not isinstance(dossier_review, dict)
+            or not isinstance(dossier_lineage, dict)
+            or not isinstance(dossier_lens, dict)
+            or not isinstance(dossier_replay, dict)
+            or not isinstance(dossier_work, dict)
+            or not isinstance(dossier_boundary, dict)
+            or dossier_lens != lens
+            or dossier_replay.get("status") != "reproduced"
+            or dossier_replay.get("exact_receipt_match") is not True
+            or dossier_replay.get("current_database_snapshot_matched") is not True
+            or dossier_replay.get("historical_corpus_replay") is not False
+            or dossier_work.get("component_count") != len(dossier_components)
+            or dossier_work.get("canonical_output_bytes") != len(_canonical_bytes(dossier))
+            or dossier_boundary.get("read_only") is not True
+            or dossier_boundary.get("composition_only") is not True
+            or dossier_boundary.get("lens_candidates_are_evidence") is not False
+            or dossier_boundary.get("creates_or_changes_research_state") is not False
+            or dossier_boundary.get("invokes_model_provider") is not False
+            or dossier_boundary.get("invokes_network") is not False
+            or dossier_boundary.get("requires_separate_human_action") is not True
+        ):
+            raise SmokeError("installed Review Dossier receipt is invalid")
+
+        nested_digests: list[object] = []
+        for component, receipt_field in (
+            (dossier_queue, "queue_receipt_sha256"),
+            (dossier_review, "review_receipt_sha256"),
+            (dossier_lineage, "lineage_receipt_sha256"),
+            (dossier_lens, "retrieval_receipt_sha256"),
+        ):
+            component_payload = dict(component)
+            component_digest = component_payload.pop(receipt_field, None)
+            if component_digest != sha256(_canonical_bytes(component_payload)).hexdigest():
+                raise SmokeError("installed Review Dossier nested receipt digest is invalid")
+            nested_digests.append(component_digest)
+        nested_digests.append(sha256(_canonical_bytes(dossier_replay)).hexdigest())
+        if [item.get("receipt_sha256") for item in dossier_components] != nested_digests:
+            raise SmokeError("installed Review Dossier component links are invalid")
+
+        component_frame = {
+            "schema_version": "minerva.review-dossier-components.v1",
+            "algorithm": dossier["algorithm"],
+            "algorithm_version": dossier["algorithm_version"],
+            "scope": dossier["scope"],
+            "mission_id": dossier["mission_id"],
+            "claim_id": dossier["claim_id"],
+            "components": dossier_components,
+        }
+        if (
+            dossier.get("component_set_sha256")
+            != sha256(_canonical_bytes(component_frame)).hexdigest()
+        ):
+            raise SmokeError("installed Review Dossier component-set digest is invalid")
+        dossier_payload = dict(dossier)
+        dossier_digest = dossier_payload.pop("dossier_receipt_sha256", None)
+        if dossier_digest != sha256(_canonical_bytes(dossier_payload)).hexdigest():
+            raise SmokeError("installed Review Dossier receipt digest is invalid")
+
+        queue_state_before = _installed_database_state(
+            python,
+            demo_database,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        mission_queue_arguments = [
+            str(minerva_command),
+            "mission",
+            "queue",
+            "--db",
+            str(demo_database),
+            "--mission",
+            mission_id,
+        ]
+        mission_queue_output = _run_checked(
+            mission_queue_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if mission_queue_output != _run_checked(
+            mission_queue_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        ):
+            raise SmokeError("installed Mission Research Queue is not byte-deterministic")
+        queue_state_after = _installed_database_state(
+            python,
+            demo_database,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if queue_state_before != queue_state_after:
+            raise SmokeError("installed Mission Research Queue changed database state")
+
+        mission_queue_envelope = _json_object(
+            mission_queue_output,
+            label="installed Mission Research Queue",
+        )
+        mission_queue = mission_queue_envelope.get("mission_research_queue")
+        if not isinstance(mission_queue, dict):
+            raise SmokeError("installed Mission Research Queue omitted its receipt")
+        reviewed_claims = mission_queue.get("reviewed_claims")
+        queue_items = mission_queue.get("items")
+        reason_catalog = mission_queue.get("reason_catalog")
+        reason_counts = mission_queue.get("reason_counts")
+        queue_work = mission_queue.get("work")
+        queue_boundary = mission_queue.get("semantic_boundary")
+        queue_receipt = mission_queue.get("queue_receipt_sha256")
+        if (
+            mission_queue.get("schema_version") != "minerva.mission-research-queue.v1"
+            or mission_queue.get("kind") != "mission_research_queue"
+            or mission_queue.get("algorithm") != "claim-review-cue-aggregation"
+            or mission_queue.get("algorithm_version") != "1"
+            or mission_queue.get("scope") != "mission_claim_review_cues_v1"
+            or mission_queue.get("completion_policy") != "complete_or_refuse"
+            or mission_queue.get("complete") is not True
+            or mission_queue.get("truncated") is not False
+            or mission_queue.get("mission_id") != mission_id
+            or mission_queue.get("sequence_semantics") != "deterministic_display_order_not_priority"
+            or mission_queue.get("ordering")
+            != [
+                "reviewed_claims:claim_created_at_ascending_then_claim_id_ascending",
+                "items:reviewed_claim_order_then_claim_review_cue_catalog_order",
+            ]
+            or not isinstance(reviewed_claims, list)
+            or not isinstance(queue_items, list)
+            or not isinstance(reason_catalog, list)
+            or not isinstance(reason_counts, list)
+            or not isinstance(queue_work, dict)
+            or not isinstance(queue_boundary, dict)
+            or not isinstance(queue_receipt, str)
+            or len(queue_receipt) != 64
+            or not isinstance(mission_queue.get("claim_set_sha256"), str)
+            or len(mission_queue["claim_set_sha256"]) != 64
+            or not isinstance(mission_queue.get("claim_review_set_sha256"), str)
+            or len(mission_queue["claim_review_set_sha256"]) != 64
+            or not isinstance(mission_queue.get("item_set_sha256"), str)
+            or len(mission_queue["item_set_sha256"]) != 64
+        ):
+            raise SmokeError("installed Mission Research Queue receipt is invalid")
+
+        reviewed_claim_documents = [item for item in reviewed_claims if isinstance(item, dict)]
+        queue_item_documents = [item for item in queue_items if isinstance(item, dict)]
+        reason_documents = [item for item in reason_catalog if isinstance(item, dict)]
+        reason_count_documents = [item for item in reason_counts if isinstance(item, dict)]
+        if (
+            len(reviewed_claim_documents) != len(reviewed_claims)
+            or len(queue_item_documents) != len(queue_items)
+            or len(reason_documents) != len(reason_catalog)
+            or len(reason_count_documents) != len(reason_counts)
+        ):
+            raise SmokeError("installed Mission Research Queue contains an invalid row")
+
+        catalog_position_by_code: dict[str, int] = {}
+        catalog_codes: list[str] = []
+        for expected_position, reason in enumerate(reason_documents, start=1):
+            code = reason.get("code")
+            if (
+                reason.get("catalog_position") != expected_position
+                or not isinstance(code, str)
+                or code in catalog_position_by_code
+                or not isinstance(reason.get("category"), str)
+                or not isinstance(reason.get("explanation"), str)
+            ):
+                raise SmokeError("installed Mission Research Queue reason catalog is invalid")
+            catalog_position_by_code[code] = expected_position
+            catalog_codes.append(code)
+
+        summary_by_claim: dict[str, dict[object, object]] = {}
+        summary_order: dict[str, int] = {}
+        claim_sort_keys: list[tuple[str, str]] = []
+        for expected_sequence, summary in enumerate(reviewed_claim_documents, start=1):
+            queue_claim_id = summary.get("claim_id")
+            claim_created_at = summary.get("claim_created_at")
+            if (
+                summary.get("sequence") != expected_sequence
+                or not isinstance(queue_claim_id, str)
+                or queue_claim_id in summary_by_claim
+                or not isinstance(summary.get("question_id"), str)
+                or not isinstance(summary.get("claim_statement"), str)
+                or not isinstance(claim_created_at, str)
+                or not isinstance(summary.get("reason_codes"), list)
+                or not isinstance(summary.get("item_count"), int)
+                or not isinstance(summary.get("review_receipt_sha256"), str)
+                or len(summary["review_receipt_sha256"]) != 64
+            ):
+                raise SmokeError("installed Mission Research Queue claim summary is invalid")
+            summary_by_claim[queue_claim_id] = summary
+            summary_order[queue_claim_id] = expected_sequence
+            claim_sort_keys.append((claim_created_at, queue_claim_id))
+        if (
+            set(summary_by_claim) != set(demo_claim_ids)
+            or len(summary_by_claim) != len(demo_claim_ids)
+            or claim_sort_keys != sorted(claim_sort_keys)
+        ):
+            raise SmokeError("installed Mission Research Queue claim coverage is invalid")
+
+        items_by_claim: dict[str, list[dict[object, object]]] = {
+            queue_claim_id: [] for queue_claim_id in summary_by_claim
+        }
+        item_order_keys: list[tuple[int, int]] = []
+        seen_item_labels: set[tuple[str, str]] = set()
+        for expected_sequence, item in enumerate(queue_item_documents, start=1):
+            queue_claim_id = item.get("claim_id")
+            reason_code = item.get("reason_code")
+            record_ids = item.get("record_ids")
+            if (
+                item.get("sequence") != expected_sequence
+                or item.get("kind") != "structural_review_cue"
+                or not isinstance(queue_claim_id, str)
+                or queue_claim_id not in summary_by_claim
+                or not isinstance(reason_code, str)
+                or reason_code not in catalog_position_by_code
+                or (queue_claim_id, reason_code) in seen_item_labels
+                or not isinstance(item.get("question_id"), str)
+                or not isinstance(item.get("reason_category"), str)
+                or not isinstance(item.get("explanation"), str)
+                or not isinstance(record_ids, list)
+                or not all(isinstance(record_id, str) for record_id in record_ids)
+                or not isinstance(item.get("source_review_receipt_sha256"), str)
+                or len(item["source_review_receipt_sha256"]) != 64
+            ):
+                raise SmokeError("installed Mission Research Queue item is invalid")
+            seen_item_labels.add((queue_claim_id, reason_code))
+            items_by_claim[queue_claim_id].append(item)
+            item_order_keys.append(
+                (summary_order[queue_claim_id], catalog_position_by_code[reason_code])
+            )
+        if item_order_keys != sorted(item_order_keys):
+            raise SmokeError("installed Mission Research Queue item order is invalid")
+
+        for queue_claim_id, summary in summary_by_claim.items():
+            claim_items = items_by_claim[queue_claim_id]
+            projected_codes = [item["reason_code"] for item in claim_items]
+            if (
+                summary.get("reason_codes") != projected_codes
+                or summary.get("item_count") != len(claim_items)
+                or not projected_codes
+                or any(
+                    item.get("source_review_receipt_sha256") != summary.get("review_receipt_sha256")
+                    for item in claim_items
+                )
+            ):
+                raise SmokeError("installed Mission Research Queue cue projection is invalid")
+
+        item_code_counts = {
+            code: sum(item.get("reason_code") == code for item in queue_item_documents)
+            for code in catalog_codes
+        }
+        if [item.get("code") for item in reason_count_documents] != catalog_codes or any(
+            not isinstance(item.get("code"), str)
+            or item.get("count") != item_code_counts[item["code"]]
+            for item in reason_count_documents
+        ):
+            raise SmokeError("installed Mission Research Queue reason counts are invalid")
+        if (
+            queue_work.get("reviewed_claim_count") != len(reviewed_claim_documents)
+            or queue_work.get("item_count") != len(queue_item_documents)
+            or not isinstance(queue_work.get("evidence_card_count"), int)
+            or queue_work["evidence_card_count"] < 0
+            or not isinstance(queue_work.get("distinct_evidence_quote_bytes"), int)
+            or queue_work["distinct_evidence_quote_bytes"] < 0
+            or not isinstance(mission_queue.get("bounds"), dict)
+            or queue_work["distinct_evidence_quote_bytes"]
+            > mission_queue["bounds"].get("max_distinct_evidence_quote_bytes", -1)
+            or queue_work.get("canonical_output_bytes") != len(_canonical_bytes(mission_queue))
+        ):
+            raise SmokeError("installed Mission Research Queue work receipt is invalid")
+
+        common_frame = {
+            "algorithm": "claim-review-cue-aggregation",
+            "algorithm_version": "1",
+            "scope": "mission_claim_review_cues_v1",
+            "mission_id": mission_id,
+        }
+        claim_frame = {
+            "schema_version": "minerva.mission-research-queue-claims.v1",
+            **common_frame,
+            "claims": [
+                {
+                    "sequence": summary["sequence"],
+                    "claim_id": summary["claim_id"],
+                    "question_id": summary["question_id"],
+                    "claim_statement": summary["claim_statement"],
+                    "recorded_status": summary["recorded_status"],
+                    "recorded_status_version": summary["recorded_status_version"],
+                    "claim_created_at": summary["claim_created_at"],
+                }
+                for summary in reviewed_claim_documents
+            ],
+        }
+        review_frame = {
+            "schema_version": "minerva.mission-research-queue-claim-reviews.v1",
+            **common_frame,
+            "claim_reviews": [
+                {
+                    "sequence": summary["sequence"],
+                    "claim_id": summary["claim_id"],
+                    "reason_codes": summary["reason_codes"],
+                    "item_count": summary["item_count"],
+                    "review_receipt_sha256": summary["review_receipt_sha256"],
+                }
+                for summary in reviewed_claim_documents
+            ],
+        }
+        item_frame = {
+            "schema_version": "minerva.mission-research-queue-items.v1",
+            **common_frame,
+            "items": queue_item_documents,
+        }
+        if (
+            mission_queue.get("claim_set_sha256")
+            != sha256(_canonical_bytes(claim_frame)).hexdigest()
+            or mission_queue.get("claim_review_set_sha256")
+            != sha256(_canonical_bytes(review_frame)).hexdigest()
+            or mission_queue.get("item_set_sha256")
+            != sha256(_canonical_bytes(item_frame)).hexdigest()
+        ):
+            raise SmokeError("installed Mission Research Queue subreceipt digest is invalid")
+        queue_receipt_payload = dict(mission_queue)
+        queue_receipt_payload.pop("queue_receipt_sha256")
+        if queue_receipt != sha256(_canonical_bytes(queue_receipt_payload)).hexdigest():
+            raise SmokeError("installed Mission Research Queue receipt digest does not verify")
+
+        if (
+            queue_boundary.get("read_only") is not True
+            or queue_boundary.get("structural_review_index_only") is not True
+            or queue_boundary.get("current_claim_review_taxonomy_guarantees_a_cue") is not True
+            or queue_boundary.get("item_presence_means_action_required") is not False
+            or queue_boundary.get("item_presence_means_open_or_unresolved") is not False
+            or queue_boundary.get("item_order_is_priority_or_severity") is not False
+            or queue_boundary.get("assigns_work") is not False
+            or queue_boundary.get("records_completion_or_deferral") is not False
+            or queue_boundary.get("determines_truth") is not False
+            or queue_boundary.get("calculates_confidence") is not False
+            or queue_boundary.get("recommends_or_alters_claim_status") is not False
+            or queue_boundary.get("creates_or_changes_research_state") is not False
+            or queue_boundary.get("writes_audit_event_or_export") is not False
+            or queue_boundary.get("modifies_source_or_snapshot_bytes") is not False
+            or queue_boundary.get("invokes_claim_lineage") is not False
+            or queue_boundary.get("invokes_model_provider") is not False
+            or queue_boundary.get("invokes_network") is not False
+            or queue_boundary.get("exposes_external_agent_protocol") is not False
+        ):
+            raise SmokeError("installed Mission Research Queue semantic boundary is invalid")
+
+        claim_review_arguments = [
+            str(minerva_command),
+            "claim",
+            "review",
+            "--db",
+            str(demo_database),
+            "--mission",
+            mission_id,
+            "--claim",
+            claim_id,
+        ]
+        claim_review_output = _run_checked(
+            claim_review_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if claim_review_output != _run_checked(
+            claim_review_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        ):
+            raise SmokeError("installed Claim Review is not byte-deterministic")
+        claim_review_envelope = _json_object(
+            claim_review_output,
+            label="installed Claim Review",
+        )
+        claim_review = claim_review_envelope.get("claim_review")
+        if not isinstance(claim_review, dict):
+            raise SmokeError("installed Claim Review omitted its review receipt")
+        review_receipt = claim_review.get("review_receipt_sha256")
+        review_boundary = claim_review.get("semantic_boundary")
+        if (
+            claim_review.get("schema_version") != "minerva.claim-review.v1"
+            or claim_review.get("kind") != "evidence_gap_and_retraction_impact"
+            or claim_review.get("algorithm") != "structural-ledger-review"
+            or claim_review.get("algorithm_version") != "1"
+            or claim_review.get("completion_policy") != "complete_or_refuse"
+            or claim_review.get("complete") is not True
+            or claim_review.get("truncated") is not False
+            or claim_review.get("mission_id") != mission_id
+            or claim_review.get("claim_id") != claim_id
+            or not isinstance(review_receipt, str)
+            or len(review_receipt) != 64
+            or not isinstance(review_boundary, dict)
+            or review_boundary.get("read_only") is not True
+            or review_boundary.get("structural_observations_only") is not True
+            or review_boundary.get("determines_truth") is not False
+            or review_boundary.get("calculates_confidence") is not False
+            or review_boundary.get("alters_claim_status") is not False
+            or review_boundary.get("creates_or_withdraws_evidence") is not False
+            or review_boundary.get("writes_audit_event") is not False
+            or review_boundary.get("invokes_model_provider") is not False
+            or review_boundary.get("invokes_network") is not False
+        ):
+            raise SmokeError("installed Claim Review receipt or semantic boundary is invalid")
+        review_receipt_payload = dict(claim_review)
+        review_receipt_payload.pop("review_receipt_sha256")
+        expected_review_receipt = sha256(
+            json.dumps(
+                review_receipt_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        if review_receipt != expected_review_receipt:
+            raise SmokeError("installed Claim Review receipt digest does not verify")
+
+        claim_lineage_arguments = [
+            str(minerva_command),
+            "claim",
+            "lineage",
+            "--db",
+            str(demo_database),
+            "--mission",
+            mission_id,
+            "--claim",
+            claim_id,
+        ]
+        claim_lineage_output = _run_checked(
+            claim_lineage_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if claim_lineage_output != _run_checked(
+            claim_lineage_arguments,
+            cwd=smoke_directory,
+            environment=environment,
+        ):
+            raise SmokeError("installed Claim Lineage is not byte-deterministic")
+        claim_lineage_envelope = _json_object(
+            claim_lineage_output,
+            label="installed Claim Lineage",
+        )
+        claim_lineage = claim_lineage_envelope.get("claim_lineage")
+        if not isinstance(claim_lineage, dict):
+            raise SmokeError("installed Claim Lineage omitted its lineage receipt")
+        lineage_nodes = claim_lineage.get("nodes")
+        lineage_edges = claim_lineage.get("edges")
+        lineage_receipt = claim_lineage.get("lineage_receipt_sha256")
+        lineage_boundary = claim_lineage.get("semantic_boundary")
+        if (
+            claim_lineage.get("schema_version") != "minerva.claim-lineage.v1"
+            or claim_lineage.get("kind") != "claim_lineage_graph"
+            or claim_lineage.get("algorithm") != "structural-ledger-lineage"
+            or claim_lineage.get("algorithm_version") != "1"
+            or claim_lineage.get("scope") != "claim_owned_closure_v1"
+            or claim_lineage.get("completion_policy") != "complete_or_refuse"
+            or claim_lineage.get("complete") is not True
+            or claim_lineage.get("truncated") is not False
+            or claim_lineage.get("mission_id") != mission_id
+            or claim_lineage.get("claim_id") != claim_id
+            or claim_lineage.get("root_node_id") != claim_id
+            or not isinstance(lineage_receipt, str)
+            or len(lineage_receipt) != 64
+            or not isinstance(claim_lineage.get("node_set_sha256"), str)
+            or len(claim_lineage["node_set_sha256"]) != 64
+            or not isinstance(claim_lineage.get("edge_set_sha256"), str)
+            or len(claim_lineage["edge_set_sha256"]) != 64
+            or not isinstance(claim_lineage.get("snapshot_set_sha256"), str)
+            or len(claim_lineage["snapshot_set_sha256"]) != 64
+            or not isinstance(lineage_nodes, list)
+            or not lineage_nodes
+            or not isinstance(lineage_edges, list)
+            or not lineage_edges
+            or not isinstance(lineage_boundary, dict)
+            or lineage_boundary.get("read_only") is not True
+            or lineage_boundary.get("structural_topology_only") is not True
+            or lineage_boundary.get("complete_claim_owned_scope") is not True
+            or lineage_boundary.get("determines_truth") is not False
+            or lineage_boundary.get("calculates_confidence") is not False
+            or lineage_boundary.get("recommends_or_alters_claim_status") is not False
+            or lineage_boundary.get("creates_or_changes_research_state") is not False
+            or lineage_boundary.get("writes_audit_event_or_export") is not False
+            or lineage_boundary.get("modifies_source_or_snapshot_bytes") is not False
+            or lineage_boundary.get("invokes_model_provider") is not False
+            or lineage_boundary.get("invokes_network") is not False
+        ):
+            raise SmokeError("installed Claim Lineage receipt or semantic boundary is invalid")
+        lineage_receipt_payload = dict(claim_lineage)
+        lineage_receipt_payload.pop("lineage_receipt_sha256")
+        expected_lineage_receipt = sha256(
+            json.dumps(
+                lineage_receipt_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        if lineage_receipt != expected_lineage_receipt:
+            raise SmokeError("installed Claim Lineage receipt digest does not verify")
+
+        if not all(isinstance(node, dict) for node in lineage_nodes):
+            raise SmokeError("installed Claim Lineage contains an invalid node")
+        lineage_node_ids = [node.get("node_id") for node in lineage_nodes]
+        if (
+            any(not isinstance(node_id, str) for node_id in lineage_node_ids)
+            or len(set(lineage_node_ids)) != len(lineage_node_ids)
+            or claim_id not in lineage_node_ids
+        ):
+            raise SmokeError("installed Claim Lineage node identities are invalid")
+        if not all(isinstance(edge, dict) for edge in lineage_edges):
+            raise SmokeError("installed Claim Lineage contains an invalid edge")
+        lineage_node_id_set = set(lineage_node_ids)
+        if any(
+            not isinstance(edge.get("relation"), str)
+            or edge.get("source_node_id") not in lineage_node_id_set
+            or edge.get("target_node_id") not in lineage_node_id_set
+            for edge in lineage_edges
+        ):
+            raise SmokeError("installed Claim Lineage contains a dangling graph edge")
+
+        lineage_evidence_nodes = [node for node in lineage_nodes if node.get("kind") == "evidence"]
+        if not lineage_evidence_nodes:
+            raise SmokeError("installed Claim Lineage omitted target-claim evidence")
+        lineage_evidence = lineage_evidence_nodes[0].get("payload")
+        if not isinstance(lineage_evidence, dict):
+            raise SmokeError("installed Claim Lineage evidence payload is invalid")
+        lineage_snapshot_id = lineage_evidence.get("snapshot_id")
+        lineage_start = lineage_evidence.get("start_byte")
+        lineage_end = lineage_evidence.get("end_byte")
+        lineage_quote = lineage_evidence.get("quote")
+        lineage_quote_base64 = lineage_evidence.get("quote_utf8_base64")
+        if (
+            not isinstance(lineage_snapshot_id, str)
+            or not isinstance(lineage_start, int)
+            or not isinstance(lineage_end, int)
+            or lineage_start < 0
+            or lineage_end <= lineage_start
+            or not isinstance(lineage_quote, str)
+            or not isinstance(lineage_quote_base64, str)
+        ):
+            raise SmokeError("installed Claim Lineage evidence provenance is incomplete")
+        lineage_source = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "source",
+                    "show",
+                    "--db",
+                    str(demo_database),
+                    "--snapshot",
+                    lineage_snapshot_id,
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed Claim Lineage snapshot round trip",
+        )
+        lineage_source_text = lineage_source.get("text")
+        lineage_quote_bytes = lineage_quote.encode("utf-8")
+        if (
+            not isinstance(lineage_source_text, str)
+            or lineage_source_text.encode("utf-8")[lineage_start:lineage_end] != lineage_quote_bytes
+            or base64.b64decode(lineage_quote_base64, validate=True) != lineage_quote_bytes
+            or lineage_evidence.get("quote_byte_length") != len(lineage_quote_bytes)
+            or lineage_evidence.get("quote_sha256") != sha256(lineage_quote_bytes).hexdigest()
+        ):
+            raise SmokeError("installed Claim Lineage evidence byte span does not round trip")
+
         evidence_ids = demo.get("evidence_ids")
         if (
             not isinstance(evidence_ids, list)
@@ -522,6 +1466,266 @@ Path(sys.argv[1]).write_bytes(serialize_research_request(document))
             or fulfilled_packet.get("schema_version") != "minerva.research-brief.v2"
         ):
             raise SmokeError("installed fulfilled packet verification failed")
+
+        schema_probe = """
+import json
+import sys
+from pathlib import Path
+
+from minerva.core.db import Database, latest_schema_version
+
+database = Database(Path(sys.argv[1]))
+with database.read() as connection:
+    recorded = [
+        int(row[0])
+        for row in connection.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        )
+    ]
+print(
+    json.dumps(
+        {
+            "packaged": latest_schema_version(),
+            "recorded": recorded,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+)
+""".strip()
+        schema_before_adoption = _json_object(
+            _run_checked(
+                [str(python), "-c", schema_probe, str(demo_database)],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed pre-adoption schema probe",
+        )
+        if schema_before_adoption != {
+            "packaged": 5,
+            "recorded": [1, 2, 3, 4, 5],
+        }:
+            raise SmokeError("installed Lens evidence adoption requires unchanged schema v5")
+
+        ledger_before_adoption = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "claim",
+                    "ledger",
+                    "--db",
+                    str(demo_database),
+                    "--claim",
+                    claim_id,
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed pre-adoption evidence ledger",
+        ).get("evidence_ledger")
+        if not isinstance(ledger_before_adoption, list):
+            raise SmokeError("installed pre-adoption evidence ledger is invalid")
+
+        candidate_rank = candidate.get("rank")
+        candidate_snapshot_sha256 = candidate.get("snapshot_sha256")
+        candidate_quote_sha256 = candidate.get("quote_sha256")
+        if (
+            not isinstance(candidate_rank, int)
+            or not isinstance(candidate_snapshot_sha256, str)
+            or len(candidate_snapshot_sha256) != 64
+            or not isinstance(candidate_quote_sha256, str)
+            or len(candidate_quote_sha256) != 64
+        ):
+            raise SmokeError("installed Lens candidate confirmation is incomplete")
+        adoption_envelope = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "evidence",
+                    "add-from-lens",
+                    "--db",
+                    str(demo_database),
+                    "--mission",
+                    mission_id,
+                    "--claim",
+                    claim_id,
+                    "--lens-input",
+                    str(lens_receipt_path),
+                    "--candidate-rank",
+                    str(candidate_rank),
+                    "--stance",
+                    "context",
+                    "--expected-retrieval-receipt-sha256",
+                    str(lens_receipt_digest),
+                    "--expected-snapshot-sha256",
+                    candidate_snapshot_sha256,
+                    "--expected-start-byte",
+                    str(start_byte),
+                    "--expected-end-byte",
+                    str(end_byte),
+                    "--expected-quote-sha256",
+                    candidate_quote_sha256,
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed Lens evidence adoption",
+        )
+        adoption = adoption_envelope.get("lens_evidence_adoption")
+        if not isinstance(adoption, dict):
+            raise SmokeError("installed Lens evidence adoption omitted its receipt")
+        adopted_evidence = adoption.get("evidence")
+        adoption_boundary = adoption.get("semantic_boundary")
+        adoption_audit_id = adoption.get("adoption_audit_event_id")
+        if (
+            adoption.get("schema_version") != "minerva.lens-evidence-adoption.v1"
+            or adoption.get("kind") != "single_candidate_evidence_adoption"
+            or adoption.get("status") != "adopted"
+            or adoption.get("mission_id") != mission_id
+            or adoption.get("claim_id") != claim_id
+            or adoption.get("retrieval_receipt_sha256") != lens_receipt_digest
+            or adoption.get("query_sha256") != lens.get("query_sha256")
+            or adoption.get("snapshot_set_sha256") != lens.get("snapshot_set_sha256")
+            or adoption.get("candidate_rank") != candidate_rank
+            or adoption.get("source_id") != candidate.get("source_id")
+            or adoption.get("snapshot_id") != snapshot_id
+            or adoption.get("snapshot_sha256") != candidate_snapshot_sha256
+            or adoption.get("start_byte") != start_byte
+            or adoption.get("end_byte") != end_byte
+            or adoption.get("quote_sha256") != candidate_quote_sha256
+            or adoption.get("stance") != "context"
+            or adoption.get("supersedes_evidence_id") is not None
+            or not isinstance(adoption_audit_id, str)
+            or not adoption_audit_id.startswith("aud_")
+            or not isinstance(adopted_evidence, dict)
+            or adopted_evidence.get("mission_id") != mission_id
+            or adopted_evidence.get("claim_id") != claim_id
+            or adopted_evidence.get("snapshot_id") != snapshot_id
+            or adopted_evidence.get("snapshot_sha256") != candidate_snapshot_sha256
+            or adopted_evidence.get("start_byte") != start_byte
+            or adopted_evidence.get("end_byte") != end_byte
+            or adopted_evidence.get("quote") != quote
+            or adopted_evidence.get("stance") != "context"
+            or not isinstance(adoption_boundary, dict)
+            or adoption_boundary.get("single_candidate_only") is not True
+            or adoption_boundary.get("receipt_strictly_verified") is not True
+            or adoption_boundary.get("current_database_exactly_reproduced") is not True
+            or adoption_boundary.get("candidate_explicitly_confirmed") is not True
+            or adoption_boundary.get("operator_supplied_stance") is not True
+            or adoption_boundary.get("creates_one_evidence_card") is not True
+            or adoption_boundary.get("rank_used_as_epistemic_weight") is not False
+            or adoption_boundary.get("performs_bulk_or_automatic_adoption") is not False
+            or adoption_boundary.get("determines_truth_or_source_quality") is not False
+            or adoption_boundary.get("calculates_confidence") is not False
+            or adoption_boundary.get("alters_claim_status") is not False
+            or adoption_boundary.get("creates_or_retracts_findings") is not False
+            or adoption_boundary.get("persists_agent_inference") is not False
+            or adoption_boundary.get("invokes_model_provider_or_network") is not False
+        ):
+            raise SmokeError("installed Lens evidence adoption receipt is invalid")
+
+        adopted_evidence_id = adopted_evidence.get("id")
+        if not isinstance(adopted_evidence_id, str) or not adopted_evidence_id.startswith("evd_"):
+            raise SmokeError("installed Lens evidence adoption omitted its evidence identifier")
+        ledger_after_adoption = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "claim",
+                    "ledger",
+                    "--db",
+                    str(demo_database),
+                    "--claim",
+                    claim_id,
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed post-adoption evidence ledger",
+        ).get("evidence_ledger")
+        if not isinstance(ledger_after_adoption, list):
+            raise SmokeError("installed post-adoption evidence ledger is invalid")
+        adopted_ledger_entries = [
+            entry
+            for entry in ledger_after_adoption
+            if isinstance(entry, dict)
+            and isinstance(entry.get("evidence"), dict)
+            and entry["evidence"].get("id") == adopted_evidence_id
+        ]
+        if (
+            len(ledger_after_adoption) != len(ledger_before_adoption) + 1
+            or len(adopted_ledger_entries) != 1
+            or adopted_ledger_entries[0].get("withdrawn") is not False
+            or adopted_ledger_entries[0]["evidence"] != adopted_evidence
+        ):
+            raise SmokeError("installed Lens adoption did not add exactly one ledger entry")
+
+        audit_envelope = _json_object(
+            _run_checked(
+                [
+                    str(minerva_command),
+                    "audit",
+                    "list",
+                    "--db",
+                    str(demo_database),
+                    "--mission",
+                    mission_id,
+                    "--limit",
+                    "500",
+                ],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed post-adoption audit ledger",
+        )
+        audit_events = audit_envelope.get("audit_events")
+        if not isinstance(audit_events, list):
+            raise SmokeError("installed post-adoption audit ledger is invalid")
+        adoption_events = [
+            event
+            for event in audit_events
+            if isinstance(event, dict) and event.get("entity_id") == adopted_evidence_id
+        ]
+        if (
+            [event.get("event_type") for event in adoption_events]
+            != ["evidence.card.created", "lens.candidate.adopted"]
+            or any(event.get("entity_type") != "evidence_card" for event in adoption_events)
+            or any(event.get("mission_id") != mission_id for event in adoption_events)
+            or adoption_events[1].get("id") != adoption_audit_id
+            or not isinstance(adoption_events[1].get("details"), dict)
+            or adoption_events[1]["details"].get("retrieval_receipt_sha256") != lens_receipt_digest
+            or adoption_events[1]["details"].get("candidate_rank") != candidate_rank
+            or adoption_events[1]["details"].get("quote_sha256") != candidate_quote_sha256
+            or adoption_events[1]["details"].get("stance") != "context"
+            or "quote" in adoption_events[1]["details"]
+        ):
+            raise SmokeError("installed Lens adoption audit binding is invalid")
+
+        schema_after_adoption = _json_object(
+            _run_checked(
+                [str(python), "-c", schema_probe, str(demo_database)],
+                cwd=smoke_directory,
+                environment=environment,
+            ),
+            label="installed post-adoption schema probe",
+        )
+        if schema_after_adoption != schema_before_adoption:
+            raise SmokeError("installed Lens evidence adoption changed schema expectations")
+        if json_path.read_bytes() != json_bytes:
+            raise SmokeError("installed Lens evidence adoption changed the canonical packet")
+        packet_after_adoption = _run_checked(
+            [
+                str(minerva_command),
+                "packet",
+                "verify",
+                "--input",
+                str(json_path),
+            ],
+            cwd=smoke_directory,
+            environment=environment,
+        )
+        if packet_after_adoption != packet_verify_output:
+            raise SmokeError("installed Lens adoption changed packet-v2 verification")
 
         doctor = _json_object(
             _run_checked(
