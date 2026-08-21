@@ -51,7 +51,7 @@ seams remain in [ADR 0002](adr/0002-system-boundaries.md).
 3. Run one persistent local database on mickey, with loopback review, so a
    real mission can accrue evidence. **Running** — see [WORKSPACE.md](WORKSPACE.md).
 4. Document how a seat files a snapshot and an evidence card against that
-   database. **In progress** (CLI + WORKSPACE.md; wrapper stays machine-local).
+   database. **Done** (WORKSPACE.md live CLI loop; wrapper stays machine-local).
 
 ## Non-goals this season
 

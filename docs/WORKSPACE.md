@@ -9,18 +9,19 @@ to `127.0.0.1`. Loopback is not authentication. Do not expose it remotely.
 
 ## Working copy
 
-The Grok seat's clone is `~/ai-workspace/grok/minerva`, tracking
-`git@github.com:Ayyitskevin/Minerva.git`. Other seats keep their own clones.
-Do not scratch-edit another seat's tree, and do not edit a live database from
-two writers at once.
+Each seat uses its own clone of `git@github.com:Ayyitskevin/Minerva.git`.
+The Grok seat's clone is `~/ai-workspace/grok/minerva`. Do not scratch-edit
+another seat's tree, and do not edit a live database from two writers at once.
 
-Install the locked environment from that checkout:
+Install the locked environment from the clone you are working in:
 
 ```bash
-cd ~/ai-workspace/grok/minerva
 uv sync --frozen --extra dev
 uv run minerva --help
 ```
+
+Machine-local wrappers that inject `--db` stay out of git. From your clone,
+pass the persistent database path on every command that takes `--db`.
 
 ## Persistent database
 
@@ -55,7 +56,8 @@ uv run minerva serve --db ~/data/minerva/research.db --host 127.0.0.1 --port 876
 A user systemd unit may run that exact command. The host argument is rejected
 unless it is `127.0.0.1`. There is no reverse proxy and no Tailscale bind in
 this season. An example unit lives in `contrib/systemd/`. Machine-local units
-stay out of git.
+stay out of git. If `http://127.0.0.1:8765/healthz` already answers, do not
+start a second serve against the live database.
 
 ## How a seat files evidence
 
@@ -69,6 +71,24 @@ exact UTF-8 byte span, `finding add` or an explicitly labeled assumption, then
 `brief export` and `audit list`. `lens search` returns unassessed leads, not
 evidence. Corrections are `evidence withdraw` and `finding retract`. There is
 still no delete verb.
+
+On mickey, discover live IDs first, then write against the persistent database.
+Placeholders come from `mission show`, never invented. Adding evidence on an
+existing claim does not require `mission create`:
+
+```bash
+uv run minerva mission list --db ~/data/minerva/research.db
+uv run minerva mission show --db ~/data/minerva/research.db --mission MIS_ID
+uv run minerva source import --db ~/data/minerva/research.db --mission MIS_ID \
+  --root ./sources --file FILE.txt --media-type text/plain
+uv run minerva source show --db ~/data/minerva/research.db --snapshot SNP_ID
+uv run minerva evidence add --db ~/data/minerva/research.db --mission MIS_ID \
+  --claim CLM_ID --snapshot SNP_ID --start BYTE --end BYTE \
+  --quote "EXACT UTF-8 SPAN" --stance supports
+```
+
+`source show` prints stored bytes so the submitted `--quote` can match exactly.
+Stance is `supports`, `opposes`, `context`, or `inconclusive`.
 
 Before calling the slice complete on live data:
 
