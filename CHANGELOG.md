@@ -112,6 +112,10 @@ release here is a tag plus this record.
   `backup` refuses to overwrite, so `--output ~/data/minerva/backups/research.db`
   can succeed once and then fail forever. A test holds the example off that
   colliding filename.
+- `minerva serve` still binds only `127.0.0.1` on a TCP port in 1..65535, and
+  only after the database exists. Tests now hold the uvicorn call, argparse
+  host/port refusals, the missing-database path, and the contrib unit example
+  to that. `/docs` and `/redoc` stay off on the app the handler actually binds.
 - `restore` accepts an intact backup at any older recorded schema version and
   migrates it forward on the private staged copy, deep-validated before
   publication, recording a `database.migrated` event where the migration

@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+import uvicorn
+from fastapi import FastAPI
 
 import minerva.core.db as db_module
 from minerva.cli._common import EXIT_OPERATIONAL
@@ -416,10 +418,85 @@ def test_cli_errors_do_not_reflect_private_paths_or_submitted_content(
     assert missing_name not in captured.err
 
 
-def test_serve_rejects_non_loopback_host() -> None:
+@pytest.mark.security
+@pytest.mark.parametrize("host", ["0.0.0.0", "localhost", "::1", "192.168.0.1"])
+def test_serve_rejects_non_loopback_host(host: str) -> None:
     with pytest.raises(SystemExit) as error:
-        main(("serve", "--db", "unused.db", "--host", "0.0.0.0"))
+        main(("serve", "--db", "unused.db", "--host", host))
     assert error.value.code == 2
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("port", ["0", "65536", "-1", "not-a-port"])
+def test_serve_rejects_invalid_port(port: str) -> None:
+    """Port 0 would let the OS pick; anything outside 1..65535 is not a TCP port."""
+
+    with pytest.raises(SystemExit) as error:
+        main(("serve", "--db", "unused.db", "--port", port))
+    assert error.value.code == 2
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("port", ["1", "65535"])
+def test_serve_accepts_tcp_port_bounds(port: str) -> None:
+    args = build_parser().parse_args(["serve", "--db", "unused.db", "--port", port])
+    assert args.host == "127.0.0.1"
+    assert args.port == int(port)
+
+
+@pytest.mark.security
+def test_serve_binds_loopback_only_after_the_database_is_ready(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The handler, not only argparse, is what actually binds.
+
+    Host rejection used to be the only serve test, so `_cmd_serve` and `_port`
+    could change without failing. This holds the uvicorn call to loopback 8765
+    after schema_version has seen a real database.
+    """
+
+    database = tmp_path / "research.db"
+    _invoke(capsys, "init", "--db", str(database))
+    bound: dict[str, object] = {}
+
+    def fake_run(app: object, *args: object, **kwargs: object) -> None:
+        bound["app"] = app
+        bound["args"] = args
+        bound["kwargs"] = kwargs
+
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+    result = _invoke(capsys, "serve", "--db", str(database))
+    assert result == {"status": "server_stopped"}
+    assert bound["args"] == ()
+    kwargs = bound["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["host"] == "127.0.0.1"
+    assert kwargs["port"] == 8765
+    app = bound["app"]
+    assert isinstance(app, FastAPI)
+    assert app.docs_url is None
+    assert app.redoc_url is None
+    assert app.state.database.path == database
+
+
+@pytest.mark.security
+def test_serve_does_not_bind_when_the_database_is_missing(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_run(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("serve must not bind before the database is ready")
+
+    monkeypatch.setattr(uvicorn, "run", unexpected_run)
+    code = main(("serve", "--db", str(tmp_path / "missing.db")))
+    captured = capsys.readouterr()
+    assert code == 3
+    assert captured.out == ""
+    error = json.loads(captured.err)
+    assert error["error"]["code"] == "database_missing"
 
 
 def test_cli_composed_show_commands_each_use_one_read_transaction(
