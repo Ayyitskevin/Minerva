@@ -76,13 +76,14 @@ Before calling the slice complete on live data:
 uv run minerva doctor --db ~/data/minerva/research.db --deep
 ```
 
-A nightly backup is a non-overwriting copy:
+A nightly backup is a non-overwriting copy. Use a dated output path;
+`backup` refuses to overwrite, so a fixed `research.db` destination can
+succeed once and then fail forever:
 
 ```bash
-uv run minerva backup --db ~/data/minerva/research.db --output ~/data/minerva/backups/research.db
+uv run minerva backup --db ~/data/minerva/research.db \
+  --output ~/data/minerva/backups/research-$(date -u +%Y%m%dT%H%M%SZ).db
 ```
-
-`backup` refuses to overwrite. Pick a new output path or a dated name.
 
 ## Packets and siblings
 
