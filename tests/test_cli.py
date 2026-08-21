@@ -12,7 +12,7 @@ import uvicorn
 from fastapi import FastAPI
 
 import minerva.core.db as db_module
-from minerva.cli._common import EXIT_OPERATIONAL
+from minerva.cli._common import EXIT_DOMAIN, EXIT_OPERATIONAL
 from minerva.cli.main import build_parser, main
 from minerva.core.db import Database
 
@@ -371,6 +371,133 @@ def test_cli_vertical_slice_and_lifecycle(
     )
     doctor = _invoke(capsys, "doctor", "--db", str(restored), "--deep")
     assert doctor["doctor"]["ok"] is True  # type: ignore[index]
+
+
+def test_mission_list_returns_creation_order_oldest_first(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Help used to say newest first. SQL is ORDER BY created_at ASC, id ASC."""
+
+    database = tmp_path / "missions.db"
+    _invoke(capsys, "init", "--db", str(database))
+    first = _invoke(
+        capsys,
+        "mission",
+        "create",
+        "--db",
+        str(database),
+        "--title",
+        "First mission",
+        "--objective",
+        "Created earlier.",
+    )
+    second = _invoke(
+        capsys,
+        "mission",
+        "create",
+        "--db",
+        str(database),
+        "--title",
+        "Second mission",
+        "--objective",
+        "Created later.",
+    )
+    listed = _invoke(capsys, "mission", "list", "--db", str(database))
+    missions = listed["missions"]
+    assert isinstance(missions, list)
+    assert [item["id"] for item in missions] == [  # type: ignore[index]
+        _identifier(first, "mission"),
+        _identifier(second, "mission"),
+    ]
+
+
+def test_source_show_metadata_only_omits_stored_bytes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Default show includes snapshot text; --metadata-only must not dump bytes."""
+
+    database = tmp_path / "source-show.db"
+    _invoke(capsys, "init", "--db", str(database))
+    mission = _invoke(
+        capsys,
+        "mission",
+        "create",
+        "--db",
+        str(database),
+        "--title",
+        "Source show metadata",
+        "--objective",
+        "Hold --metadata-only to omitting stored bytes.",
+    )
+    source_root = tmp_path / "sources"
+    source_root.mkdir()
+    source_text = "Exact UTF-8 span for a later quote."
+    (source_root / "note.txt").write_text(source_text, encoding="utf-8")
+    imported = _invoke(
+        capsys,
+        "source",
+        "import",
+        "--db",
+        str(database),
+        "--mission",
+        _identifier(mission, "mission"),
+        "--root",
+        str(source_root),
+        "--file",
+        "note.txt",
+        "--media-type",
+        "text/plain",
+    )
+    snapshot_id = _identifier(imported, "snapshot", "snapshot_id")
+
+    shown = _invoke(
+        capsys,
+        "source",
+        "show",
+        "--db",
+        str(database),
+        "--snapshot",
+        snapshot_id,
+    )
+    assert shown["text"] == source_text
+
+    metadata_only = _invoke(
+        capsys,
+        "source",
+        "show",
+        "--db",
+        str(database),
+        "--snapshot",
+        snapshot_id,
+        "--metadata-only",
+    )
+    assert "text" not in metadata_only
+    snapshot = metadata_only["snapshot"]
+    assert isinstance(snapshot, dict)
+    assert snapshot["snapshot_id"] == snapshot_id
+    assert source_text not in json.dumps(metadata_only)
+
+
+def test_cli_backup_refuses_to_overwrite_existing_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Operators hit `minerva backup`, not Database.backup_to. Keep the dest intact."""
+
+    database = tmp_path / "research.db"
+    _invoke(capsys, "init", "--db", str(database))
+    target = tmp_path / "research.backup.db"
+    sentinel = b"operator-owned existing backup bytes"
+    target.write_bytes(sentinel)
+
+    assert main(("backup", "--db", str(database), "--output", str(target))) == EXIT_DOMAIN
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    error = json.loads(captured.err)
+    assert error["error"]["code"] == "backup_exists"
+    assert target.read_bytes() == sentinel
 
 
 @pytest.mark.security

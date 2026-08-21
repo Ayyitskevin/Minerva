@@ -181,7 +181,7 @@ cannot ship undocumented.
 | --- | --- |
 | `minerva init` | initialize or migrate a database |
 | `minerva mission create` | create a research mission |
-| `minerva mission list` | list missions, newest first |
+| `minerva mission list` | list missions in creation order, oldest first |
 | `minerva mission show` | show one mission and its questions |
 | `minerva mission queue` | build the deterministic mission research review index |
 | `minerva question add` | add a research question to a mission |

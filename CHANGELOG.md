@@ -120,6 +120,10 @@ release here is a tag plus this record.
   only after the database exists. Tests now hold the uvicorn call, argparse
   host/port refusals, the missing-database path, and the contrib unit example
   to that. `/docs` and `/redoc` stay off on the app the handler actually binds.
+- `minerva mission list` help and the README command table now match the SQL:
+  creation order, oldest first. A two-mission CLI test holds that order.
+  `source show --metadata-only` must omit stored bytes, and a second `backup`
+  to the same `--output` must still refuse at the CLI with `backup_exists`.
 - `restore` accepts an intact backup at any older recorded schema version and
   migrates it forward on the private staged copy, deep-validated before
   publication, recording a `database.migrated` event where the migration

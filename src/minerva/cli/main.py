@@ -665,7 +665,9 @@ def build_parser() -> argparse.ArgumentParser:
     mission_create.add_argument("--title", required=True)
     mission_create.add_argument("--objective", required=True)
     _set_handler(mission_create, _cmd_mission_create)
-    mission_list = mission_commands.add_parser("list", help="list missions, newest first")
+    mission_list = mission_commands.add_parser(
+        "list", help="list missions in creation order, oldest first"
+    )
     _add_database(mission_list)
     mission_list.add_argument("--limit", type=int, default=100)
     _set_handler(mission_list, _cmd_mission_list)
