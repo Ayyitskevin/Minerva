@@ -112,6 +112,10 @@ release here is a tag plus this record.
   `backup` refuses to overwrite, so `--output ~/data/minerva/backups/research.db`
   can succeed once and then fail forever. A test holds the example off that
   colliding filename.
+- `docs/VISION.md` season item 4 (document the seat file loop) is **Done**.
+  `docs/WORKSPACE.md` shows the live `--db ~/data/minerva/research.db` CLI loop
+  from the reading seat's clone and no longer `cd`s into the Grok checkout as
+  the install path. Machine-local wrappers stay out of git.
 - `minerva serve` still binds only `127.0.0.1` on a TCP port in 1..65535, and
   only after the database exists. Tests now hold the uvicorn call, argparse
   host/port refusals, the missing-database path, and the contrib unit example
