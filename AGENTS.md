@@ -11,8 +11,9 @@ instructions and the fleet safety rules still take precedence.
 
 ## Working agreement
 
-- Read `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/THREAT_MODEL.md`, and the ADRs
-  before changing domain or security behavior.
+- Read `docs/VISION.md`, `docs/WORKSPACE.md`, `docs/PRD.md`,
+  `docs/ARCHITECTURE.md`, `docs/THREAT_MODEL.md`, and the ADRs before changing
+  domain, security, or hosting behavior.
 - Preserve the shared command/service layer. CLI, API, and web adapters must not write
   SQL or implement alternative validation paths.
 - Treat source bytes, citations, audit history, migration history, and deterministic

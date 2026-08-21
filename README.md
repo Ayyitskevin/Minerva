@@ -466,6 +466,8 @@ content and integrity metadata is outside the Milestone 1 detection boundary.
 
 ## Design references
 
+- [Vision and this season's workspace role](docs/VISION.md)
+- [Mickey workspace checkout](docs/WORKSPACE.md)
 - [Product requirements and research vocabulary](docs/PRD.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Threat model](docs/THREAT_MODEL.md)
