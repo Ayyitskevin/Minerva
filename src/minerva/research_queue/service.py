@@ -110,12 +110,14 @@ class MissionResearchQueueService:
         *,
         mission_id: str,
         bounds: MissionResearchQueueBounds = DEFAULT_MISSION_RESEARCH_QUEUE_BOUNDS,
+        connection: sqlite3.Connection | None = None,
     ) -> MissionResearchQueueResult:
         result, _focal_review = self._build_queue(
             mission_id=mission_id,
             bounds=bounds,
-            connection=None,
+            connection=connection,
             focal_claim_id=None,
+            outer_work_guard=False,
         )
         return result
 
@@ -134,6 +136,7 @@ class MissionResearchQueueService:
             bounds=bounds,
             connection=connection,
             focal_claim_id=focal_claim_id,
+            outer_work_guard=True,
         )
 
     def _build_queue(
@@ -143,10 +146,10 @@ class MissionResearchQueueService:
         bounds: MissionResearchQueueBounds,
         connection: sqlite3.Connection | None,
         focal_claim_id: str | None,
+        outer_work_guard: bool,
     ) -> tuple[MissionResearchQueueResult, ClaimReviewResult | None]:
         safe_bounds = _validate_bounds(bounds)
         _validate_mission_id(mission_id)
-        manages_connection = connection is None
         research = ResearchService(self.database)
         review_service = ClaimReviewService(self.database)
         review_bounds = ClaimReviewBounds(
@@ -174,7 +177,7 @@ class MissionResearchQueueService:
                 with _bounded_query_work(
                     connection,
                     safe_bounds.max_sqlite_vm_steps,
-                    managed=manages_connection,
+                    managed=not outer_work_guard,
                 ):
                     mission = research.get_mission(mission_id, connection=connection)
                     claim_rows = list(

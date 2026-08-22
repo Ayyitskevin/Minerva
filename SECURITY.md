@@ -4,12 +4,15 @@
 
 Minerva is an alpha, single-OS-user local application tested on Linux/POSIX with
 Python 3.12–3.14. Other operating systems are not currently verified or supported.
-It binds to `127.0.0.1` by default. The read-only HTML surface, loopback Host/Origin
-checks, and REST Origin checks reduce browser-origin risk; they are not authentication
-and do not isolate mutually untrusted processes running as the same OS user. There is
-no CSRF primitive in the code, and the read-only HTML surface has no form to forge; any
-future unsafe browser form must add same-site CSRF protection as well as the
-local-origin check. Do not expose the server through a reverse proxy, tunnel, container
+It binds to `127.0.0.1` by default. Loopback Host/Origin checks reduce browser-origin
+risk; they are not authentication and do not isolate mutually untrusted processes
+running as the same OS user. The mission cockpit has three narrow unsafe forms. Every
+one requires an accepted same-origin `Origin`, a signed double-submit CSRF cookie/form
+token, an exact URL-encoded field contract, and the whole-request body cap. The cookie
+is `HttpOnly` and `SameSite=Strict`; the process-local signing secret changes on
+restart. Claim status uses its append-only version precondition, while claim/finding
+creation uses the mission audit sequence to refuse stale or replayed forms before any
+state is written. Do not expose the server through a reverse proxy, tunnel, container
 port publish, or non-loopback bind.
 
 Source snapshots and research databases can contain sensitive material. Protect the

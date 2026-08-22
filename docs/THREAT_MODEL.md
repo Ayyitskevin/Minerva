@@ -1,4 +1,4 @@
-# Current threat model: provenance foundation through Lens Evidence Adoption v1
+# Current threat model: provenance foundation through Guided Evidence Intake v1
 
 ## Boundary and assets
 
@@ -28,14 +28,17 @@ inside the trusted OS-user boundary and adds no egress. Lens Evidence Adoption a
 the integrity of the operator's explicit candidate confirmations and the durable link
 between one reproduced receipt candidate, one evidence card, and two append-only audit
 events. It adds no new disclosure destination.
+Guided Evidence Intake adds bounded exact-quote context and a digest-bound local
+preview to that disclosure surface. Filing remains inside the same trusted OS-user
+boundary and creates only one normal evidence card and its existing audit event.
 
 ## Threats and controls
 
 | Threat | Current controls | Residual risk |
 | --- | --- | --- |
 | Remote browser reaches local service | Default `127.0.0.1` bind; loopback Host and Origin allowlist; no permissive CORS | Malicious software already running as the OS user shares the trust boundary |
-| Cross-site request forgery | Read-only HTML with no server-rendered form to forge; non-local Origin rejection for REST mutations; no cookie or ambient browser credential a forged request could replay | OS-user malware can read local state/process memory |
-| Oversized or malformed requests | Whole-request byte cap before framework parsing; Pydantic field bounds; bounded pagination | Body buffering uses memory up to the configured cap |
+| Cross-site request forgery or stale cockpit replay | Unsafe forms require one accepted same-origin `Origin` plus a signed double-submit token in an `HttpOnly`, `SameSite=Strict` cookie and exact form field; claim status requires the current claim version; claim/finding creation requires the current mission audit sequence inside the same immediate transaction | Same-OS-user malware can read process memory and act as the trusted principal; a process restart invalidates open forms |
+| Oversized or malformed requests | Whole-request byte cap before framework parsing; strict exact URL-encoded form contracts; Pydantic field bounds; bounded pagination | Body buffering uses memory up to the configured cap |
 | Oversized or adversarial research packet | Reject above 20 MiB before JSON decoding; strict fail-fast DTOs; bound JSON object width/depth and error classification; linear-time dependency and citation-supersession checks | A packet within the cap still consumes bounded parse and validation memory |
 | Unsafe standalone packet path | Reject `..`; descriptor-relative component walk with `O_NOFOLLOW`; `O_PATH`-pin and type-check the final target before readable open; metadata cap before read; two stable reads | A trusted same-OS-user process can still coordinate changes outside the finite observation window |
 | Hostile offline research request | Same no-follow stable-file boundary; 64 KiB cap before decode; strict canonical DTO/digest; duplicate/non-standard/shape/fanout defenses; exact prefix/hex IDs; unknown fields rejected | Digest self-consistency does not establish origin, authenticity, authority, disclosure permission, or freshness against a later database snapshot |
@@ -81,6 +84,10 @@ events. It adds no new disclosure destination.
 | Secret ingestion | Common credential/private-key pattern rejection; bounded audit details; synthetic fixtures; safe errors | Pattern scans are defense in depth, not exhaustive data-loss prevention |
 | Source mutation | Snapshot bytes stored in SQLite; SHA-256 and length checked; append-only triggers; import never references original afterward | Doctor/export detect partial or inconsistent corruption, but no external signature or anchor detects a determined same-OS-user coordinated rewrite |
 | Citation forgery | Exact byte offsets and quote match at creation and export; cross-mission checks; stable IDs | Source assertions may themselves be false; Minerva records provenance, not truth |
+| Intake selects the wrong repeated quote | Preview returns all exact and overlapping occurrences in byte order with bounded context; filing requires an explicit one-based rank and regenerates the digest-bound preview in the write transaction | Exact matching and context cannot determine semantic relevance; the trusted operator can still choose the wrong occurrence or stance |
+| Stale or replayed intake duplicates evidence | Preview binds mission audit sequence, snapshot identity/digest, quote, candidates, semantic boundary, and context; `BEGIN IMMEDIATE` checks the sequence and digest before a tuple-complete duplicate refusal and insert; the creation audit postcondition is required before commit | Re-previewing after unrelated same-mission work is required. A different stance or explicit supersession is intentionally a distinct evaluation |
+| Intake amplifies local work or silently truncates candidates | Imported snapshots retain their existing byte cap; quotes retain the evidence cap; context is fixed at 80 bytes per side; more than 100 exact occurrences refuses rather than returning a prefix | A near-limit source and quote can still consume local CPU and emit substantial but bounded local text |
+| Intake becomes model-assisted or expands the trust boundary | Exact byte matching only; no provider, network, URL fetch, PDF/OCR/HTML extraction, file path, source import, API/web/MCP adapter, or generic mutation surface; semantic flags deny truth/confidence/stance inference | Future richer extraction requires a new reviewed threat model and cannot inherit this approval |
 | Audit rewriting | Same-transaction audit insert; update/delete triggers; `PRAGMA recursive_triggers` so conflict-resolution deletes cannot bypass them; no raw source content or paths in details | Direct file replacement by the OS user is outside the process boundary |
 | Retraction used to erase or hide a statement | Findings are never edited or deleted; retraction is a separate append-only `finding_retractions` row with its own no-update/no-delete triggers, committed with its audit event; finding reads left-join that row so a retracted finding is still returned, marked with its reason, timestamp, and actor, while synthesis excludes it from the brief instead of asserting it; doctor enforces the triggers by packaged fingerprint and reconciles every retraction row against its audit event | Retraction records that a statement was withdrawn, not why it was wrong or whether the withdrawal was justified; an operator who retracts every inconvenient finding shortens the brief, and only the retained finding history and audit trail show that it happened |
 | Export path attack | Fixed contained filenames; reject symlink/pre-existing targets; size bounds; cleanup after caught exceptions | Operator can intentionally select a sensitive directory; a process or power-loss crash can leave a partial new export, but existing files are never overwritten |
@@ -102,8 +109,9 @@ events. It adds no new disclosure destination.
 - Rejected requests never create success events.
 - A failed database open creates no file and removes none. Only staging files
   whose device and inode Minerva recorded are ever unlinked.
-- Milestone 1 defines no server-rendered web mutations. Any future unsafe form must
-  require both an accepted local origin and a valid CSRF token.
+- Every server-rendered mutation requires one accepted local Origin, a valid signed
+  double-submit CSRF token, an exact form contract, and a current domain precondition;
+  rejected or stale forms create no run, domain state, or audit event.
 - No endpoint accepts a filesystem path or an actor identity header.
 - URL fields are metadata only and never dereferenced.
 - Errors never include submitted source contents or absolute private paths.
@@ -137,6 +145,13 @@ events. It adds no new disclosure destination.
 - Adoption rank is selection order only. It cannot calculate confidence, choose
   stance, alter claim status, create/retract findings, persist inference, withdraw
   earlier evidence, change source/snapshot bytes, or authorize bulk adoption.
+- Guided intake preview is a read-only, bounded, digest-bound local DTO over one
+  mission/claim/snapshot and exact quote. It returns all candidates or refuses; it is
+  not a packet, draft, evidence card, stance, model result, or truth assessment.
+- Guided intake filing requires one explicit candidate and stance, exact preview and
+  snapshot digests, and the current mission audit sequence. Preview regeneration,
+  duplicate refusal, normal evidence creation, and audit-postcondition verification
+  share one immediate transaction; any failure leaves no new evidence or audit row.
 - Claim Review returns one complete-or-refuse, mission-and-claim-scoped structural
   receipt from a query-only snapshot. Every cited snapshot is re-verified; success
   reports configured bounds, measured admitted work, correction/promotion provenance,

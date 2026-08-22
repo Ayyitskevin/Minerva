@@ -1,4 +1,4 @@
-# Minerva product requirements: provenance foundation through Lens Evidence Adoption v1
+# Minerva product requirements: provenance foundation through Guided Evidence Intake v1
 
 ## Product identity
 
@@ -90,6 +90,27 @@ agent inference, withdraw older evidence, modify source/snapshot bytes, or perfo
 bulk/automatic adoption. It adds no migration, index, provider/model/network path,
 REST/web/MCP operation, packet field/version, capability-manifest entry, external
 principal, or cryptographic identity.
+
+## Guided Evidence Intake v1 outcome
+
+A trusted local CLI operator can move from one already imported immutable UTF-8
+snapshot to one evidence card without manually calculating byte offsets. A read-only
+preview locates every exact, including overlapping, quote occurrence in canonical
+byte order under a fixed complete-or-refuse candidate bound. It returns bounded
+context, snapshot and quote digests, the current mission audit sequence, and a digest
+of the complete inert preview.
+
+A separate explicit filing command repeats the quote, selects one occurrence, supplies
+stance, and confirms the preview, snapshot, and mission sequence. In one
+`BEGIN IMMEDIATE` transaction Minerva regenerates the preview, refuses stale state,
+replay, mismatch, and an identical evidence evaluation, then calls the existing exact
+evidence mutation and requires its canonical audit row before commit. Source import
+remains a prior independent audited commit.
+
+The preview is local stdout, not a packet, draft, durable artifact, external protocol,
+or truth assessment. Intake does not infer stance, perform fuzzy/model matching,
+fetch URLs, parse PDF/OCR/HTML, import or alter a source, create findings, change claim
+status, calculate confidence, or expose a web/API/MCP mutation. It adds no migration.
 
 ## Claim Lineage Graph v1 outcome
 
@@ -408,7 +429,9 @@ unresolved question under the same citation rules as human-authored material.
   operation exists.
 - `minerva-demo` creates a disposable synthetic mission and exports its brief without
   contacting a network service. It refuses an existing database.
-- The web interface is a restrained, server-rendered review surface.
+- The web interface is a restrained, server-rendered review surface with exactly three
+  controlled mission-cockpit commands: claim creation, claim status append, and finding
+  creation. It is not generic CRUD; dedicated structural receipts remain GET-only.
 - `/api/v1` exposes strict contracts for later protocol adapters. Unknown fields are
   rejected, input sizes and pagination are bounded, and errors have stable codes.
 - `/healthz`, `/readyz`, and `/api/v1/capabilities` support local operations.

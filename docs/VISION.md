@@ -52,6 +52,12 @@ seams remain in [ADR 0002](adr/0002-system-boundaries.md).
    real mission can accrue evidence. **Running** — see [WORKSPACE.md](WORKSPACE.md).
 4. Document how a seat files a snapshot and an evidence card against that
    database. **Done** (WORKSPACE.md live CLI loop; wrapper stays machine-local).
+5. Put deterministic review receipts in a concise operator workbench while
+   preserving their semantic boundary: cues are not tasks and lineage is not
+   truth. **Implemented; eleven gates passed, non-author review pending.**
+6. Establish a dated pillar scorecard, a real-corpus evaluation, and a recovery
+   drill before expanding trust boundaries. **Done locally; release remains
+   pending.**
 
 ## Non-goals this season
 

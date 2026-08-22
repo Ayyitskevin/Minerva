@@ -458,6 +458,28 @@ def test_claim_and_item_bounds_are_exact_and_complete_or_refuse(lab: Lab) -> Non
         )
 
 
+def test_caller_owned_connection_keeps_cumulative_vm_step_guard(
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed = lab.seed_claim()
+    service = MissionResearchQueueService(lab.database)
+    monkeypatch.setattr(queue_service_module, "_QUERY_PROGRESS_GRANULARITY", 1)
+    monkeypatch.setattr(queue_service_module, "_MIN_SQLITE_VM_STEPS", 1)
+
+    with (
+        lab.database.read() as connection,
+        pytest.raises(IntegrityError) as caught,
+    ):
+        service.build_queue(
+            mission_id=seed.mission.id,
+            bounds=MissionResearchQueueBounds(max_sqlite_vm_steps=1),
+            connection=connection,
+        )
+
+    assert caught.value.code == "mission_research_queue_work_limit"
+
+
 def test_cumulative_review_bounds_succeed_exactly_and_refuse_one_below(lab: Lab) -> None:
     seed = lab.seed_claim()
     support = lab.cite(seed, _SUPPORT_QUOTE, EvidenceStance.SUPPORTS)

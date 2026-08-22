@@ -137,10 +137,11 @@ thin adapters. Imports point inward; only
   signed opaque pagination cursors, stable error codes. Source import is
   inline-content only (1 MiB cap) — no endpoint accepts a filesystem
   path or an actor header.
-- `web/` — loopback-only read-only server-rendered pages (missions,
-  claim detail, brief preview/markdown/json), middleware enforcing
-  loopback Host/Origin, body cap, CSP; CSRF primitive exists but is
-  deliberately unwired (no unsafe forms exist).
+- `web/` — loopback-only server-rendered pages (missions, claim detail,
+  brief preview/markdown/json), middleware enforcing loopback Host/Origin,
+  body cap, and CSP. A later 2026-08-21 amendment added three narrow mission
+  command forms with signed CSRF, exact form contracts, and stale/replay
+  preconditions; dedicated structural receipts remain GET-only.
 - `cli/` — `init`, `mission`, `question`, `claim` (add/show/ledger/
   status), `source` (import/show), `evidence` (add/withdraw), `finding
   add`, `brief` (preview/export), `packet` (verify/inspect), `request`

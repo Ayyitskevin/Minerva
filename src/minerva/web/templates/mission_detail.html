@@ -1,11 +1,142 @@
 {% extends "base.html" %}
 {% block content %}
-<nav class="breadcrumb"><a href="{{ url_for('mission_list') }}">Missions</a> / Mission review</nav>
+<nav class="breadcrumb"><a href="{{ url_for('mission_list') }}">Missions</a> / Mission cockpit</nav>
 <section class="page-heading">
   <p class="eyebrow">Research scope · not a conclusion</p>
   <h1>{{ mission.title }}</h1>
   <p>{{ mission.objective }}</p>
-  <p><a class="button" href="{{ url_for('brief_preview', mission_id=mission.id) }}">Preview deterministic brief</a></p>
+  <p>
+    <a class="button" href="{{ url_for('mission_queue_view', mission_id=mission.id) }}">Inspect full structural receipt</a>
+    <a class="button" href="{{ url_for('brief_preview', mission_id=mission.id) }}">Preview deterministic brief</a>
+  </p>
+</section>
+
+<section id="action-cockpit" class="cockpit">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">Next-action view</p>
+      <h2>Claims under evaluation · action cockpit</h2>
+    </div>
+    <dl class="metadata compact-metadata">
+      <dt>Claims</dt><dd>{{ research_queue.work.reviewed_claim_count }}</dd>
+      <dt>Structural cues</dt><dd>{{ research_queue.work.item_count }}</dd>
+    </dl>
+  </div>
+  <p>{{ research_queue.semantic_notice }}</p>
+  <p class="uncertainty"><strong>Interpretation boundary:</strong> cues identify recorded structure to inspect. They are not tasks, priorities, truth, confidence, assignments, or completion state. A status change below is a separate explicit operator decision.</p>
+
+  {% if research_queue.reviewed_claims %}
+  <ul class="card-list">
+    {% for claim in research_queue.reviewed_claims %}
+    <li class="card action-card">
+      <p class="eyebrow">Claim {{ claim.sequence }} · {{ claim.item_count }} structural {{ "cue" if claim.item_count == 1 else "cues" }}</p>
+      <h3><a href="{{ url_for('claim_detail', claim_id=claim.claim_id) }}">{{ claim.claim_statement }}</a></h3>
+      <p><span class="status">{{ claim.recorded_status.value }}</span> · operator-recorded workflow status · version {{ claim.recorded_status_version }}</p>
+      <ul class="cue-list">
+        {% for item in research_queue.items %}
+          {% if item.claim_id == claim.claim_id %}
+          <li><code>{{ item.reason_code }}</code> — {{ item.explanation }}</li>
+          {% endif %}
+        {% endfor %}
+      </ul>
+      <p>
+        <a class="button" href="{{ url_for('claim_review_view', mission_id=mission.id, claim_id=claim.claim_id) }}">Review cues</a>
+        <a class="button" href="{{ url_for('claim_lineage_view', mission_id=mission.id, claim_id=claim.claim_id) }}">Inspect lineage</a>
+        <a class="button" href="{{ url_for('claim_detail', claim_id=claim.claim_id) }}">Evidence ledger</a>
+      </p>
+      <form class="command-form" method="post" action="{{ url_for('mission_claim_status', mission_id=mission.id, claim_id=claim.claim_id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="expected_version" value="{{ claim.recorded_status_version }}">
+        <label>Record a new workflow status
+          <select name="status" required>
+            {% for status in claim_statuses %}
+              {% if status.value != claim.recorded_status.value %}
+              <option value="{{ status.value }}">{{ status.value }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+        </label>
+        <label>Decision rationale
+          <textarea name="reason" rows="2" maxlength="1000" required></textarea>
+        </label>
+        <button type="submit">Record status decision</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty-state">This mission has no claims yet. Create one below.</p>
+  {% endif %}
+</section>
+
+<section id="record-research">
+  <p class="eyebrow">Controlled writes · shared audited service layer</p>
+  <h2>Record research state</h2>
+  <p>These forms use the same domain commands as the CLI. AI agents should prefer the explicit CLI; the browser is a narrow loopback operator surface, not generic CRUD.</p>
+  <div class="form-grid">
+    <form class="card command-form" method="post" action="{{ url_for('mission_claim_create', mission_id=mission.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_mission_audit_sequence" value="{{ mission_audit_sequence }}">
+      <h3>Create a falsifiable claim</h3>
+      {% if questions %}
+      <label>Research question
+        <select name="question_id" required>
+          {% for question in questions %}
+          <option value="{{ question.id }}">{{ question.text }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Claim statement
+        <textarea name="statement" rows="3" maxlength="2000" required></textarea>
+      </label>
+      <label>Falsification criterion
+        <textarea name="falsification_criteria" rows="3" maxlength="2000" required></textarea>
+      </label>
+      <button type="submit">Create claim</button>
+      {% else %}
+      <p class="empty-state">Add a research question through the CLI before creating a claim.</p>
+      {% endif %}
+    </form>
+
+    <form class="card command-form" method="post" action="{{ url_for('mission_finding_create', mission_id=mission.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_mission_audit_sequence" value="{{ mission_audit_sequence }}">
+      <h3>Record a finding or explicit gap</h3>
+      <label>Linked claim (optional for mission-level statements)
+        <select name="claim_id">
+          <option value="">Mission-level statement</option>
+          {% for claim in claims %}
+          <option value="{{ claim.id }}">{{ claim.statement }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Statement class
+        <select name="statement_kind" required>
+          {% for kind in statement_kinds %}
+          <option value="{{ kind.value }}">{{ kind.value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Recorded status
+        <select name="status" required>
+          {% for status in finding_statuses %}
+          <option value="{{ status.value }}">{{ status.value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Statement
+        <textarea name="statement" rows="3" maxlength="4000" required></textarea>
+      </label>
+      <label>Uncertainty or limitation
+        <textarea name="uncertainty" rows="3" maxlength="2000"></textarea>
+      </label>
+      <label>Evidence IDs (whitespace separated)
+        <textarea name="evidence_ids" rows="2" aria-describedby="citation-help"></textarea>
+      </label>
+      <p id="citation-help" class="form-help">Material statement classes require active evidence IDs from the linked claim. Assumptions and unresolved questions may remain uncited.</p>
+      <button type="submit">Record finding</button>
+    </form>
+  </div>
 </section>
 
 <section>
@@ -20,22 +151,32 @@
 </section>
 
 <section>
-  <h2>Claims under evaluation</h2>
-  {% if claims %}
+  <h2>Findings and uncertainty</h2>
+  {% if findings %}
   <ul class="card-list">
-    {% for claim in claims %}
+    {% for finding in findings %}
     <li class="card">
-      <h3><a href="{{ url_for('claim_detail', claim_id=claim.id) }}">{{ claim.statement }}</a></h3>
-      <p><span class="status">{{ claim.status.value }}</span> · operator-recorded workflow status · version {{ claim.version }}</p>
-      <p><strong>Status rationale:</strong> {{ claim.status_reason }} · {{ claim.status_creator_id }} · {{ claim.status_changed_at }}</p>
-      {% if not claim.status_evidence_valid %}
-      <p class="uncertainty"><strong>Provenance warning:</strong> the active evidence no longer satisfies this status.</p>
+      <p class="eyebrow">{{ finding.statement_kind.value }} · {{ finding.status.value }}{% if finding.retracted %} · <strong>RETRACTED</strong>{% endif %}</p>
+      {% if finding.retracted %}
+      <p class="uncertainty"><strong>Retracted:</strong> this finding is no longer asserted and is excluded from research briefs. The recorded status describes what was asserted before retraction. Reason: {{ finding.retraction_reason }}</p>
       {% endif %}
-      <p><strong>Falsification criterion:</strong> {{ claim.falsification_criteria }}</p>
+      {% if finding.citation_status.value == "withdrawn" %}
+      <p class="uncertainty"><strong>Provenance invalidated:</strong> one or more cited evidence cards were withdrawn. The recorded status is not current support.</p>
+      {% endif %}
+      <h3>{{ finding.statement }}</h3>
+      {% if finding.uncertainty %}
+      <p class="uncertainty"><strong>Uncertainty:</strong> {{ finding.uncertainty }}</p>
+      {% else %}
+      <p class="uncertainty"><strong>Uncertainty:</strong> None recorded.</p>
+      {% endif %}
+      <dl class="metadata">
+        <dt>Finding ID</dt><dd><code>{{ finding.id }}</code></dd>
+        <dt>Citations</dt><dd>{% for evidence_id in finding.evidence_ids %}<code>{{ evidence_id }}</code>{{ " " if not loop.last }}{% endfor %}</dd>
+      </dl>
     </li>
     {% endfor %}
   </ul>
-  {% else %}<p class="empty-state">No claims recorded.</p>{% endif %}
+  {% else %}<p class="empty-state">No findings or uncertainty recorded.</p>{% endif %}
 </section>
 
 <section>
@@ -58,31 +199,6 @@
     </table>
   </div>
   {% else %}<p class="empty-state">No sources imported.</p>{% endif %}
-</section>
-
-<section>
-  <h2>Findings and uncertainty</h2>
-  {% if findings %}
-  <ul class="card-list">
-    {% for finding in findings %}
-    <li class="card">
-      <p class="eyebrow">{{ finding.statement_kind.value }} · {{ finding.status.value }}{% if finding.retracted %} · <strong>RETRACTED</strong>{% endif %}</p>
-      {% if finding.retracted %}
-      <p class="uncertainty"><strong>Retracted:</strong> this finding is no longer asserted and is excluded from research briefs. The recorded status describes what was asserted before retraction. Reason: {{ finding.retraction_reason }}</p>
-      {% endif %}
-      {% if finding.citation_status.value == "withdrawn" %}
-      <p class="uncertainty"><strong>Provenance invalidated:</strong> one or more cited evidence cards were withdrawn. The recorded status is not current support.</p>
-      {% endif %}
-      <h3>{{ finding.statement }}</h3>
-      {% if finding.uncertainty %}
-      <p class="uncertainty"><strong>Uncertainty:</strong> {{ finding.uncertainty }}</p>
-      {% else %}
-      <p class="uncertainty"><strong>Uncertainty:</strong> None recorded.</p>
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}<p class="empty-state">No findings or uncertainty recorded.</p>{% endif %}
 </section>
 
 <section>

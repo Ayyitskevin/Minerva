@@ -25,6 +25,7 @@ from minerva.evidence import (
     LensCandidateConfirmation,
     LensEvidenceAdoptionService,
 )
+from minerva.intake import EvidenceIntakeService
 from minerva.integrations.lens_receipt_file import load_lens_receipt
 from minerva.integrations.research_packet_file import (
     load_research_packet,
@@ -48,7 +49,7 @@ from minerva.research_queue import (
     MissionResearchQueueService,
 )
 from minerva.review import ClaimReviewBounds, ClaimReviewService
-from minerva.sources.service import SourceService
+from minerva.sources.service import SourceService, preview_local_file
 from minerva.synthesis.request_fulfillment import ResearchRequestFulfillmentService
 from minerva.synthesis.service import SynthesisService
 
@@ -140,6 +141,35 @@ def _cmd_mission_queue(args: argparse.Namespace) -> Outcome:
     return _command_result("mission_research_queue", result)
 
 
+def _cmd_mission_overview(args: argparse.Namespace) -> Outcome:
+    result = MissionResearchQueueService(_database(args)).build_queue(
+        mission_id=cast(str, args.mission),
+    )
+    claims = [
+        {
+            "claim_id": item.claim_id,
+            "recorded_status": item.recorded_status.value,
+            "structural_cue_count": item.item_count,
+            "reason_codes": item.reason_codes,
+            "review_receipt_sha256": item.review_receipt_sha256,
+        }
+        for item in result.reviewed_claims
+    ]
+    overview = {
+        "mission_id": result.mission_id,
+        "title": result.mission_title,
+        "objective": result.mission_objective,
+        "reviewed_claim_count": result.work.reviewed_claim_count,
+        "structural_cue_count": result.work.item_count,
+        "reason_counts": {item.code: item.count for item in result.reason_counts},
+        "claims": claims,
+        "queue_receipt_sha256": result.queue_receipt_sha256,
+        "structural_cues_are_tasks": False,
+        "semantic_notice": result.semantic_notice,
+    }
+    return _command_result("mission_overview", overview)
+
+
 def _cmd_question_add(args: argparse.Namespace) -> Outcome:
     question = ResearchService(_database(args)).add_question(
         mission_id=cast(str, args.mission),
@@ -206,6 +236,14 @@ def _cmd_claim_status(args: argparse.Namespace) -> Outcome:
     return _command_result("claim", claim)
 
 
+def _cmd_source_preview(args: argparse.Namespace) -> Outcome:
+    preview = preview_local_file(
+        root=cast(Path, args.root),
+        relative_path=cast(str, args.file),
+    )
+    return _command_result("source_preview", preview)
+
+
 def _cmd_source_import(args: argparse.Namespace) -> Outcome:
     snapshot = SourceService(_database(args)).import_file(
         mission_id=cast(str, args.mission),
@@ -214,6 +252,7 @@ def _cmd_source_import(args: argparse.Namespace) -> Outcome:
         media_type=cast(str, args.media_type),
         url_metadata=cast(str | None, args.url_metadata),
         identity=_identity("cli:source-import"),
+        expected_sha256=cast(str | None, args.expected_sha256),
     )
     return _command_result("snapshot", snapshot)
 
@@ -224,6 +263,39 @@ def _cmd_source_show(args: argparse.Namespace) -> Outcome:
     if not cast(bool, args.metadata_only):
         payload["text"] = snapshot.content.decode("utf-8", errors="strict")
     return Outcome(payload)
+
+
+def _cmd_intake_preview(args: argparse.Namespace) -> Outcome:
+    preview = EvidenceIntakeService(_database(args)).preview(
+        mission_id=cast(str, args.mission),
+        claim_id=cast(str, args.claim),
+        snapshot_id=cast(str, args.snapshot),
+        quote=cast(str, args.quote),
+    )
+    return _command_result("evidence_intake_preview", preview)
+
+
+def _cmd_intake_file(args: argparse.Namespace) -> Outcome:
+    result = EvidenceIntakeService(_database(args)).file_evidence(
+        mission_id=cast(str, args.mission),
+        claim_id=cast(str, args.claim),
+        snapshot_id=cast(str, args.snapshot),
+        quote=cast(str, args.quote),
+        candidate_rank=cast(int, args.candidate_rank),
+        expected_intake_preview_sha256=cast(
+            str,
+            args.expected_intake_preview_sha256,
+        ),
+        expected_snapshot_sha256=cast(str, args.expected_snapshot_sha256),
+        expected_mission_audit_sequence=cast(
+            int,
+            args.expected_mission_audit_sequence,
+        ),
+        stance=EvidenceStance(cast(str, args.stance)),
+        supersedes_evidence_id=cast(str | None, args.supersedes),
+        identity=_identity("cli:intake-file"),
+    )
+    return _command_result("evidence_intake", result)
 
 
 def _cmd_lens_search(args: argparse.Namespace) -> Outcome:
@@ -675,6 +747,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_database(mission_show)
     mission_show.add_argument("--mission", required=True)
     _set_handler(mission_show, _cmd_mission_show)
+    mission_overview = mission_commands.add_parser(
+        "overview", help="summarize structural review cues for one mission"
+    )
+    _add_database(mission_overview)
+    mission_overview.add_argument("--mission", required=True)
+    _set_handler(mission_overview, _cmd_mission_overview)
     mission_queue = mission_commands.add_parser(
         "queue",
         help="build the deterministic mission research review index",
@@ -766,6 +844,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     source_parser = commands.add_parser("source", help="import and inspect immutable snapshots")
     source_commands = source_parser.add_subparsers(dest="source_command", required=True)
+    source_preview = source_commands.add_parser(
+        "preview", help="inspect safe local bytes and compute their import digest"
+    )
+    source_preview.add_argument("--root", required=True, type=Path)
+    source_preview.add_argument("--file", required=True)
+    _set_handler(source_preview, _cmd_source_preview)
     source_import = source_commands.add_parser(
         "import", help="import one file as an immutable snapshot"
     )
@@ -775,6 +859,7 @@ def build_parser() -> argparse.ArgumentParser:
     source_import.add_argument("--file", required=True)
     source_import.add_argument("--media-type", default="text/plain")
     source_import.add_argument("--url-metadata")
+    source_import.add_argument("--expected-sha256")
     _set_handler(source_import, _cmd_source_import)
     source_show = source_commands.add_parser(
         "show", help="show snapshot metadata, or its stored bytes"
@@ -783,6 +868,49 @@ def build_parser() -> argparse.ArgumentParser:
     source_show.add_argument("--snapshot", required=True)
     source_show.add_argument("--metadata-only", action="store_true")
     _set_handler(source_show, _cmd_source_show)
+
+    intake_parser = commands.add_parser(
+        "intake",
+        help="preview and file one exact quote from an imported snapshot",
+    )
+    intake_commands = intake_parser.add_subparsers(
+        dest="intake_command",
+        required=True,
+    )
+    intake_preview = intake_commands.add_parser(
+        "preview",
+        help="locate every bounded exact quote occurrence without writing",
+    )
+    _add_database(intake_preview)
+    intake_preview.add_argument("--mission", required=True)
+    intake_preview.add_argument("--claim", required=True)
+    intake_preview.add_argument("--snapshot", required=True)
+    intake_preview.add_argument("--quote", required=True)
+    _set_handler(intake_preview, _cmd_intake_preview)
+    intake_file = intake_commands.add_parser(
+        "file",
+        help="file one explicitly confirmed exact quote as evidence",
+    )
+    _add_database(intake_file)
+    intake_file.add_argument("--mission", required=True)
+    intake_file.add_argument("--claim", required=True)
+    intake_file.add_argument("--snapshot", required=True)
+    intake_file.add_argument("--quote", required=True)
+    intake_file.add_argument("--candidate-rank", required=True, type=int)
+    intake_file.add_argument("--expected-intake-preview-sha256", required=True)
+    intake_file.add_argument("--expected-snapshot-sha256", required=True)
+    intake_file.add_argument(
+        "--expected-mission-audit-sequence",
+        required=True,
+        type=int,
+    )
+    intake_file.add_argument(
+        "--stance",
+        required=True,
+        choices=[item.value for item in EvidenceStance],
+    )
+    intake_file.add_argument("--supersedes")
+    _set_handler(intake_file, _cmd_intake_file)
 
     lens_parser = commands.add_parser(
         "lens",

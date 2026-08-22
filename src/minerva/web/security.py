@@ -1,4 +1,4 @@
-"""Local HTTP security boundary for the loopback review server.
+"""Local HTTP security boundary and CSRF primitives.
 
 The middleware in this module deliberately implements the ASGI interface directly.
 It buffers at most the configured request-body limit before handing a replayable body
@@ -8,21 +8,37 @@ same protection as requests that provide one.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import hmac
 import re
+import secrets
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
+from http.cookies import SimpleCookie
 from typing import Final
 from urllib.parse import urlsplit
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 __all__ = [
+    "CSRF_COOKIE_NAME",
+    "CSRF_FORM_FIELD",
+    "CsrfProtector",
     "LocalSecurityMiddleware",
     "SecurityMiddleware",
 ]
 
+CSRF_COOKIE_NAME: Final = "minerva_csrf"
+CSRF_FORM_FIELD: Final = "csrf_token"
+
 _PRODUCTION_HOSTS: Final = frozenset({"127.0.0.1", "localhost", "::1"})
 _TEST_HOST_RE: Final = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\Z")
+_CSRF_CONTEXT: Final = b"minerva.csrf.v1\x00"
+_CSRF_NONCE_BYTES: Final = 32
+_CSRF_SIGNATURE_BYTES: Final = hashlib.sha256().digest_size
+_MAX_CSRF_TOKEN_LENGTH: Final = 256
 _MAX_CONTENT_LENGTH_DIGITS: Final = 20
 _MAX_REQUEST_MESSAGES: Final = 1_024
 
@@ -366,3 +382,95 @@ class LocalSecurityMiddleware:
 
 
 SecurityMiddleware = LocalSecurityMiddleware
+
+
+def _urlsafe_encode(value: bytes) -> bytes:
+    return base64.urlsafe_b64encode(value).rstrip(b"=")
+
+
+def _urlsafe_decode(value: bytes) -> bytes | None:
+    if not value or b"=" in value:
+        return None
+    padding = b"=" * (-len(value) % 4)
+    try:
+        return base64.b64decode(value + padding, altchars=b"-_", validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+
+class CsrfProtector:
+    """Issue and validate signed double-submit CSRF cookie/form tokens."""
+
+    def __init__(
+        self,
+        secret: bytes,
+        *,
+        cookie_name: str = CSRF_COOKIE_NAME,
+    ) -> None:
+        if not isinstance(secret, bytes):
+            raise TypeError("CSRF secret must be bytes")
+        if len(secret) < 32:
+            raise ValueError("CSRF secret must contain at least 32 bytes")
+        if not cookie_name or not cookie_name.isascii() or not cookie_name.isidentifier():
+            raise ValueError("CSRF cookie name must be a non-empty ASCII identifier")
+        self._secret = bytes(secret)
+        self.cookie_name = cookie_name
+
+    def issue_token(self) -> str:
+        nonce = secrets.token_bytes(_CSRF_NONCE_BYTES)
+        signature = hmac.new(self._secret, _CSRF_CONTEXT + nonce, hashlib.sha256).digest()
+        return (
+            f"{_urlsafe_encode(nonce).decode('ascii')}.{_urlsafe_encode(signature).decode('ascii')}"
+        )
+
+    def validate(self, cookie_token: str | None, form_token: str | None) -> bool:
+        cookie_value = self._as_ascii_bytes(cookie_token)
+        form_value = self._as_ascii_bytes(form_token)
+        if cookie_value is None or form_value is None:
+            return False
+        if not hmac.compare_digest(cookie_value, form_value):
+            return False
+        return self._has_valid_signature(cookie_value)
+
+    def cookie_header(self, token: str, *, secure: bool = False) -> str:
+        token_bytes = self._as_ascii_bytes(token)
+        if token_bytes is None or not self._has_valid_signature(token_bytes):
+            raise ValueError("cannot create a CSRF cookie for an invalid token")
+        cookie = SimpleCookie()
+        cookie[self.cookie_name] = token
+        morsel = cookie[self.cookie_name]
+        morsel["path"] = "/"
+        morsel["httponly"] = True
+        morsel["samesite"] = "Strict"
+        if secure:
+            morsel["secure"] = True
+        return morsel.OutputString()
+
+    @staticmethod
+    def _as_ascii_bytes(token: str | None) -> bytes | None:
+        if token is None or not token or len(token) > _MAX_CSRF_TOKEN_LENGTH:
+            return None
+        try:
+            return token.encode("ascii")
+        except UnicodeEncodeError:
+            return None
+
+    def _has_valid_signature(self, token: bytes) -> bool:
+        if token.count(b".") != 1:
+            return False
+        encoded_nonce, encoded_signature = token.split(b".", 1)
+        nonce = _urlsafe_decode(encoded_nonce)
+        signature = _urlsafe_decode(encoded_signature)
+        if (
+            nonce is None
+            or signature is None
+            or len(nonce) != _CSRF_NONCE_BYTES
+            or len(signature) != _CSRF_SIGNATURE_BYTES
+        ):
+            return False
+        expected_signature = hmac.new(
+            self._secret,
+            _CSRF_CONTEXT + nonce,
+            hashlib.sha256,
+        ).digest()
+        return hmac.compare_digest(signature, expected_signature)

@@ -207,8 +207,13 @@ def _ai_metadata(
     *,
     extras: tuple[str, ...] = _AI_EXTRAS,
     requirements: tuple[str, ...] = _AI_REQUIREMENTS,
+    license_expression: str = "Apache-2.0",
 ) -> object:
-    lines = ["Name: minerva-research", "Version: 0.2.0a1"]
+    lines = [
+        "Name: minerva-research",
+        "Version: 0.2.0a1",
+        f"License-Expression: {license_expression}",
+    ]
     lines.extend(f"Provides-Extra: {extra}" for extra in extras)
     lines.extend(requirements)
     return email.parser.BytesParser().parsebytes(("\n".join(lines) + "\n\n").encode())
@@ -217,6 +222,16 @@ def _ai_metadata(
 @pytest.mark.packaging
 def test_distribution_metadata_requires_exact_optional_ai_contract() -> None:
     verify_dist._verify_ai_extra_metadata(_ai_metadata(), Path("synthetic.whl"))
+
+
+@pytest.mark.packaging
+@pytest.mark.parametrize("license_expression", ("", "MIT"))
+def test_distribution_metadata_rejects_missing_or_wrong_license(
+    license_expression: str,
+) -> None:
+    raw = _ai_metadata(license_expression=license_expression).as_bytes()
+    with pytest.raises(verify_dist.VerificationError, match="License-Expression"):
+        verify_dist._parse_metadata(raw, Path("mutated.whl"))
 
 
 @pytest.mark.packaging

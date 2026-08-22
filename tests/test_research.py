@@ -13,6 +13,15 @@ from minerva.evidence.models import EvidenceStance
 from minerva.research.models import CitationStatus, ClaimStatus, FindingStatus, StatementKind
 from minerva.research.service import MAX_FINDING_CITATIONS, ResearchService
 
+_COUNT_QUERIES = {
+    "audit_events": "SELECT COUNT(*) FROM audit_events",
+    "claims": "SELECT COUNT(*) FROM claims",
+    "claim_status_events": "SELECT COUNT(*) FROM claim_status_events",
+    "finding_citations": "SELECT COUNT(*) FROM finding_citations",
+    "findings": "SELECT COUNT(*) FROM findings",
+    "research_runs": "SELECT COUNT(*) FROM research_runs",
+}
+
 
 class FailingAuditSink:
     def __init__(self, ids: SequenceIds) -> None:
@@ -50,6 +59,92 @@ def test_claim_records_nonempty_falsification_criteria_and_initial_version(lab: 
     assert stored.status is ClaimStatus.OPEN
     assert stored.version == 1
     assert stored.etag.endswith('-v1"')
+
+
+def test_claim_creation_honors_mission_audit_freshness_without_partial_state(lab: Lab) -> None:
+    seed = lab.seed_claim()
+    expected_sequence = lab.research.get_mission_audit_sequence(seed.mission.id)
+
+    created = lab.research.add_claim(
+        mission_id=seed.mission.id,
+        question_id=seed.question.id,
+        statement="A second falsifiable proposition.",
+        falsification_criteria="An exact counterexample would falsify it.",
+        identity=lab.identity,
+        expected_mission_audit_sequence=expected_sequence,
+    )
+
+    assert created.version == 1
+    assert lab.research.get_mission_audit_sequence(seed.mission.id) > expected_sequence
+    with lab.database.read() as connection:
+        state_before_replay = tuple(
+            int(connection.execute(_COUNT_QUERIES[table]).fetchone()[0])
+            for table in ("claims", "claim_status_events", "audit_events", "research_runs")
+        )
+
+    with pytest.raises(ConflictError) as caught:
+        lab.research.add_claim(
+            mission_id=seed.mission.id,
+            question_id=seed.question.id,
+            statement="A replay must not create this proposition.",
+            falsification_criteria="The stale mission version is sufficient to refuse it.",
+            identity=lab.identity,
+            expected_mission_audit_sequence=expected_sequence,
+        )
+
+    assert caught.value.code == "mission_version_conflict"
+    with lab.database.read() as connection:
+        state_after_replay = tuple(
+            int(connection.execute(_COUNT_QUERIES[table]).fetchone()[0])
+            for table in ("claims", "claim_status_events", "audit_events", "research_runs")
+        )
+    assert state_after_replay == state_before_replay
+
+
+def test_finding_creation_honors_mission_audit_freshness_without_partial_state(lab: Lab) -> None:
+    seed = lab.seed_claim()
+    expected_sequence = lab.research.get_mission_audit_sequence(seed.mission.id)
+
+    created = lab.research.add_finding(
+        mission_id=seed.mission.id,
+        claim_id=seed.claim.id,
+        statement="The benchmark conditions remain an explicit assumption.",
+        statement_kind=StatementKind.ASSUMPTION,
+        status=FindingStatus.INCONCLUSIVE,
+        uncertainty="The source does not record benchmark conditions.",
+        evidence_ids=(),
+        identity=lab.identity,
+        expected_mission_audit_sequence=expected_sequence,
+    )
+
+    assert created.evidence_ids == ()
+    assert lab.research.get_mission_audit_sequence(seed.mission.id) > expected_sequence
+    with lab.database.read() as connection:
+        state_before_replay = tuple(
+            int(connection.execute(_COUNT_QUERIES[table]).fetchone()[0])
+            for table in ("findings", "finding_citations", "audit_events", "research_runs")
+        )
+
+    with pytest.raises(ConflictError) as caught:
+        lab.research.add_finding(
+            mission_id=seed.mission.id,
+            claim_id=seed.claim.id,
+            statement="A replay must not create this finding.",
+            statement_kind=StatementKind.ASSUMPTION,
+            status=FindingStatus.INCONCLUSIVE,
+            uncertainty="This request is stale.",
+            evidence_ids=(),
+            identity=lab.identity,
+            expected_mission_audit_sequence=expected_sequence,
+        )
+
+    assert caught.value.code == "mission_version_conflict"
+    with lab.database.read() as connection:
+        state_after_replay = tuple(
+            int(connection.execute(_COUNT_QUERIES[table]).fetchone()[0])
+            for table in ("findings", "finding_citations", "audit_events", "research_runs")
+        )
+    assert state_after_replay == state_before_replay
 
 
 def test_claim_without_falsification_criteria_is_rejected_without_audit(lab: Lab) -> None:

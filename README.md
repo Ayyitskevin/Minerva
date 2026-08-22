@@ -130,10 +130,17 @@ minerva question add --db research.db --mission MIS_ID \
 minerva claim add --db research.db --mission MIS_ID --question QUE_ID \
   --statement "Pinned runtimes improve reproducibility." \
   --falsification-criteria "Repeated pinned runs diverge more than unpinned controls."
+minerva source preview --root ./sources --file study.txt
 minerva source import --db research.db --mission MIS_ID --root ./sources \
-  --file study.txt --media-type text/plain
-minerva evidence add --db research.db --mission MIS_ID --claim CLM_ID \
-  --snapshot SNP_ID --start 0 --end 42 --quote "EXACT QUOTE" --stance supports
+  --file study.txt --media-type text/plain \
+  --expected-sha256 REVIEWED_SHA256
+minerva intake preview --db research.db --mission MIS_ID --claim CLM_ID \
+  --snapshot SNP_ID --quote "EXACT QUOTE"
+minerva intake file --db research.db --mission MIS_ID --claim CLM_ID \
+  --snapshot SNP_ID --quote "EXACT QUOTE" --candidate-rank 1 \
+  --expected-intake-preview-sha256 REVIEWED_INTAKE_SHA256 \
+  --expected-snapshot-sha256 SNAPSHOT_SHA256 \
+  --expected-mission-audit-sequence REVIEWED_SEQUENCE --stance supports
 minerva claim show --db research.db --claim CLM_ID
 minerva claim review --db research.db --mission MIS_ID --claim CLM_ID
 minerva claim lineage --db research.db --mission MIS_ID --claim CLM_ID
@@ -151,6 +158,8 @@ minerva dossier build --db research.db --mission MIS_ID --claim CLM_ID \
 minerva brief export --db research.db --mission MIS_ID --output-dir ./export
 minerva audit list --db research.db --mission MIS_ID
 minerva doctor --db research.db --deep
+uv run python scripts/evaluate_research_quality.py \
+  --db research.db --minimum-missions 3
 ```
 
 Repeat `evidence add` with an opposing source to make contradiction visible. Material
@@ -183,6 +192,7 @@ cannot ship undocumented.
 | `minerva mission create` | create a research mission |
 | `minerva mission list` | list missions in creation order, oldest first |
 | `minerva mission show` | show one mission and its questions |
+| `minerva mission overview` | summarize structural review cues for one mission |
 | `minerva mission queue` | build the deterministic mission research review index |
 | `minerva question add` | add a research question to a mission |
 | `minerva claim add` | add a falsifiable claim under a question |
@@ -191,8 +201,11 @@ cannot ship undocumented.
 | `minerva claim review` | show complete evidence gaps and correction impacts for one claim |
 | `minerva claim lineage` | show the complete provenance lineage graph for one claim |
 | `minerva claim status` | append a claim status, never overwriting one |
+| `minerva source preview` | inspect safe local bytes and compute their import digest |
 | `minerva source import` | import one file as an immutable snapshot |
 | `minerva source show` | show snapshot metadata, or its stored bytes |
+| `minerva intake preview` | locate every bounded exact quote occurrence without writing |
+| `minerva intake file` | file one explicitly confirmed exact quote as evidence |
 | `minerva lens search` | search immutable mission snapshots for candidate context |
 | `minerva lens verify` | verify one captured Lens receipt without a database |
 | `minerva lens replay` | reproduce one captured Lens receipt against the current database |
@@ -221,6 +234,26 @@ There is no verb that deletes a mission, claim, snapshot, citation, finding, or
 audit event. Corrections extend the record: `claim status` appends, `evidence
 withdraw` and `finding retract` mark without removing, and `backup` refuses to
 overwrite. That absence is the contract, not an unfinished surface.
+
+## Guided exact-quote intake
+
+Source import and evidence filing are deliberately separate audited commits. First
+use `source preview` and digest-pinned `source import`; then run `intake preview`
+against the immutable snapshot. The preview returns every exact UTF-8 occurrence in
+byte order, capped at 100, with bounded context, canonical byte spans, the snapshot
+digest, current mission audit sequence, and a digest of the complete preview.
+
+`intake file` repeats the quote and requires one candidate rank, the reviewed preview
+digest, snapshot digest, mission sequence, and an explicit stance. It regenerates the
+preview inside the same `BEGIN IMMEDIATE` transaction as normal evidence creation.
+Changed mission state, a replay, a digest mismatch, an out-of-range rank, or an exact
+duplicate refuses without creating evidence or a success audit event. Preview output
+is inert local JSON, not a packet or durable source of truth.
+
+Matching is exact, not fuzzy. Intake does not choose stance, assess relevance or
+source quality, calculate confidence, call a model, fetch a URL, import a source, or
+create more than one evidence card. When a quote repeats, choosing an occurrence is
+mandatory; Minerva never silently selects the first one.
 
 ## Lens candidate retrieval
 
@@ -782,6 +815,15 @@ Open `http://127.0.0.1:8765/`. Health, readiness, and the capability manifest ar
 `/redoc` are disabled; FastAPI's default `/openapi.json` is not served. Model assistance
 cannot be invoked from the API or web interface.
 
+Mission pages lead with the same deterministic structural cues exposed by the CLI,
+then offer three narrow shared-service commands: create a falsifiable claim, append a
+claim status decision, or record a finding/explicit gap. Each form requires a matching
+local Origin, a signed CSRF cookie/form token, an exact field contract, and a current
+claim version or mission audit sequence. Stale or replayed intent refuses without
+partial state. The dedicated queue, review, and lineage pages remain GET-only: cues
+are not tasks, lineage is not truth, and no generic CRUD or persisted task state was
+added. AI agents should continue to prefer the explicit CLI.
+
 ## Operations and verification
 
 ```bash
@@ -819,6 +861,9 @@ content and integrity metadata is outside the Milestone 1 detection boundary.
 ## Design references
 
 - [Vision and this season's workspace role](docs/VISION.md)
+- [Current implementation and operational status](docs/STATUS.md)
+- [Measured pillar scorecard](docs/PILLAR_SCORECARD.md)
+- [Latest real-corpus evaluation](docs/evals/2026-08-21-pillar-baseline.md)
 - [Mickey workspace checkout](docs/WORKSPACE.md)
 - [Product requirements and research vocabulary](docs/PRD.md)
 - [Architecture](docs/ARCHITECTURE.md)
@@ -834,3 +879,7 @@ content and integrity metadata is outside the Milestone 1 detection boundary.
 - [Accepted non-authorizing PROV-O/RO-Crate interoperability guidance](docs/PROVENANCE_INTEROPERABILITY_DECISION_PACKET.md)
 - [Competitive landscape and dependency roadmap](docs/COMPETITIVE_LANDSCAPE.md)
 - [Contributing](CONTRIBUTING.md)
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

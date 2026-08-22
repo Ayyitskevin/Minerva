@@ -6,6 +6,18 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
+class SourceImportPreview:
+    """Complete reviewed UTF-8 content and metadata eligible for local import."""
+
+    sha256: str
+    byte_length: int
+    encoding: str
+    original_label: str
+    text: str
+    content_complete: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class SourceSnapshot:
     source_id: str
     snapshot_id: str

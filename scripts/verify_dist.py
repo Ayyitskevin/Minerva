@@ -17,6 +17,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
 EXPECTED_DISTRIBUTION = "minerva-research"
+EXPECTED_LICENSE_EXPRESSION = "Apache-2.0"
 EXPECTED_ENTRY_POINTS = {
     "minerva": "minerva.cli.main:main",
     "minerva-demo": "minerva.cli.demo:main",
@@ -45,7 +46,10 @@ EXPECTED_RESOURCES = frozenset(
         "minerva/web/templates/base.html",
         "minerva/web/templates/brief_preview.html",
         "minerva/web/templates/claim_detail.html",
+        "minerva/web/templates/claim_lineage.html",
+        "minerva/web/templates/claim_review.html",
         "minerva/web/templates/mission_detail.html",
+        "minerva/web/templates/mission_queue.html",
         "minerva/web/templates/missions.html",
         "minerva/web/static/style.css",
     )
@@ -167,6 +171,12 @@ def _parse_metadata(raw_metadata: bytes, artifact: Path) -> tuple[str, str]:
         )
     if not version:
         raise VerificationError(f"{artifact.name} metadata has no Version field")
+    license_expression = metadata.get("License-Expression", "").strip()
+    if license_expression != EXPECTED_LICENSE_EXPRESSION:
+        raise VerificationError(
+            f"{artifact.name} metadata has License-Expression {license_expression!r}, "
+            f"expected {EXPECTED_LICENSE_EXPRESSION!r}"
+        )
     _verify_ai_extra_metadata(metadata, artifact)
     return name, version
 
@@ -213,6 +223,13 @@ def _verify_wheel(wheel: Path) -> tuple[tuple[str, str], set[PurePosixPath]]:
                     raise VerificationError(f"{wheel.name} is missing {required_path}")
 
             metadata = _parse_metadata(archive.read(str(metadata_paths[0])), wheel)
+            license_files = {
+                name
+                for name in name_set
+                if name.parent == dist_info / "licenses" and name.name == "LICENSE"
+            }
+            if len(license_files) != 1:
+                raise VerificationError(f"{wheel.name} must contain exactly one LICENSE file")
             _verify_entry_points(archive.read(str(dist_info / "entry_points.txt")), wheel)
             _require_exact_resources(name_set, wheel)
     except (OSError, zipfile.BadZipFile) as exc:
@@ -245,6 +262,7 @@ def _verify_sdist(sdist: Path) -> tuple[tuple[str, str], set[PurePosixPath]]:
                 PurePosixPath(*name.parts[1:]) for name in raw_names if len(name.parts) > 1
             }
             required_root_files = {
+                PurePosixPath("LICENSE"),
                 PurePosixPath("README.md"),
                 PurePosixPath("pyproject.toml"),
                 PurePosixPath("tests/fixtures/minerva.research-brief.v2.golden.json"),

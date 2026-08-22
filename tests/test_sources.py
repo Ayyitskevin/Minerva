@@ -76,6 +76,65 @@ def test_import_file_snapshot_is_independent_of_original_changes(
     assert lab.sources.read_snapshot(snapshot.snapshot_id).content == b"first observed result"
 
 
+def test_preview_file_reports_safe_metadata_without_database_state(
+    lab: Lab,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "sources"
+    root.mkdir()
+    content = b"review these exact bytes"
+    (root / "notes.txt").write_bytes(content)
+
+    preview = lab.sources.preview_file(root=root, relative_path="notes.txt")
+
+    assert preview.sha256 == sha256(content).hexdigest()
+    assert preview.byte_length == len(content)
+    assert preview.encoding == "utf-8"
+    assert preview.original_label == "notes.txt"
+    assert preview.text == content.decode("utf-8")
+    assert preview.content_complete is True
+    with lab.database.read() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0] == 0
+
+
+def test_import_file_digest_pin_refuses_changed_preview_without_state(
+    lab: Lab,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "sources"
+    root.mkdir()
+    source = root / "notes.txt"
+    source.write_bytes(b"reviewed bytes")
+    mission = lab.research.create_mission(
+        title="Pinned intake mission",
+        objective="Refuse local bytes changed after preview.",
+        identity=lab.identity,
+    )
+    preview = lab.sources.preview_file(root=root, relative_path="notes.txt")
+    source.write_bytes(b"changed after review")
+
+    with pytest.raises(IntegrityError) as caught:
+        lab.sources.import_file(
+            mission_id=mission.id,
+            root=root,
+            relative_path="notes.txt",
+            media_type="text/plain",
+            identity=lab.identity,
+            expected_sha256=preview.sha256,
+        )
+
+    assert caught.value.code == "source_preview_mismatch"
+    assert lab.sources.list_snapshots(mission.id) == ()
+    with lab.database.read() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM audit_events WHERE event_type = 'source.snapshot.imported'"
+            ).fetchone()[0]
+            == 0
+        )
+
+
 @pytest.mark.parametrize(
     ("content", "code"),
     [

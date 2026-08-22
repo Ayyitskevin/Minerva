@@ -8,6 +8,37 @@ release here is a tag plus this record.
 
 ## Unreleased
 
+### Next-level foundation
+
+- A concise `mission overview` CLI view and GET-only mission queue, claim
+  review, and lineage pages expose the existing deterministic receipts without
+  creating tasks, changing research state, or adding a second service layer.
+- `source preview` applies the existing bounded, no-follow, UTF-8, and secret
+  checks without opening a database, returns the complete reviewed text with an
+  explicit completeness flag, and computes its digest. `source import
+  --expected-sha256` can pin those reviewed bytes and refuses changed input
+  before persistence.
+- `intake preview` locates every bounded exact UTF-8 occurrence in an immutable
+  snapshot and emits a digest-bound review DTO. `intake file` selects one
+  occurrence and explicit stance, regenerates the preview under a mission-sequence
+  precondition, refuses replay/duplicates, and creates one normally audited evidence
+  card. Import and evidence remain two explicit commits.
+- `docs/STATUS.md`, `docs/PILLAR_SCORECARD.md`, and the dated evaluation
+  record separate current state, measured progress, and future ambition. A live
+  recovery drill is recorded rather than inferred from backup existence.
+- `scripts/evaluate_research_quality.py` measures active evidence coverage,
+  contradiction acknowledgement, explicit uncertainty, and actual audited effort
+  on an owner-managed persistent corpus. It emits aggregates only and proves its
+  logical state receipt is unchanged.
+- Caller-owned mission queue snapshots now retain the cumulative SQLite VM-step
+  guard; only the private dossier path may reuse an explicit outer guard.
+
+### License
+
+- The repository now declares Apache-2.0 and includes its canonical license
+  text. This applies to the repository from this change forward; it does not
+  claim that the already-published `v0.2.0a1` tag contained a license grant.
+
 ### Research record
 
 - `minerva lens search` returns deterministic, model-free **candidate context**
@@ -85,14 +116,17 @@ release here is a tag plus this record.
 
 ### Security
 
-- The unwired `CsrfProtector` primitive is removed from `minerva.web.security`.
-  It protected no route — the review server has no unsafe form — and a security
-  control that guards nothing reads as a defense the application does not have.
-  The loopback host, origin, body-limit, and strict-header enforcement is
-  unchanged. `SECURITY.md`, the architecture, and the threat model's mitigation
-  column no longer describe that primitive as something Minerva has; the
-  standing requirement that a future unsafe form carry both an accepted local
-  origin and a CSRF token stays where it was, in the security invariants.
+- The previously unwired `CsrfProtector` was first removed so the security docs did
+  not claim a defense guarding no route. The first unsafe forms now exist, so that
+  reviewed signed double-submit primitive has been restored from repository history
+  and wired to every cockpit POST in the same change.
+- Unsafe forms additionally require exactly one accepted same-origin `Origin`, an
+  exact URL-encoded field set, and the existing body cap. The CSRF cookie is
+  `HttpOnly`/`SameSite=Strict`, and malformed or tampered pairs fail closed.
+- Claim status retains its version precondition. Claim and finding creation pin the
+  mission audit sequence inside the immediate transaction, so stale/replayed forms
+  create no run, domain row, or audit event. Successful browser commands record both
+  the local run receipt and domain audit receipt before post/redirect/get.
 
 ### Operator-facing
 

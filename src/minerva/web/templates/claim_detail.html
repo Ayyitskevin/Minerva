@@ -10,6 +10,10 @@
   <p class="uncertainty"><strong>Provenance warning:</strong> active evidence no longer satisfies this status.</p>
   {% endif %}
   <p><strong>Falsification criterion:</strong> {{ claim.falsification_criteria }}</p>
+  <p>
+    <a class="button" href="{{ url_for('claim_review_view', mission_id=claim.mission_id, claim_id=claim.id) }}">Review structural cues</a>
+    <a class="button" href="{{ url_for('claim_lineage_view', mission_id=claim.mission_id, claim_id=claim.id) }}">Inspect provenance lineage</a>
+  </p>
 </section>
 
 <section>
