@@ -859,6 +859,27 @@ limits, and the strict header set, and no route gained or lost a defense.
 
 This closes plan 2's F2-SURFACES-4.
 
+## Controlled mission cockpit amendment (2026-08-21)
+
+The first unsafe HTML forms now exist, so the prior instruction above has fired:
+the reviewed `CsrfProtector` was restored from repository history and wired in
+the same change. The existing mission page is the canonical action-first cockpit;
+it exposes only three shared-service commands: create a falsifiable claim, append
+a claim workflow-status decision, and record a finding or explicit gap.
+
+This amends the former whole-web read-only boundary without erasing it. Queue,
+Claim Review, and Lineage services and their dedicated GET pages remain
+query-only, non-normative receipts. The cockpit does not persist task,
+assignment, priority, deferment, completion, or generic CRUD state.
+
+Every cockpit POST requires one accepted same-origin `Origin`, a valid signed
+double-submit token, an exact URL-encoded form contract, and the existing request
+body cap. Status changes retain the claim-version precondition. Claim and finding
+creation require the mission's current audit sequence, checked inside the same
+immediate transaction before a run, domain row, or audit event is written.
+Success uses post/redirect/get; stale or replayed intent refuses without partial
+state. The explicit CLI remains the canonical agent interface.
+
 ## Workspace research-memory season (Decision 0, 2026-08-20)
 
 Kevin recorded Decision 0 on 2026-08-20: this season optimizes Minerva as the

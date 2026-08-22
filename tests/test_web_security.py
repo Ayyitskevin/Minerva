@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Iterator, Sequence
+from http.cookies import SimpleCookie
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,7 @@ from starlette.testclient import TestClient
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from minerva.web import security as web_security
-from minerva.web.security import LocalSecurityMiddleware
+from minerva.web.security import CsrfProtector, LocalSecurityMiddleware
 
 pytestmark = pytest.mark.security
 
@@ -22,6 +23,57 @@ _GENERIC_ERRORS = {
     403: {"error": {"code": "forbidden", "message": "Request rejected."}},
     413: {"error": {"code": "request_too_large", "message": "Request rejected."}},
 }
+
+
+def test_csrf_tokens_are_random_signed_and_cookie_hardened() -> None:
+    protector = CsrfProtector(b"s" * 32)
+
+    first = protector.issue_token()
+    second = protector.issue_token()
+
+    assert first != second
+    assert protector.validate(first, first)
+    assert protector.validate(second, second)
+    assert not protector.validate(first, second)
+    assert not protector.validate(first, first[:-1] + ("A" if first[-1] != "A" else "B"))
+
+    cookie = SimpleCookie()
+    cookie.load(protector.cookie_header(first, secure=True))
+    morsel = cookie[protector.cookie_name]
+    assert morsel.value == first
+    assert morsel["path"] == "/"
+    assert morsel["httponly"] is True
+    assert morsel["samesite"] == "Strict"
+    assert morsel["secure"] is True
+
+
+@pytest.mark.parametrize(
+    ("cookie_token", "form_token"),
+    [
+        (None, None),
+        ("", ""),
+        ("not-a-token", "not-a-token"),
+        ("é", "é"),
+        ("a" * 257, "a" * 257),
+        ("a.b.c", "a.b.c"),
+    ],
+)
+def test_csrf_rejects_missing_or_malformed_token_pairs(
+    cookie_token: str | None,
+    form_token: str | None,
+) -> None:
+    assert not CsrfProtector(b"s" * 32).validate(cookie_token, form_token)
+
+
+def test_csrf_configuration_and_cookie_emission_fail_closed() -> None:
+    with pytest.raises(ValueError, match="at least 32 bytes"):
+        CsrfProtector(b"short")
+    with pytest.raises(ValueError, match="cookie name"):
+        CsrfProtector(b"s" * 32, cookie_name="not-a-cookie")
+
+    protector = CsrfProtector(b"s" * 32)
+    with pytest.raises(ValueError, match="invalid token"):
+        protector.cookie_header("not-signed")
 
 
 def _build_app(

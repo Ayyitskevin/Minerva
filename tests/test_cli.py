@@ -5,6 +5,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -159,6 +160,21 @@ def test_cli_vertical_slice_and_lifecycle(
     )
     source_bytes = source_text.encode("utf-8")
     (source_root / "comparison.txt").write_bytes(source_bytes)
+    source_preview = _invoke(
+        capsys,
+        "source",
+        "preview",
+        "--root",
+        str(source_root),
+        "--file",
+        "comparison.txt",
+    )
+    preview_payload = source_preview["source_preview"]
+    assert isinstance(preview_payload, dict)
+    preview_digest = preview_payload["sha256"]
+    assert preview_digest == sha256(source_bytes).hexdigest()
+    assert preview_payload["text"] == source_text
+    assert preview_payload["content_complete"] is True
     imported = _invoke(
         capsys,
         "source",
@@ -173,6 +189,8 @@ def test_cli_vertical_slice_and_lifecycle(
         "comparison.txt",
         "--media-type",
         "text/plain",
+        "--expected-sha256",
+        preview_digest,
     )
     snapshot_id = _identifier(imported, "snapshot", "snapshot_id")
     shown_source = _invoke(
@@ -311,6 +329,21 @@ def test_cli_vertical_slice_and_lifecycle(
 
     mission_list = _invoke(capsys, "mission", "list", "--db", str(database))
     assert len(mission_list["missions"]) == 1  # type: ignore[arg-type]
+    overview = _invoke(
+        capsys,
+        "mission",
+        "overview",
+        "--db",
+        str(database),
+        "--mission",
+        mission_id,
+    )["mission_overview"]
+    assert isinstance(overview, dict)
+    assert overview["mission_id"] == mission_id
+    assert overview["reviewed_claim_count"] == 1
+    assert overview["structural_cue_count"] >= 1
+    assert overview["structural_cues_are_tasks"] is False
+    assert overview["reason_counts"]["active_stance_contradiction"] == 1  # type: ignore[index]
     retraction_reason = "Superseded by a corrected analysis."
     retracted = _invoke(
         capsys,

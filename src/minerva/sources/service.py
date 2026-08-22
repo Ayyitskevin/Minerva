@@ -20,12 +20,13 @@ from minerva.core.types import (
     validate_page_request,
 )
 from minerva.sources.files import (
+    LocalUtf8File,
     SourceFileError,
     read_local_utf8,
     scan_secret_patterns,
 )
 from minerva.sources.integrity import verify_snapshot_integrity
-from minerva.sources.models import SnapshotContent, SourceSnapshot
+from minerva.sources.models import SnapshotContent, SourceImportPreview, SourceSnapshot
 
 DEFAULT_MAX_SOURCE_BYTES = 1_048_576
 HARD_MAX_SOURCE_BYTES = 10_485_760
@@ -57,6 +58,36 @@ _SENSITIVE_QUERY_PARAMETER_NAMES = frozenset(
 )
 
 
+def preview_local_file(
+    *,
+    root: Path,
+    relative_path: str,
+    max_source_bytes: int = DEFAULT_MAX_SOURCE_BYTES,
+) -> SourceImportPreview:
+    """Inspect import-eligible bytes without opening or mutating a database."""
+
+    if (
+        isinstance(max_source_bytes, bool)
+        or not isinstance(max_source_bytes, int)
+        or not 1 <= max_source_bytes <= HARD_MAX_SOURCE_BYTES
+    ):
+        raise ValueError("max_source_bytes is outside the supported range")
+    local_file = _read_source_file(
+        root=root,
+        relative_path=relative_path,
+        max_source_bytes=max_source_bytes,
+    )
+    if not local_file.content:
+        raise IntegrityError("source_empty", "Source snapshots may not be empty.")
+    return SourceImportPreview(
+        sha256=sha256(local_file.content).hexdigest(),
+        byte_length=len(local_file.content),
+        encoding="utf-8",
+        original_label=local_file.original_label,
+        text=local_file.content.decode("utf-8", errors="strict"),
+    )
+
+
 class SourceService:
     def __init__(
         self,
@@ -79,6 +110,18 @@ class SourceService:
         self._id_factory = id_factory
         self._audit = audit or AuditRecorder(clock=clock, id_factory=id_factory)
 
+    def preview_file(
+        self,
+        *,
+        root: Path,
+        relative_path: str,
+    ) -> SourceImportPreview:
+        return preview_local_file(
+            root=root,
+            relative_path=relative_path,
+            max_source_bytes=self.max_source_bytes,
+        )
+
     def import_file(
         self,
         *,
@@ -88,11 +131,24 @@ class SourceService:
         media_type: str,
         identity: IdentityContext,
         url_metadata: str | None = None,
+        expected_sha256: str | None = None,
     ) -> SourceSnapshot:
-        try:
-            local_file = read_local_utf8(root, relative_path, self.max_source_bytes)
-        except SourceFileError as error:
-            raise _present_file_error(error) from error
+        local_file = _read_source_file(
+            root=root,
+            relative_path=relative_path,
+            max_source_bytes=self.max_source_bytes,
+        )
+        digest = sha256(local_file.content).hexdigest()
+        if expected_sha256 is not None:
+            if re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+                raise IntegrityError(
+                    "source_digest_invalid", "The expected source digest is invalid."
+                )
+            if digest != expected_sha256:
+                raise IntegrityError(
+                    "source_preview_mismatch",
+                    "The source no longer matches the reviewed preview digest.",
+                )
         return self.import_bytes(
             mission_id=mission_id,
             content=local_file.content,
@@ -433,6 +489,18 @@ def _validate_url_metadata(value: str | None) -> str | None:
                 "Source metadata matches a blocked secret pattern.",
             )
     return candidate
+
+
+def _read_source_file(
+    *,
+    root: Path,
+    relative_path: str,
+    max_source_bytes: int,
+) -> LocalUtf8File:
+    try:
+        return read_local_utf8(root, relative_path, max_source_bytes)
+    except SourceFileError as error:
+        raise _present_file_error(error) from error
 
 
 def _present_file_error(error: SourceFileError) -> IntegrityError:

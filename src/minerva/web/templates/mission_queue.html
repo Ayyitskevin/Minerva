@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+<nav class="breadcrumb"><a href="{{ url_for('mission_detail', mission_id=queue.mission_id) }}">Mission</a> / Structural review</nav>
+<section class="page-heading">
+  <p class="eyebrow">Complete deterministic Claim Review aggregation</p>
+  <h1>{{ queue.mission_title }}</h1>
+  <p>{{ queue.semantic_notice }}</p>
+  <p class="uncertainty"><strong>Interpretation boundary:</strong> These are structural cues, not tasks, priorities, severity, confidence, truth, or required action.</p>
+  <dl class="metadata">
+    <dt>Reviewed claims</dt><dd>{{ queue.work.reviewed_claim_count }}</dd>
+    <dt>Structural cues</dt><dd>{{ queue.work.item_count }}</dd>
+    <dt>Receipt</dt><dd><code>{{ queue.queue_receipt_sha256 }}</code></dd>
+  </dl>
+</section>
+
+<section>
+  <h2>Cue counts</h2>
+  {% if queue.reason_counts %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Cue</th><th>Count</th></tr></thead>
+      <tbody>
+      {% for reason in queue.reason_counts %}
+        <tr><td><code>{{ reason.code }}</code></td><td>{{ reason.count }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="empty-state">No cue counts were returned.</p>{% endif %}
+</section>
+
+<section>
+  <h2>Reviewed claims</h2>
+  {% if queue.reviewed_claims %}
+  <ul class="card-list">
+    {% for claim in queue.reviewed_claims %}
+    <li class="card">
+      <h3>{{ claim.claim_statement }}</h3>
+      <p><span class="status">{{ claim.recorded_status.value }}</span> · {{ claim.item_count }} structural {{ "cue" if claim.item_count == 1 else "cues" }}</p>
+      <p>
+        <a class="button" href="{{ url_for('claim_review_view', mission_id=queue.mission_id, claim_id=claim.claim_id) }}">Review cues</a>
+        <a class="button" href="{{ url_for('claim_lineage_view', mission_id=queue.mission_id, claim_id=claim.claim_id) }}">Inspect lineage</a>
+        <a class="button" href="{{ url_for('claim_detail', claim_id=claim.claim_id) }}">Evidence ledger</a>
+      </p>
+      <dl class="metadata">
+        <dt>Claim ID</dt><dd><code>{{ claim.claim_id }}</code></dd>
+        <dt>Review receipt</dt><dd><code>{{ claim.review_receipt_sha256 }}</code></dd>
+        <dt>Cue codes</dt><dd>{% for code in claim.reason_codes %}<code>{{ code }}</code>{{ " " if not loop.last }}{% endfor %}</dd>
+      </dl>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty-state">This mission has no claims to review.</p>{% endif %}
+</section>
+
+<section>
+  <h2>Structural cue ledger</h2>
+  {% if queue.items %}
+  <ol class="ledger">
+    {% for item in queue.items %}
+    <li class="card">
+      <p class="eyebrow">{{ item.reason_category }} · <code>{{ item.reason_code }}</code></p>
+      <p>{{ item.explanation }}</p>
+      <dl class="metadata">
+        <dt>Claim</dt><dd><code>{{ item.claim_id }}</code></dd>
+        <dt>Related records</dt><dd>{% for record_id in item.record_ids %}<code>{{ record_id }}</code>{{ " " if not loop.last }}{% endfor %}</dd>
+      </dl>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}<p class="empty-state">No structural cues were returned.</p>{% endif %}
+</section>
+{% endblock %}

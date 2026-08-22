@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<nav class="breadcrumb"><a href="{{ url_for('mission_detail', mission_id=review.mission_id) }}">Mission</a> / <a href="{{ url_for('claim_detail', claim_id=review.claim_id) }}">Claim ledger</a> / Structural review</nav>
+<section class="page-heading">
+  <p class="eyebrow">Complete-or-refuse structural inspection</p>
+  <h1>{{ review.claim_statement }}</h1>
+  <p>{{ review.semantic_notice }}</p>
+  <p class="uncertainty"><strong>Interpretation boundary:</strong> Cues describe recorded structure. They do not determine truth, evidence quality, confidence, sufficiency, or the correct claim status.</p>
+  <p><a class="button" href="{{ url_for('claim_lineage_view', mission_id=review.mission_id, claim_id=review.claim_id) }}">Inspect provenance lineage</a></p>
+  <dl class="metadata">
+    <dt>Recorded status</dt><dd><span class="status">{{ review.recorded_status.status.value }}</span> · version {{ review.recorded_status.version }}</dd>
+    <dt>Active support</dt><dd>{{ review.active_stance_counts.supports }}</dd>
+    <dt>Active opposition</dt><dd>{{ review.active_stance_counts.opposes }}</dd>
+    <dt>Active context</dt><dd>{{ review.active_stance_counts.context }}</dd>
+    <dt>Active inconclusive</dt><dd>{{ review.active_stance_counts.inconclusive }}</dd>
+    <dt>Review receipt</dt><dd><code>{{ review.review_receipt_sha256 }}</code></dd>
+  </dl>
+</section>
+
+<section>
+  <h2>Review cues</h2>
+  {% if review.review_cues %}
+  <ul class="card-list">
+    {% for cue in review.review_cues %}
+    <li class="card">
+      <p class="eyebrow"><code>{{ cue.code }}</code></p>
+      <p>{{ cue.explanation }}</p>
+      <p>Related records: {% for record_id in cue.record_ids %}<code>{{ record_id }}</code>{{ " " if not loop.last }}{% endfor %}</p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty-state">No structural review cues were returned.</p>{% endif %}
+</section>
+
+<section>
+  <h2>Evidence references</h2>
+  {% if review.evidence %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Evidence</th><th>Stance</th><th>Source</th><th>Exact span</th><th>State</th></tr></thead>
+      <tbody>
+      {% for evidence in review.evidence %}
+        <tr>
+          <td><code>{{ evidence.evidence_id }}</code></td>
+          <td>{{ evidence.stance.value }}</td>
+          <td>{{ evidence.source_label }}<br><code>{{ evidence.snapshot_sha256 }}</code></td>
+          <td>[{{ evidence.start_byte }}, {{ evidence.end_byte }})</td>
+          <td>{{ "withdrawn" if evidence.withdrawal else "active" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="empty-state">No evidence cards are recorded for this claim.</p>{% endif %}
+</section>
+{% endblock %}

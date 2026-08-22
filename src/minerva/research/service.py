@@ -141,6 +141,7 @@ class ResearchService:
         statement: str,
         falsification_criteria: str,
         identity: IdentityContext,
+        expected_mission_audit_sequence: int | None = None,
     ) -> Claim:
         statement = validate_text(statement, field="claim", maximum=2_000)
         falsification_criteria = validate_text(
@@ -148,10 +149,16 @@ class ResearchService:
             field="falsification_criteria",
             maximum=2_000,
         )
+        _validate_expected_mission_audit_sequence(expected_mission_audit_sequence)
         claim_id = self._id_factory("clm")
         status_id = self._id_factory("cst")
         created_at = self._clock()
         with self.database.transaction() as connection:
+            _require_mission_audit_sequence(
+                connection,
+                mission_id=mission_id,
+                expected_sequence=expected_mission_audit_sequence,
+            )
             question = connection.execute(
                 "SELECT 1 FROM research_questions WHERE id = ? AND mission_id = ?",
                 (question_id, mission_id),
@@ -315,11 +322,13 @@ class ResearchService:
         identity: IdentityContext,
         claim_id: str | None = None,
         connection: sqlite3.Connection | None = None,
+        expected_mission_audit_sequence: int | None = None,
     ) -> Finding:
         if not isinstance(statement_kind, StatementKind):
             raise IntegrityError("statement_kind_invalid", "Statement class is invalid.")
         if not isinstance(status, FindingStatus):
             raise IntegrityError("finding_status_invalid", "Finding status is invalid.")
+        _validate_expected_mission_audit_sequence(expected_mission_audit_sequence)
         statement = validate_text(statement, field="finding", maximum=4_000)
         uncertainty = uncertainty.strip()
         if len(uncertainty) > 2_000:
@@ -356,6 +365,7 @@ class ResearchService:
                     finding_id=finding_id,
                     created_at=created_at,
                     identity=identity,
+                    expected_mission_audit_sequence=expected_mission_audit_sequence,
                 )
         return self._record_finding(
             connection,
@@ -369,6 +379,7 @@ class ResearchService:
             finding_id=finding_id,
             created_at=created_at,
             identity=identity,
+            expected_mission_audit_sequence=expected_mission_audit_sequence,
         )
 
     def _record_finding(
@@ -385,8 +396,13 @@ class ResearchService:
         finding_id: str,
         created_at: str,
         identity: IdentityContext,
+        expected_mission_audit_sequence: int | None,
     ) -> Finding:
-        _require_mission(connection, mission_id)
+        _require_mission_audit_sequence(
+            connection,
+            mission_id=mission_id,
+            expected_sequence=expected_mission_audit_sequence,
+        )
         if claim_id is not None:
             claim = connection.execute(
                 "SELECT 1 FROM claims WHERE id = ? AND mission_id = ?",
@@ -558,6 +574,20 @@ class ResearchService:
         if row is None:
             raise NotFoundError("mission_not_found")
         return _mission_from_row(row)
+
+    def get_mission_audit_sequence(
+        self,
+        mission_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> int:
+        if connection is None:
+            with self.database.read() as owned_connection:
+                return self.get_mission_audit_sequence(
+                    mission_id,
+                    connection=owned_connection,
+                )
+        return _mission_audit_sequence(connection, mission_id)
 
     def list_missions(
         self,
@@ -948,6 +978,59 @@ def _require_mission(connection: sqlite3.Connection, mission_id: str) -> None:
         is None
     ):
         raise NotFoundError("mission_not_found")
+
+
+def _validate_expected_mission_audit_sequence(
+    expected_sequence: int | None,
+) -> None:
+    if expected_sequence is None:
+        return
+    if (
+        isinstance(expected_sequence, bool)
+        or not isinstance(expected_sequence, int)
+        or expected_sequence < 1
+    ):
+        raise IntegrityError(
+            "mission_version_invalid",
+            "Mission audit sequence must be a positive integer.",
+        )
+
+
+def _mission_audit_sequence(
+    connection: sqlite3.Connection,
+    mission_id: str,
+) -> int:
+    _require_mission(connection, mission_id)
+    row = connection.execute(
+        """
+        SELECT MAX(sequence) AS sequence
+        FROM audit_events
+        WHERE mission_id = ?
+        """,
+        (mission_id,),
+    ).fetchone()
+    if row is None or row["sequence"] is None:
+        raise IntegrityError(
+            "mission_audit_missing",
+            "Stored mission audit provenance is incomplete.",
+        )
+    return int(row["sequence"])
+
+
+def _require_mission_audit_sequence(
+    connection: sqlite3.Connection,
+    *,
+    mission_id: str,
+    expected_sequence: int | None,
+) -> None:
+    if expected_sequence is None:
+        _require_mission(connection, mission_id)
+        return
+    if _mission_audit_sequence(connection, mission_id) != expected_sequence:
+        raise ConflictError(
+            "mission_version_conflict",
+            "The mission changed; reload it before creating research state.",
+        )
 
 
 _CLAIM_SELECT = """

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<nav class="breadcrumb"><a href="{{ url_for('mission_detail', mission_id=lineage.mission_id) }}">Mission</a> / <a href="{{ url_for('claim_detail', claim_id=lineage.claim_id) }}">Claim ledger</a> / Provenance lineage</nav>
+<section class="page-heading">
+  <p class="eyebrow">Complete claim-owned provenance topology</p>
+  <h1>Claim lineage</h1>
+  <p>{{ lineage.semantic_notice }}</p>
+  <p class="uncertainty"><strong>Interpretation boundary:</strong> Nodes and edges are recorded provenance, not truth, confidence, evidence quality, priority, or recommended action.</p>
+  <p><a class="button" href="{{ url_for('claim_review_view', mission_id=lineage.mission_id, claim_id=lineage.claim_id) }}">Inspect structural review</a></p>
+  <dl class="metadata">
+    <dt>Claim ID</dt><dd><code>{{ lineage.claim_id }}</code></dd>
+    <dt>Nodes</dt><dd>{{ lineage.work.node_count }}</dd>
+    <dt>Edges</dt><dd>{{ lineage.work.edge_count }}</dd>
+    <dt>Snapshots</dt><dd>{{ lineage.work.distinct_snapshot_count }}</dd>
+    <dt>Lineage receipt</dt><dd><code>{{ lineage.lineage_receipt_sha256 }}</code></dd>
+  </dl>
+</section>
+
+<section>
+  <h2>Node kinds</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Kind</th><th>Count</th></tr></thead>
+      <tbody>
+      {% for item in lineage.node_kind_counts %}
+        <tr><td><code>{{ item.kind }}</code></td><td>{{ item.count }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Nodes</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Kind</th><th>Node</th><th>State</th></tr></thead>
+      <tbody>
+      {% for node in lineage.nodes %}
+        <tr><td>{{ node.kind.value }}</td><td><code>{{ node.node_id }}</code></td><td>{{ node.state }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Edges</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Relation</th><th>Source</th><th>Target</th></tr></thead>
+      <tbody>
+      {% for edge in lineage.edges %}
+        <tr><td>{{ edge.relation.value }}</td><td><code>{{ edge.source_node_id }}</code></td><td><code>{{ edge.target_node_id }}</code></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

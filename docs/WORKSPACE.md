@@ -10,7 +10,7 @@ to `127.0.0.1`. Loopback is not authentication. Do not expose it remotely.
 ## Working copy
 
 Each seat uses its own clone of `git@github.com:Ayyitskevin/Minerva.git`.
-The Grok seat's clone is `~/ai-workspace/grok/minerva`. Do not scratch-edit
+Keep its machine-local path out of repository documentation. Do not scratch-edit
 another seat's tree, and do not edit a live database from two writers at once.
 
 Install the locked environment from the clone you are working in:
@@ -66,7 +66,8 @@ They do not paste findings into Buzz and they do not treat an Athena issue body
 as a citation.
 
 The vertical slice is the same as the README: `mission create`, `question add`,
-`claim add`, `source import`, `evidence add` or `evidence add-from-lens` with an
+`claim add`, digest-pinned `source import`, `intake preview` plus `intake file`
+(or the lower-level `evidence add` / reviewed `evidence add-from-lens`) with an
 exact UTF-8 byte span, `finding add` or an explicitly labeled assumption, then
 `brief export` and `audit list`. `lens search` returns unassessed leads, not
 evidence. Corrections are `evidence withdraw` and `finding retract`. There is
@@ -79,16 +80,37 @@ existing claim does not require `mission create`:
 ```bash
 uv run minerva mission list --db ~/data/minerva/research.db
 uv run minerva mission show --db ~/data/minerva/research.db --mission MIS_ID
+uv run minerva source preview --root ./sources --file FILE.txt
 uv run minerva source import --db ~/data/minerva/research.db --mission MIS_ID \
-  --root ./sources --file FILE.txt --media-type text/plain
-uv run minerva source show --db ~/data/minerva/research.db --snapshot SNP_ID
+  --root ./sources --file FILE.txt --media-type text/plain \
+  --expected-sha256 REVIEWED_SHA256
+uv run minerva intake preview --db ~/data/minerva/research.db --mission MIS_ID \
+  --claim CLM_ID --snapshot SNP_ID --quote "EXACT UTF-8 SPAN"
+uv run minerva intake file --db ~/data/minerva/research.db --mission MIS_ID \
+  --claim CLM_ID --snapshot SNP_ID --quote "EXACT UTF-8 SPAN" \
+  --candidate-rank RANK \
+  --expected-intake-preview-sha256 REVIEWED_INTAKE_SHA256 \
+  --expected-snapshot-sha256 SNAPSHOT_SHA256 \
+  --expected-mission-audit-sequence REVIEWED_SEQUENCE --stance supports
+
+# Lower-level escape hatch when exact byte coordinates are already reviewed:
 uv run minerva evidence add --db ~/data/minerva/research.db --mission MIS_ID \
   --claim CLM_ID --snapshot SNP_ID --start BYTE --end BYTE \
   --quote "EXACT UTF-8 SPAN" --stance supports
 ```
 
+`source preview` does not open the database. The digest pin makes a changed
+file refuse before any source, snapshot, or audit row is written; it does not
+authenticate who supplied the file.
+
 `source show` prints stored bytes so the submitted `--quote` can match exactly.
 Stance is `supports`, `opposes`, `context`, or `inconclusive`.
+
+`intake preview` is read-only and JSON-first. It returns every exact occurrence in
+byte order with bounded context; repeated text requires an explicit rank. `intake
+file` reproduces that preview inside its write transaction, then creates one normal
+evidence card. A stale mission sequence or replay fails closed. It does not combine
+source import and evidence filing, infer stance, persist a draft, or call a model.
 
 Before calling the slice complete on live data:
 

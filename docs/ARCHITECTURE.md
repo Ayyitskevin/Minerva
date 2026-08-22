@@ -46,6 +46,15 @@ evidence add-from-lens --> verified receipt + explicit candidate confirmations
                                                         +--> normal evidence validation
                                                         +--> evidence + two audit events
 
+intake preview --> exact quote + immutable snapshot --> bounded occurrence receipt
+
+intake file --> preview digest + explicit occurrence/stance
+                                  |
+                                  +--> one BEGIN IMMEDIATE transaction
+                                       +--> exact preview regeneration
+                                       +--> mission-sequence/duplicate checks
+                                       +--> normal evidence + audit validation
+
 claim review CLI --> complete structural query --> one query-only SQLite snapshot
                                                      |
                                                      +--> verified citation/correction
@@ -82,6 +91,8 @@ they may not reimplement domain validation or write SQL directly.
   immutable snapshot registration.
 - `evidence`: byte-span citations, stance, ledgers, withdrawal, supersession, and the
   explicit single-candidate Lens-to-evidence coordinator.
+- `intake`: exact-quote occurrence discovery, bounded context, deterministic preview
+  digesting, stale/replay protection, and coordination of one normal evidence write.
 - `lens`: bounded, model-free candidate-context retrieval, strict receipt
   self-verification, and current-database exact reproduction over verified immutable
   snapshots.
@@ -98,8 +109,8 @@ they may not reimplement domain validation or write SQL directly.
   claim-scoped request fulfillment, Markdown/JSON rendering, digesting, and contained
   file export.
 - `api`: strict Pydantic request/response adapters and structured error mapping.
-- `web`: loopback-only, read-only server-rendered review pages, and local HTTP
-  controls. There is no CSRF primitive; any future unsafe browser form must add one.
+- `web`: loopback-only server-rendered review pages, three narrow shared-service
+  command forms, strict form parsing, signed CSRF tokens, and local HTTP controls.
 - `assist`: provider-neutral preview, authorization, bounded context, response
   validation, candidate labeling, and metadata-only invocation audit coordination.
 - `cli`: local operator commands, optional external-assistance consent, demo,
@@ -682,13 +693,15 @@ Athena, Icarus, Tribunal, Oracle, Vanguard, and Warren.
 The application binds to `127.0.0.1` by default and refuses a non-loopback host unless
 future authenticated multi-user work deliberately changes the boundary. Middleware
 enforces loopback `Host`/`Origin`, a body limit, CSP and defensive response headers.
-The Milestone 1 HTML surface is read-only; REST mutations use strict JSON contracts and
-reject non-local browser origins. Minerva has no CSRF primitive; any future unsafe
-browser form must add same-site CSRF protection to the local-origin check, taken from
-the git history (`git log -- src/minerva/web/security.py`) rather than written from
-scratch. There is no CORS middleware. Jinja autoescaping and plain `<pre>` brief
-previews prevent stored content from becoming executable HTML; Minerva does not render
-user Markdown as raw HTML.
+The dedicated queue, review, and lineage pages remain GET-only. The canonical mission
+page additionally exposes exactly three URL-encoded command forms through the shared
+research service: claim creation, claim status append, and finding creation. Every POST
+requires one accepted same-origin `Origin`, a signed double-submit CSRF cookie/form
+token, an exact field set, and a freshness precondition. Claim/finding creation checks
+the mission audit sequence inside the immediate transaction before any state; status
+changes retain claim-version concurrency. There is no CORS middleware. Jinja
+autoescaping and plain `<pre>` brief previews prevent stored content from becoming
+executable HTML; Minerva does not render user Markdown as raw HTML.
 
 ## Four operational invariants
 
