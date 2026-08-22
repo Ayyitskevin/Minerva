@@ -1,6 +1,7 @@
 # Next-level implementation plan
 
-Status: implemented locally in dependency order on 2026-08-21; non-author review pending.
+Status: deployed to mickey at `bfe5a2c` on 2026-08-22; a formal tagged
+release remains pending.
 
 Kevin authorized the complete plan and delegated delivery order to the implementing
 seat. Work proceeds in this order:
@@ -49,9 +50,9 @@ be usable against the persistent mickey workflow before the next phase begins.
 5. D-2 and authenticated integrations: evaluated and deferred. Athena still
    cannot hold the required keypair, so the prerequisite is not proven.
 
-No commit, push, deployment, tag, release, remote bind, or publication was
-performed. Integration remains on hold until a seat that did not author this
-change completes the required moderate-change review.
+The owner explicitly overrode the pending non-author re-review and authorized
+shipping. Commit `bfe5a2c` is on GitHub `main` and deployed to the mickey loopback
+service. No tag, package release, remote bind, or publication was performed.
 
 ## Next build sequence
 
@@ -59,8 +60,9 @@ Owner decision recorded 2026-08-21: implement the next season in this order.
 
 Cockpit status: implemented and measured locally. Safe intake is implemented and
 measured locally. The persistent-corpus research-quality evaluation surface is now
-implemented and measured locally. Integration is held for the required non-author
-trust-boundary re-review after its first HOLD findings were corrected.
+implemented, measured, and deployed to mickey. The owner explicitly overrode the
+pending non-author trust-boundary re-review after its first HOLD findings were
+corrected.
 
 Owner sequencing decision, confirmed 2026-08-21: implement safe source intake next,
 then build the research-quality evaluation surface against that improved workflow.
@@ -72,8 +74,8 @@ than institutionalize the current friction as a baseline product assumption.
 3. Add an evaluation surface for research quality, uncertainty, and operator effort.
    **Complete locally:** the aggregate read-only evaluator measured three genuine
    missions without exporting content, identifiers, or paths.
-4. Complete non-author review, integration, loopback deployment, and release only
-   after the preceding slices and all required gates pass.
+4. Integration and loopback deployment are complete at `bfe5a2c`; a formal tagged
+   release remains pending.
 
 This sequence does not open D-2, MCP, remote bind, automatic adoption,
 publication, network fetching, or provider-backed research. Each slice must remain

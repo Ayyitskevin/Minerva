@@ -54,10 +54,11 @@ seams remain in [ADR 0002](adr/0002-system-boundaries.md).
    database. **Done** (WORKSPACE.md live CLI loop; wrapper stays machine-local).
 5. Put deterministic review receipts in a concise operator workbench while
    preserving their semantic boundary: cues are not tasks and lineage is not
-   truth. **Implemented; eleven gates passed, non-author review pending.**
+   truth. **Deployed to mickey at `bfe5a2c`; the owner explicitly overrode the
+   non-author review gate.**
 6. Establish a dated pillar scorecard, a real-corpus evaluation, and a recovery
-   drill before expanding trust boundaries. **Done locally; release remains
-   pending.**
+   drill before expanding trust boundaries. **Deployed; a formal tagged release
+   remains pending.**
 
 ## Non-goals this season
 

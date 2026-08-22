@@ -3,8 +3,8 @@
 Updated: 2026-08-22
 
 Minerva is alpha research-memory software for one trusted OS user. The latest
-published tag is `v0.2.0a1`; this working change is not a release and has not
-been deployed.
+published tag is `v0.2.0a1`; commit `bfe5a2c` is deployed on mickey but is
+not a tagged package release.
 
 ## State at a glance
 
@@ -12,11 +12,11 @@ been deployed.
 | --- | --- |
 | Product contract | Decision 0: local, provenance-first research-memory; no orchestration or publication |
 | Live runtime | Loopback service active on mickey against the persistent SQLite database |
-| Live corpus | 3 missions, 17 immutable snapshots, 36 citations, 17 findings, 205 audit events |
-| Integrity | `doctor --deep` passed all checks at schema 5 on 2026-08-21 |
+| Live corpus | 3 missions, 17 immutable snapshots, 36 citations, 17 findings, 207 audit events |
+| Integrity | `doctor --deep` passed all checks at schema 5 on 2026-08-22 |
 | Recovery | A 503,808-byte backup restored and deep-verified in a fresh `/tmp` path |
-| Working change | Controlled cockpit, guided intake, real-corpus quality evaluator, scorecard, and license |
-| Release state | All eleven gates pass after first-review fixes; non-author re-review, integration, deployment, and release remain separate gates |
+| Deployed change | Controlled cockpit, guided intake, real-corpus quality evaluator, scorecard, and license at `bfe5a2c` |
+| Release state | Local gates and exact-head GitHub CI pass; deployed by explicit owner override; tag and package release remain separate |
 
 The counts above are a dated observation, not a promise that the database will
 remain at those counts. Re-run the commands in the evaluation record before
@@ -32,7 +32,7 @@ using them as current state.
 - Queue, review, lineage, Lens, dossier, assistance adoption, backup, restore,
   and deep integrity checks already exist.
 
-## What this working change adds
+## What the deployed change adds
 
 - `mission overview` for a compact, deterministic scan of structural cues.
 - GET-only queue, claim-review, and lineage pages. They expose receipts; they do
@@ -56,7 +56,7 @@ remote bind, multi-user authorization, automatic evidence adoption, and
 publication remain non-goals for this season. DeepAPI is intentionally not a
 Minerva dependency; the owner declined that integration on 2026-08-21.
 
-The current package version remains `0.2.0a1` because this integration is not a
+The current package version remains `0.2.0a1` because this deployment is not a
 release. The immutable `v0.2.0a1` tag will not move or be reused; any future release
 requires a new version and dated changelog section.
 
